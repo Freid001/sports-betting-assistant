@@ -1,0 +1,40 @@
+# Bet Assistant configuration.
+# API keys are NOT stored here. They live in .env in the project folder (git-ignored),
+# e.g.  ODDS_API_KEY=...  and  FOOTBALL_DATA_API_KEY=...   (see .env.example).
+
+spring:
+  application:
+    name: bet-assistant
+  main:
+    banner-mode: off
+  config:
+    # Loads the local secrets file if it exists.
+    import: optional:file:.env[.properties]
+
+server:
+  port: 8080
+
+# The Odds API: bookmaker odds (Sky Bet). Free plan = 500 credits/month.
+odds-api:
+  base-url: https://api.the-odds-api.com/v4
+  key: ${ODDS_API_KEY:}
+
+# football-data.org: team crests (later fixtures, tables, form). Free plan = 10 calls/minute.
+football-data:
+  base-url: https://api.football-data.org/v4
+  key: ${FOOTBALL_DATA_API_KEY:}
+
+# Where API results are saved so we don't fetch them again (relative to the project folder).
+#   cache/football/<tournament>.json        odds
+#   cache/football/teams/<tournament>.json  team crests
+odds-cache:
+  dir: cache
+
+football:
+  # Tournaments shown on the Football page and refreshed together
+  # (The Odds API sport keys without the "soccer_" prefix).
+  tournaments:
+    - uefa_champs_league          # Champions League
+    - uefa_nations_league         # Nations League
+    - uefa_european_championship  # Euros
+    - fifa_world_cup              # World Cup

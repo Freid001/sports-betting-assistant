@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: pageHead}"></head>
+<body>
+<nav th:replace="~{fragments :: navbar}"></nav>
+<div class="container pb-5">
+    <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
+        <h1 class="h3 mb-0 me-auto">Football matches</h1>
+        <span id="quota" class="small text-muted"></span>
+        <button id="refresh" class="btn btn-secondary btn-sm py-0 px-2" style="font-size:.8rem">Refresh odds</button>
+    </div>
+    <div id="sources" class="small text-muted mb-3">Loading…</div>
+
+    <div class="d-flex flex-wrap align-items-center gap-3 mb-3 small">
+        <select id="filterComp" class="form-select form-select-sm w-auto"><option value="">All competitions</option></select>
+        <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="filterStarred">
+            <label class="form-check-label" for="filterStarred">★ Shortlist only</label>
+        </div>
+        <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="filterStarted" checked>
+            <label class="form-check-label" for="filterStarted">Hide started matches</label>
+        </div>
+        <div id="stakeBox" class="ms-auto"></div>
+    </div>
+
+    <div id="error" class="alert alert-danger d-none"></div>
+    <div id="list"></div>
+    <p class="small text-muted mt-3">Prices are Sky Bet odds from the last refresh. Chance = the
+        bookmaker's implied chance with its margin removed (hover a badge to see it and its band). Viewing this page is free; only Refresh uses API credits.</p>
+</div>
+
+<script src="/js/football-data.js"></script>
+<script>
+(function () {
+  var F = window.Football;
+  var $ = function (id) { return document.getElementById(id); };
+  var matches = [];
+  var teamsByComp = {};
+  var STAR_KEY = 'football-shortlist';
+
+  function el(tag, cls, text) {
+    var e = document.createElement(tag);
+    if (cls) e.className = cls;
+    if (text !== undefined && text !== null) e.textContent = text;
+    return e;
+  }
+  function loadStars() { try { return JSON.parse(localStorage.getItem(STAR_KEY) || '[]'); } catch (e) { return []; } }
+  function saveStars(s) { try { localStorage.setItem(STAR_KEY, JSON.stringify(s)); } catch (e) { /* ignore */ } }
+  var stars = loadStars();
+
+  function ago(iso) {
+    var mins = Math.round((Date.now() - new Date(iso)) / 60000);
+    if (mins < 60) return mins + ' min ago';
+    if (mins < 48 * 60) return Math.round(mins / 60) + ' h ago';
+    return Math.round(mins / 1440) + ' days ago';
+  }
+  function title(name) {
+    return { uefa_champs_league: 'Champions League', uefa_nations_league: 'Nations League',
+             uefa_european_championship: 'Euros', fifa_world_cup: 'World Cup' }[name] || name.replace(/_/g, ' ');
+  }
+
+  function load() {
+    $('error').classList.add('d-none');
+    return fetch('/api/football/tournaments').then(function (r) { return r.json(); }).then(function (ts) {
+      var cached = ts.filter(function (t) { return t.cached; });
+      var notes = ts.filter(function (t) { return !t.cached; }).map(function (t) { return title(t.name) + ': no data yet'; });
+      return Promise.all(cached.map(function (t) {
+        return fetch('/api/odds/cache/' + t.key).then(function (r) { return r.json(); }).then(function (c) {
+          notes.unshift(title(t.name) + ': updated ' + ago(c.fetchedAt));
+          return c.events.map(function (ev) { ev.comp = title(t.name); ev.compKey = t.name; return ev; });
+        });
+      })).then(function (lists) {
+        matches = [].concat.apply([], lists).sort(function (a, b) { return a.commence_time.localeCompare(b.commence_time); });
+        $('sources').textContent = notes.join(' · ') || 'No competitions configured.';
+        var sel = $('filterComp'), keep = sel.value;
+        sel.innerHTML = '<option value="">All competitions</option>';
+        ts.forEach(function (t) { var o = el('option', null, title(t.name)); o.value = title(t.name); sel.appendChild(o); });
+        sel.value = keep;
+        render();
+        // Crests (one saved football-data.org list per competition), then redraw with logos.
+        Promise.all(cached.map(function (t) {
+          return F.loadTeams(t.name).then(function (teams) { teamsByComp[t.name] = teams; });
+        })).then(render);
+      });
+    }).catch(function (e) { $('error').textContent = e.message; $('error').classList.remove('d-none'); });
+  }
+
+  function skybet(ev) {
+    return ev.bookmakers.find(function (b) { return b.key === 'skybet'; }) || ev.bookmakers[0];
+  }
+  function market(bk, key) { return bk && bk.markets.find(function (m) { return m.key === key; }); }
+
+  function render() {
+    var list = $('list');
+    list.innerHTML = '';
+    var comp = $('filterComp').value, onlyStars = $('filterStarred').checked, hideStarted = $('filterStarted').checked;
+    var shown = matches.filter(function (m) {
+      return (!comp || m.comp === comp) && (!onlyStars || stars.indexOf(m.id) >= 0) &&
+             (!hideStarted || new Date(m.commence_time) > new Date());
+    });
+    if (!shown.length) {
+      list.appendChild(el('div', 'alert alert-light border', matches.length ? 'No matches match these filters.' : 'No matches cached yet. Click Refresh.'));
+      return;
+    }
+    var day = null, tbody = null;
+    shown.forEach(function (m) {
+      var start = new Date(m.commence_time);
+      var d = start.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' });
+      if (d !== day) {
+        day = d;
+        list.appendChild(el('h2', 'h6 mt-4 mb-2', d));
+        var wrap = el('div', 'table-responsive');
+        var table = el('table', 'table table-sm table-hover align-middle mb-0 small');
+        var head = el('tr', 'text-muted');
+        ['', 'Time', 'Competition', 'Match', 'Home', 'Draw', 'Away', 'Goals line', ''].forEach(function (h, i) {
+          head.appendChild(el('th', i >= 4 && i <= 6 ? 'text-center' : null, h));
+        });
+        var thead = el('thead'); thead.appendChild(head); table.appendChild(thead);
+        tbody = el('tbody'); table.appendChild(tbody);
+        wrap.appendChild(table); list.appendChild(wrap);
+      }
+      var bk = skybet(m), h2h = market(bk, 'h2h'), tot = market(bk, 'totals');
+      function price(name) { var o = h2h && h2h.outcomes.find(function (x) { return x.name === name; }); return o ? o.price : null; }
+      var ph = price(m.home_team), pd = price('Draw'), pa = price(m.away_team);
+      var tr = el('tr');
+      var starred = stars.indexOf(m.id) >= 0;
+      var starBtn = el('button', 'btn btn-link btn-sm p-0 text-decoration-none ' + (starred ? 'text-warning' : 'text-muted'), starred ? '★' : '☆');
+      starBtn.title = 'Add to shortlist';
+      starBtn.onclick = function () {
+        var i = stars.indexOf(m.id);
+        if (i >= 0) stars.splice(i, 1); else stars.push(m.id);
+        saveStars(stars); render();
+      };
+      var td0 = el('td'); td0.appendChild(starBtn); tr.appendChild(td0);
+      var timeCell = el('td', 'text-nowrap', start.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
+      if (start < new Date()) timeCell.appendChild(el('span', 'badge text-bg-danger ms-1', 'LIVE'));
+      tr.appendChild(timeCell);
+      tr.appendChild(el('td', null, m.comp));
+      var teams = teamsByComp[m.compKey] || [];
+      var matchCell = el('td', 'fw-semibold');
+      var line = el('span', 'd-inline-flex align-items-center gap-1');
+      line.appendChild(F.logo(teams, m.home_team, 20));
+      line.appendChild(el('span', null, m.home_team));
+      line.appendChild(el('span', 'text-muted fw-normal mx-1', 'v'));
+      line.appendChild(F.logo(teams, m.away_team, 20));
+      line.appendChild(el('span', null, m.away_team));
+      matchCell.appendChild(line);
+      tr.appendChild(matchCell);
+      var chances = (ph && pd && pa) ? F.fairChances([ph, pd, pa]).chances : [null, null, null];
+      [ph, pd, pa].forEach(function (p, i) {
+        var td = el('td', 'text-center'); td.appendChild(F.oddsBadge(p, chances[i])); tr.appendChild(td);
+      });
+      var tdLine = el('td', 'text-nowrap');
+      if (tot && tot.outcomes.length) {
+        var tc = tot.outcomes.length > 1 ? F.fairChances(tot.outcomes.map(function (o) { return o.price; })).chances : [null];
+        tot.outcomes.forEach(function (o, i) {
+          tdLine.appendChild(el('span', 'me-1', o.name + ' ' + o.point));
+          tdLine.appendChild(F.oddsBadge(o.price, tc[i]));
+          tdLine.appendChild(el('span', 'me-2'));
+        });
+      } else {
+        tdLine.textContent = '–';
+      }
+      tr.appendChild(tdLine);
+      var view = el('a', 'btn btn-sm btn-outline-dark py-0', 'View');
+      view.href = '/football/match/' + encodeURIComponent(m.id);
+      var tdView = el('td', 'text-end'); tdView.appendChild(view); tr.appendChild(tdView);
+      tr.style.cursor = 'pointer';
+      tr.addEventListener('click', function (e) {
+        if (e.target.closest('a,button')) return;
+        location.href = view.href;
+      });
+      tbody.appendChild(tr);
+    });
+  }
+
+  ['filterComp', 'filterStarred', 'filterStarted'].forEach(function (id) { $(id).addEventListener('change', render); });
+
+  $('refresh').addEventListener('click', function () {
+    var btn = this;
+    btn.disabled = true;
+    fetch('/api/football/refresh', { method: 'POST' }).then(function (r) {
+      return r.json().then(function (res) {
+        if (!r.ok) throw new Error(res.message || ('HTTP ' + r.status));
+        var credits = res.reduce(function (t, x) { return t + (x.credits || 0); }, 0);
+        $('quota').textContent = 'Last refresh used ' + credits + ' credit(s)';
+        return load();
+      });
+    }).catch(function (e) { $('error').textContent = e.message; $('error').classList.remove('d-none'); })
+      .then(function () { btn.disabled = false; });
+  });
+
+  $('stakeBox').appendChild(F.stakeInput(render));
+  load();
+})();
+</script>
+</body>
+</html>

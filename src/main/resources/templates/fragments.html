@@ -25,12 +25,24 @@
       html { color-scheme: light; }
       body { margin:0; color:#212529; background:#fff; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
       body > .container, nav .container { width:min(1320px, calc(100% - 2rem)); margin-inline:auto; }
+      /* Odds badges: chance bands from very likely (dark green) to long shot (dark red) */
+      .odds-very-good { background:#0b5d33; color:#fff; }
+      .odds-good      { background:#2fa05a; color:#fff; }
+      .odds-ok        { background:#f2c12e; color:#212529; }
+      .odds-poor      { background:#e0533d; color:#fff; }
+      .odds-very-poor { background:#8b1a1a; color:#fff; }
+      .odds-tip .tooltip-inner { white-space:pre-line; text-align:left; max-width:260px; }
     </style>
 </head>
 <body>
 
 <nav th:fragment="navbar" class="navbar navbar-dark bg-dark mb-4">
-    <div class="container"><a class="navbar-brand" href="/">⚽ Bet Assistant</a></div>
+    <div class="container">
+        <a class="navbar-brand" href="/">⚽ Bet Assistant</a>
+        <div class="navbar-nav flex-row gap-3">
+            <a class="nav-link" href="/football">Football</a>
+        </div>
+    </div>
 </nav>
 
 </body>

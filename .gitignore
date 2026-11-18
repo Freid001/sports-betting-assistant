@@ -9,3 +9,6 @@ target/
 # Local databases
 *.sqlite
 *.db
+
+# Local odds cache (fetched from The Odds API)
+cache/

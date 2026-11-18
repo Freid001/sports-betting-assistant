@@ -22,6 +22,14 @@
       <artifactId>spring-boot-starter-thymeleaf</artifactId>
       <version>${spring.boot.version}</version>
     </dependency>
+    <!-- Dev only: restarts the app when compiled classes change, turns off template caching. -->
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-devtools</artifactId>
+      <version>${spring.boot.version}</version>
+      <scope>runtime</scope>
+      <optional>true</optional>
+    </dependency>
   </dependencies>
   <build>
     <plugins>
@@ -38,6 +46,11 @@
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-maven-plugin</artifactId>
         <version>${spring.boot.version}</version>
+        <configuration>
+          <!-- mvn spring-boot:run serves templates/JS/CSS straight from src/main/resources,
+               so edits show on browser refresh without a restart. -->
+          <addResources>true</addResources>
+        </configuration>
         <executions>
           <execution>
             <goals>
