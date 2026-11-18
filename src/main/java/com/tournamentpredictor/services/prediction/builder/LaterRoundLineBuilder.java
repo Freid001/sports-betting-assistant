@@ -173,7 +173,7 @@ class LaterRoundLineBuilder {
         int weightedContribution = pathFatigueCalc.knockoutWeightedContribution(candidate.opponentElo(), fatigueStage, false);
         int weightedTotal = candidate.existingWeightedTotal() + weightedContribution;
         int contributionElo = pathFatigueCalc.eloAdjustmentFromWeighted(weightedContribution);
-        String segment = candidate.opponent().isEmpty() ? "" : "K@"
+        String segment = candidate.opponent().isEmpty() ? "" : (candidate.upsetWin() ? "U@" : "K@")
                 + candidate.sourceMatchId() + "|" + candidate.opponent() + ":" + contributionElo;
         String chain = candidate.existingChain().isEmpty() ? segment : candidate.existingChain() + " > " + segment;
         int fatigue = pathFatigueCalc.eloAdjustmentFromWeighted(weightedTotal);

@@ -57,6 +57,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 
@@ -79,6 +80,7 @@ public class WebControllerService {
     public final PredictionConfig predictionConfig;
     public final WebCsvRepository csv;
     private final GeneratedDataStore generatedDataStore;
+    private final Map<String, Map<String, String>> routeLikelihoodCache = new ConcurrentHashMap<>();
 
     @Autowired
     public WebControllerService(PredictionConfig predictionConfig) {
@@ -765,13 +767,9 @@ public class WebControllerService {
                                                   int page, int pageSize) throws IOException {
         CsvData data = readCachedDataset(tournament, "matchup", round, path);
         List<Map<String, String>> filtered = filterMatchupRows(data, pathFilter, teamFilter);
-        Map<String, String> routeContextsByMatchup = routeContextsByMatchup(filtered);
         List<String> headers = new ArrayList<>(data.headers());
         if (!headers.isEmpty() && !headers.contains("route_contexts")) {
             headers.add("route_contexts");
-        }
-        for (Map<String, String> row : filtered) {
-            row.put("route_contexts", routeContextsByMatchup.getOrDefault(matchupContextKey(row), ""));
         }
         filtered.sort(matchupLikelihoodComparator());
         int safePageSize = Math.max(1, pageSize);
@@ -779,6 +777,14 @@ public class WebControllerService {
         int from = Math.min(filtered.size(), (safePage - 1) * safePageSize);
         int to = Math.min(filtered.size(), from + safePageSize);
         List<Map<String, String>> rows = filtered.subList(from, to);
+        Set<String> pageMatchups = rows.stream()
+                .map(WebControllerService::matchupContextKey)
+                .filter(key -> !key.isBlank())
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        Map<String, String> routeContextsByMatchup = routeContextsByMatchup(filtered, pageMatchups);
+        for (Map<String, String> row : rows) {
+            row.put("route_contexts", routeContextsByMatchup.getOrDefault(matchupContextKey(row), ""));
+        }
         List<String> lines = new ArrayList<>();
         if (!headers.isEmpty()) {
             lines.add(String.join(",", headers));
@@ -790,10 +796,15 @@ public class WebControllerService {
     }
 
     private Map<String, String> routeContextsByMatchup(List<Map<String, String>> rows) {
+        return routeContextsByMatchup(rows, Set.of());
+    }
+
+    private Map<String, String> routeContextsByMatchup(List<Map<String, String>> rows, Set<String> includeKeys) {
         Map<String, LinkedHashSet<String>> contexts = new LinkedHashMap<>();
         for (Map<String, String> row : rows) {
             String key = matchupContextKey(row);
             if (key.isBlank()) continue;
+            if (includeKeys != null && !includeKeys.isEmpty() && !includeKeys.contains(key)) continue;
             String context = routeContextValue(row);
             if (context.isBlank()) continue;
             contexts.computeIfAbsent(key, ignored -> new LinkedHashSet<>()).add(context);
@@ -816,15 +827,29 @@ public class WebControllerService {
     private static String routeContextValue(Map<String, String> row) {
         String path = WebText.trim(row.getOrDefault("path", ""));
         if ("predicted".equalsIgnoreCase(path) || "prediction".equalsIgnoreCase(path)) path = "primary";
-        String team1Fatigue = WebText.trim(row.getOrDefault("team1_path_fatigue", ""));
-        String team2Fatigue = WebText.trim(row.getOrDefault("team2_path_fatigue", ""));
         String team1Opponent = WebText.trim(row.getOrDefault("team1_path_opponent", ""));
         String team2Opponent = WebText.trim(row.getOrDefault("team2_path_opponent", ""));
+        String matchupPct = WebText.trim(row.getOrDefault("matchup_pct", ""));
+        String team1Slot = routeSeed(row, "team1");
+        String team2Slot = routeSeed(row, "team2");
+        String upsetPath = WebText.trim(row.getOrDefault("upset_path", "0"));
         return safeRouteField(path) + "~"
                 + safeRouteField(team1Opponent) + "~"
-                + safeRouteField(team1Fatigue) + "~"
+                + "~"
                 + safeRouteField(team2Opponent) + "~"
-                + safeRouteField(team2Fatigue);
+                + "~"
+                + safeRouteField(matchupPct) + "~"
+                + safeRouteField(team1Slot) + "~"
+                + safeRouteField(team2Slot) + "~"
+                + safeRouteField(upsetPath);
+    }
+
+    private static String routeSeed(Map<String, String> row, String prefix) {
+        String groupFinish = WebText.trim(row.getOrDefault(prefix + "_group_finish", ""));
+        if (!groupFinish.isBlank()) return groupFinish;
+        String bracketSlot = WebText.trim(row.getOrDefault(prefix + "_bracket_slot", ""));
+        if (!bracketSlot.isBlank()) return bracketSlot;
+        return WebText.trim(row.getOrDefault(prefix + "_slot", ""));
     }
 
     private static String safeRouteField(String value) {
@@ -888,18 +913,60 @@ public class WebControllerService {
         int routeRows = 0;
         int runs = 0;
         EloCalculator elo = new EloCalculator();
+        Map<String, Map<String, String>> eligibleRowsByMatchup = new LinkedHashMap<>();
         for (Map<String, String> row : data.rows()) {
             String matchId = WebText.trim(row.getOrDefault("match_id", ""));
             String team1 = WebText.trim(row.getOrDefault("team1", ""));
             String team2 = WebText.trim(row.getOrDefault("team2", ""));
             if (matchId.isBlank() || team1.isBlank() || team2.isBlank()) continue;
-            double matchupPct = matchupLikelihoodValue(row);
-            if (matchupPct <= 0.0) continue;
             String prediction = WebText.trim(row.getOrDefault("prediction", ""));
             if (prediction.isBlank()) prediction = WebText.trim(row.getOrDefault("model_prediction", ""));
+            if (prediction.isBlank()) prediction = WebText.trim(row.getOrDefault("elo", ""));
             String winner = elo.parseTeamFromPrediction(prediction);
             int winnerPct = elo.parsePctFromPrediction(prediction);
             if (winner.isBlank() || winnerPct <= 0) continue;
+            String key = matchupContextKey(row);
+            Map<String, String> existing = eligibleRowsByMatchup.get(key);
+            if (existing == null
+                    || pathSortRank(WebText.trim(row.getOrDefault("path", ""))) < pathSortRank(WebText.trim(existing.getOrDefault("path", "")))
+                    || (pathSortRank(WebText.trim(row.getOrDefault("path", ""))) == pathSortRank(WebText.trim(existing.getOrDefault("path", "")))
+                    && matchupLikelihoodValue(row) > matchupLikelihoodValue(existing))) {
+                eligibleRowsByMatchup.put(key, row);
+            }
+        }
+        List<Map<String, String>> eligibleRows = new ArrayList<>(eligibleRowsByMatchup.values());
+        Map<String, String> aggregatedLikelihoods = Map.of();
+        if (!"last_32".equals(round)) {
+            aggregatedLikelihoods = routeWeightedMatchupLikelihoods(tournament, round, eligibleRows,
+                    readCsv(predictionFile(tournament, "groups.csv")).rows());
+        }
+        boolean hasPositiveMatchupPct = false;
+        for (Map<String, String> row : eligibleRows) {
+            double matchupPct = parseDouble(aggregatedLikelihoods.getOrDefault(
+                    RouteLikelihoodService.matchupLikelihoodKey(
+                            WebText.trim(row.getOrDefault("match_id", "")),
+                            WebText.trim(row.getOrDefault("team1", "")),
+                            WebText.trim(row.getOrDefault("team2", ""))),
+                    ""), 0.0);
+            if (matchupPct <= 0.0) matchupPct = matchupLikelihoodValue(row);
+            if (matchupPct > 0.0) {
+                row.put("_advance_matchup_pct", String.valueOf(matchupPct));
+                hasPositiveMatchupPct = true;
+            }
+        }
+        double equalRouteWeight = eligibleRows.isEmpty() ? 0.0 : 100.0 / eligibleRows.size();
+        for (Map<String, String> row : eligibleRows) {
+            String team1 = WebText.trim(row.getOrDefault("team1", ""));
+            String team2 = WebText.trim(row.getOrDefault("team2", ""));
+            double matchupPct = hasPositiveMatchupPct
+                    ? parseDouble(row.getOrDefault("_advance_matchup_pct", ""), matchupLikelihoodValue(row))
+                    : equalRouteWeight;
+            if (matchupPct <= 0.0) continue;
+            String prediction = WebText.trim(row.getOrDefault("prediction", ""));
+            if (prediction.isBlank()) prediction = WebText.trim(row.getOrDefault("model_prediction", ""));
+            if (prediction.isBlank()) prediction = WebText.trim(row.getOrDefault("elo", ""));
+            String winner = elo.parseTeamFromPrediction(prediction);
+            int winnerPct = elo.parsePctFromPrediction(prediction);
             double winnerContribution = matchupPct * winnerPct / 100.0;
             double otherContribution = matchupPct * (100.0 - winnerPct) / 100.0;
             if (winner.equalsIgnoreCase(team1)) {
@@ -942,10 +1009,14 @@ public class WebControllerService {
     }
 
     private static double parseDouble(String value) {
+        return parseDouble(value, 0.0);
+    }
+
+    private static double parseDouble(String value, double fallback) {
         try {
             return Double.parseDouble(value.replace("%", "").trim());
         } catch (NumberFormatException e) {
-            return 0.0;
+            return fallback;
         }
     }
 
@@ -1001,25 +1072,58 @@ public class WebControllerService {
             String tournament, String round, List<Map<String, String>> currentRows,
             List<Map<String, String>> groupRows) throws IOException {
         if ("last_32".equals(round)) return RouteLikelihoodService.matchupLikelihoodMap(currentRows, groupRows);
+        String cacheKey = routeLikelihoodCacheKey(tournament, round);
+        Map<String, String> cached = routeLikelihoodCache.get(cacheKey);
+        if (cached != null) return cached;
         List<Map<String, String>> last32Rows = readCsv(matchupFile(tournament, "last_32.csv")).rows();
-        List<Map<String, String>> last16Rows = "last_16".equals(round)
-                ? currentRows : readCsv(matchupFile(tournament, "last_16.csv")).rows();
+        List<Map<String, String>> last16Rows = readCsv(matchupFile(tournament, "last_16.csv")).rows();
         Map<String, String> last16Likelihoods = RouteLikelihoodService.routeWeightedNextRoundMatchupLikelihoodMap(
                 last16Rows, last32Rows, groupRows);
-        if ("last_16".equals(round)) return last16Likelihoods;
+        if ("last_16".equals(round)) {
+            routeLikelihoodCache.put(cacheKey, last16Likelihoods);
+            return last16Likelihoods;
+        }
 
-        List<Map<String, String>> last8Rows = "last_8".equals(round)
-                ? currentRows : readCsv(matchupFile(tournament, "last_8.csv")).rows();
+        List<Map<String, String>> last8Rows = readCsv(matchupFile(tournament, "last_8.csv")).rows();
         Map<String, String> last8Likelihoods = RouteLikelihoodService.routeWeightedNextRoundMatchupLikelihoodMap(
                 last8Rows, last16Rows, last16Likelihoods);
-        if ("last_8".equals(round)) return last8Likelihoods;
+        if ("last_8".equals(round)) {
+            routeLikelihoodCache.put(cacheKey, last8Likelihoods);
+            return last8Likelihoods;
+        }
 
-        List<Map<String, String>> last4Rows = "last_4".equals(round)
-                ? currentRows : readCsv(matchupFile(tournament, "last_4.csv")).rows();
+        List<Map<String, String>> last4Rows = readCsv(matchupFile(tournament, "last_4.csv")).rows();
         Map<String, String> last4Likelihoods = RouteLikelihoodService.routeWeightedNextRoundMatchupLikelihoodMap(
                 last4Rows, last8Rows, last8Likelihoods);
-        if ("last_4".equals(round)) return last4Likelihoods;
-        return RouteLikelihoodService.routeWeightedNextRoundMatchupLikelihoodMap(currentRows, last4Rows, last4Likelihoods);
+        if ("last_4".equals(round)) {
+            routeLikelihoodCache.put(cacheKey, last4Likelihoods);
+            return last4Likelihoods;
+        }
+        List<Map<String, String>> finalRows = "final".equals(round)
+                ? currentRows
+                : readCsv(matchupFile(tournament, "final.csv")).rows();
+        Map<String, String> finalLikelihoods = RouteLikelihoodService.routeWeightedNextRoundMatchupLikelihoodMap(
+                finalRows, last4Rows, last4Likelihoods);
+        routeLikelihoodCache.put(cacheKey, finalLikelihoods);
+        return finalLikelihoods;
+    }
+
+    private String routeLikelihoodCacheKey(String tournament, String round) {
+        return tournament + "|" + round + "|"
+                + fileStamp(matchupFile(tournament, "last_32.csv")) + "|"
+                + fileStamp(matchupFile(tournament, "last_16.csv")) + "|"
+                + fileStamp(matchupFile(tournament, "last_8.csv")) + "|"
+                + fileStamp(matchupFile(tournament, "last_4.csv")) + "|"
+                + fileStamp(matchupFile(tournament, "final.csv")) + "|"
+                + fileStamp(predictionFile(tournament, "groups.csv"));
+    }
+
+    private static long fileStamp(Path path) {
+        try {
+            return Files.exists(path) ? Files.getLastModifiedTime(path).toMillis() : 0L;
+        } catch (IOException ignored) {
+            return 0L;
+        }
     }
 
     public void writeCsv(Path path, List<String> headers, List<Map<String, String>> rows) throws IOException {

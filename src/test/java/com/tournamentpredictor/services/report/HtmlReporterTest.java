@@ -16,7 +16,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class HtmlReporterTest {
 
     @Test
-    void pathFatigueNotesShowPerOpponentEloContributions() {
+    void tournamentPathsShowOpponentsWithoutPathFatigueContributions() {
         EloBreakdown breakdown = new EloBreakdown(1900, false, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0,
@@ -30,13 +30,13 @@ class HtmlReporterTest {
         assertTrue(html.contains("Brazil"));
         assertTrue(html.contains("France"));
         assertTrue(html.contains("Argentina"));
-        assertTrue(html.contains("Knockout ELO -5"));
-        assertTrue(html.contains("Knockout ELO -9"));
-        assertTrue(html.contains("Hard <span style=\"white-space:nowrap\">-19</span>"));
+        assertFalse(html.contains("Knockout ELO -5"));
+        assertFalse(html.contains("Knockout ELO -9"));
+        assertFalse(html.contains("Hard <span style=\"white-space:nowrap\">-19</span>"));
     }
 
     @Test
-    void pathFatigueNotesSeparateGroupLoadFromKnockoutPath() {
+    void tournamentPathsHideGroupLoadAndKeepKnockoutPath() {
         EloBreakdown breakdown = new EloBreakdown(1900, false, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0,
@@ -47,11 +47,10 @@ class HtmlReporterTest {
 
         String html = HtmlReporter.buildTeamBreakdownHtml("Scotland", breakdown, "C3");
 
-        assertTrue(html.contains("Group ELO -3"));
-        assertTrue(html.contains("Knockout ELO -8"));
+        assertFalse(html.contains("Group ELO -3"));
+        assertFalse(html.contains("Knockout ELO -8"));
         assertTrue(html.indexOf("C3") < html.indexOf("Brazil"));
-        assertTrue(html.contains("G|Brazil:-3") || html.contains("Group ELO -3"));
-        assertTrue(html.contains("Knockout ELO -8"));
+        assertFalse(html.contains("G|Brazil:-3"));
     }
 
     @Test
@@ -159,8 +158,7 @@ class HtmlReporterTest {
 
         assertTrue(html.contains("elo-calc-card"));
         assertTrue(html.contains("elo-base-pill"));
-        assertTrue(html.contains("table-danger elo-negative"));
-        assertTrue(html.contains("<div class=\"elo-signal-label\">Path Fatigue</div>"));
+        assertFalse(html.contains("<div class=\"elo-signal-label\">Path Fatigue</div>"));
     }
 
     @Test
@@ -178,6 +176,39 @@ class HtmlReporterTest {
         String html = reporter.getHtml();
         assertTrue(html.contains("target='_blank' rel='noopener'"));
         assertTrue(html.contains("/view/path-game?tournament=world_cup_2026"));
+    }
+
+    @Test
+    void scoreModelRouteContextsStripStoredStagePrefixesAndDedupePrimaryPath() {
+        HtmlReporter reporter = new HtmlReporter().withPathNavigation("world_cup_2026", "last_32_match");
+        List<String> lines = List.of(
+                "match_id,team1,team2,path,elo,team1_slot,team2_slot,team1_path_opponent,team2_path_opponent,route_contexts",
+                "M1,England,Uruguay,predicted,England (62%),J2,K1,G|Argentina:-3 > K@M9|Spain:-2,,primary~G Argentina:-3 > K@M9 Spain:-2~0~~~10~J2~K1||alt~G Brazil:-3 > K@M9 Spain:-2~0~~~20~J2~K1||alt~K@M8 France:-2~0~~~5~H1~K1"
+        );
+        Map<String, EloBreakdown> breakdowns = Map.of(
+                "England", new EloBreakdown(1900, false, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        0, 0, 0, 0,
+                        "", "", "", "", "", "",
+                        List.of(), List.of(),
+                        -3, "Medium", "G|Argentina:-3 > K@M9|Spain:-2"),
+                "Uruguay", breakdown(1700)
+        );
+
+        reporter.printMatchups("Last 32", lines, new EloCalculator(), null, Map.of(), breakdowns);
+
+        String html = reporter.getHtml();
+        assertTrue(html.contains(">J2</span>"));
+        assertTrue(html.contains(">H1</span>"));
+        assertTrue(html.contains("Spain"));
+        assertTrue(html.contains("France"));
+        assertTrue(html.indexOf(">J2</span>") < html.indexOf(">H1</span>"));
+        assertTrue(html.contains("(30%)"));
+        assertTrue(html.contains("path combinations"));
+        assertFalse(html.contains("G Brazil"));
+        assertFalse(html.contains("Route 1"));
+        assertFalse(html.contains("route contexts"));
     }
 
 

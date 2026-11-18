@@ -576,7 +576,7 @@ public class SqliteCacheRepository {
         String normalizedPath = normalizePathFilter(pathFilter);
         String sql = """
                 select p.*, p.team1 as team1_team, p.team2 as team2_team,
-                       t1.path_fatigue as team1_path_fatigue, t2.path_fatigue as team2_path_fatigue,
+                       '' as team1_path_fatigue, '' as team2_path_fatigue,
                        t1.path_opponent as team1_path_opponent, t2.path_opponent as team2_path_opponent
                 from paths p
                 left join tournament_paths t1 on t1.tournament = p.tournament and t1.path_id = p.path_id and t1.path_side = 'team1' and t1.row_type = 'route'
@@ -829,7 +829,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select p.tournament, p.round, coalesce(p.team1, ''), '', coalesce(f.team1_path_opponent, ''), 0, 0, 0, 0,
-                           'route', p.path_id, coalesce(p.match_id, ''), 'team1', coalesce(f.team1_path_fatigue, ''), coalesce(f.team1_path_opponent, '')
+                           'route', p.path_id, coalesce(p.match_id, ''), 'team1', '', coalesce(f.team1_path_opponent, '')
                     from paths p
                     join path_fatigue f on f.tournament = p.tournament and f.path_id = p.path_id
                     """);
@@ -839,7 +839,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select p.tournament, p.round, coalesce(p.team2, ''), '', coalesce(f.team2_path_opponent, ''), 0, 0, 0, 0,
-                           'route', p.path_id, coalesce(p.match_id, ''), 'team2', coalesce(f.team2_path_fatigue, ''), coalesce(f.team2_path_opponent, '')
+                           'route', p.path_id, coalesce(p.match_id, ''), 'team2', '', coalesce(f.team2_path_opponent, '')
                     from paths p
                     join path_fatigue f on f.tournament = p.tournament and f.path_id = p.path_id
                     """);
@@ -892,7 +892,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select tournament, round, coalesce(nullif(team1, ''), team1_team), '', coalesce(team1_path_opponent, ''), 0, 0, 0, 0,
-                           'route', %s, coalesce(match_id, ''), 'team1', coalesce(team1_path_fatigue, ''), coalesce(team1_path_opponent, '')
+                           'route', %s, coalesce(match_id, ''), 'team1', '', coalesce(team1_path_opponent, '')
                     from %s
                     """.formatted(pathIdExpression, legacy));
             statement.executeUpdate("""
@@ -901,7 +901,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select tournament, round, coalesce(nullif(team2, ''), team2_team), '', coalesce(team2_path_opponent, ''), 0, 0, 0, 0,
-                           'route', %s, coalesce(match_id, ''), 'team2', coalesce(team2_path_fatigue, ''), coalesce(team2_path_opponent, '')
+                           'route', %s, coalesce(match_id, ''), 'team2', '', coalesce(team2_path_opponent, '')
                     from %s
                     """.formatted(pathIdExpression, legacy));
             statement.executeUpdate("drop table " + legacy);
@@ -984,7 +984,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select tournament, round, coalesce(nullif(team1, ''), team1_team), '', coalesce(team1_path_opponent, ''), 0, 0, 0, 0,
-                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team1', coalesce(team1_path_fatigue, ''), coalesce(team1_path_opponent, '')
+                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team1', '', coalesce(team1_path_opponent, '')
                     from %s
                     """.formatted(source));
             statement.executeUpdate("""
@@ -993,7 +993,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select tournament, round, coalesce(nullif(team2, ''), team2_team), '', coalesce(team2_path_opponent, ''), 0, 0, 0, 0,
-                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team2', coalesce(team2_path_fatigue, ''), coalesce(team2_path_opponent, '')
+                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team2', '', coalesce(team2_path_opponent, '')
                     from %s
                     """.formatted(source));
             statement.executeUpdate("drop table " + source);
@@ -1053,7 +1053,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select tournament, round, coalesce(nullif(team1, ''), team1_team), '', coalesce(team1_path_opponent, ''), 0, 0, 0, 0,
-                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team1', coalesce(team1_path_fatigue, ''), coalesce(team1_path_opponent, '')
+                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team1', '', coalesce(team1_path_opponent, '')
                     from %s
                     where coalesce(path, '') <> '' or coalesce(team1_slot, '') <> '' or coalesce(team2_slot, '') <> ''
                     """.formatted(legacy));
@@ -1063,7 +1063,7 @@ public class SqliteCacheRepository {
                       row_type, path_id, match_id, path_side, path_fatigue, path_opponent
                     )
                     select tournament, round, coalesce(nullif(team2, ''), team2_team), '', coalesce(team2_path_opponent, ''), 0, 0, 0, 0,
-                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team2', coalesce(team2_path_fatigue, ''), coalesce(team2_path_opponent, '')
+                           'route', 'legacy:' || rowid, coalesce(match_id, ''), 'team2', '', coalesce(team2_path_opponent, '')
                     from %s
                     where coalesce(path, '') <> '' or coalesce(team1_slot, '') <> '' or coalesce(team2_slot, '') <> ''
                     """.formatted(legacy));
@@ -1258,7 +1258,7 @@ public class SqliteCacheRepository {
         routeInsert.setString(5, pathId);
         routeInsert.setString(6, matchId);
         routeInsert.setString(7, pathSide);
-        routeInsert.setString(8, pathFatigue);
+        routeInsert.setString(8, "");
         routeInsert.setString(9, pathOpponent);
         routeInsert.addBatch();
     }

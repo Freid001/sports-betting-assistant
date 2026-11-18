@@ -462,6 +462,9 @@ public class ViewController {
             }
             String simulationRound = SimulationViewDataService.simulationRoundForMatchView(safeRound);
             String likelihoodRound = simulationRound != null ? simulationRound : "last_32".equals(safeRound) ? "last_32" : null;
+            if (likelihoodRound != null) {
+                web.ensureSimulationExists(safeTournament, likelihoodRound);
+            }
             List<Map<String, String>> currentSimulationRows = likelihoodRound == null
                     ? List.of()
                     : web.generatedDataExists(web.simulationFile(safeTournament, "simulation_" + likelihoodRound + ".csv"))
@@ -469,9 +472,9 @@ public class ViewController {
                             : List.of();
             String snapshotSimulationRound = simulationRound;
             List<Map<String, String>> snapshotSimulationRows = currentSimulationRows;
-            if (snapshotSimulationRows.isEmpty() && "last_32".equals(simulationRound)) {
+            if (snapshotSimulationRows.isEmpty() && simulationRound != null) {
                 snapshotSimulationRows = web.matchupAdvanceRows(safeTournament, resultsRound, file);
-                snapshotSimulationRound = "last_32";
+                snapshotSimulationRound = simulationRound;
             }
             List<Map<String, String>> scorelineRows = likelihoodRound == null
                     ? List.of()

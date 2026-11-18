@@ -223,7 +223,7 @@ public final class EloBreakdown {
         this.pathOpponent = pathOpponent != null ? pathOpponent : "";
         this.totalElo = baseElo + homeBonus - injuryPenalty + heatBonus - dropoutPenalty + qualBonus
                 + preTournamentBonus + confederationAdjustment - squadAgePenalty - squadCohesionPenalty
-                - squadDepthPenalty + pathFatigueAdjustment;
+                - squadDepthPenalty;
         this.qualResults = qualResults != null ? List.copyOf(qualResults) : List.of();
         this.friendlyResults = friendlyResults != null ? List.copyOf(friendlyResults) : List.of();
     }

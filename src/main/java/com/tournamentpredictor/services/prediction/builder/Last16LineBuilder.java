@@ -117,8 +117,8 @@ public class Last16LineBuilder {
                         t2NewTotal = candidate2.existingWeightedTotal() + t2ContribW;
                         int t1ContribElo = pathFatigueCalc.eloAdjustmentFromWeighted(t1ContribW);
                         int t2ContribElo = pathFatigueCalc.eloAdjustmentFromWeighted(t2ContribW);
-                        String t1Segment = candidate1.opponent().isEmpty() ? "" : "K@" + candidate1.sourceMatchId() + "|" + candidate1.opponent() + ":" + t1ContribElo;
-                        String t2Segment = candidate2.opponent().isEmpty() ? "" : "K@" + candidate2.sourceMatchId() + "|" + candidate2.opponent() + ":" + t2ContribElo;
+                        String t1Segment = candidate1.opponent().isEmpty() ? "" : (candidate1.upsetWin() ? "U@" : "K@") + candidate1.sourceMatchId() + "|" + candidate1.opponent() + ":" + t1ContribElo;
+                        String t2Segment = candidate2.opponent().isEmpty() ? "" : (candidate2.upsetWin() ? "U@" : "K@") + candidate2.sourceMatchId() + "|" + candidate2.opponent() + ":" + t2ContribElo;
                         t1Chain = appendChain(candidate1.existingChain(), t1Segment);
                         t2Chain = appendChain(candidate2.existingChain(), t2Segment);
                     }

@@ -834,7 +834,7 @@ public class HtmlReporter extends ConsoleReporter {
             if (routeContextCount > 1) {
                 html.append(" <span class=\"badge text-bg-light border text-muted\">")
                         .append(routeContextCount)
-                        .append(" route contexts</span>");
+                        .append(" path combinations</span>");
             }
             html.append("</td>");
             if (showOdds) {
@@ -989,9 +989,9 @@ public class HtmlReporter extends ConsoleReporter {
         html.append("<div class=\"px-3 py-2 small text-muted\" style=\"background:#f8f9fa;border-bottom:1px solid #dee2e6\">");
         if (routeContextCount > 1) {
             html.append(routeContextCount)
-                    .append(" distinct route contexts can lead to this matchup; the table shows the primary display context.");
+                    .append(" path combinations can lead to this matchup; the table shows the primary display path.");
         } else {
-            html.append("Single route context for this matchup on the current page.");
+            html.append("Single path combination for this matchup on the current page.");
         }
         html.append("</div></td></tr>");
     }
@@ -1006,22 +1006,10 @@ public class HtmlReporter extends ConsoleReporter {
         String team2 = row[2];
         EloBreakdown b1 = eloBreakdowns.get(team1);
         EloBreakdown b2 = eloBreakdowns.get(team2);
-        int team1PathDiffScore = row.length > 11 ? parseIntOrZero(row[11]) : 0;
-        int team2PathDiffScore = row.length > 12 ? parseIntOrZero(row[12]) : 0;
         String team1PathOpp = row.length > 13 ? row[13] : "";
         String team2PathOpp = row.length > 14 ? row[14] : "";
-        if (b1 != null && (team1PathDiffScore != 0 || !team1PathOpp.isEmpty())) {
-            b1 = b1.withPathFatigue(
-                    pathFatigueCalculator.eloAdjustmentFromWeighted(team1PathDiffScore),
-                    pathFatigueCalculator.label(team1PathDiffScore),
-                    team1PathOpp);
-        }
-        if (b2 != null && (team2PathDiffScore != 0 || !team2PathOpp.isEmpty())) {
-            b2 = b2.withPathFatigue(
-                    pathFatigueCalculator.eloAdjustmentFromWeighted(team2PathDiffScore),
-                    pathFatigueCalculator.label(team2PathDiffScore),
-                    team2PathOpp);
-        }
+        if (b1 != null && !team1PathOpp.isEmpty()) b1 = b1.withPathFatigue(0, "", team1PathOpp);
+        if (b2 != null && !team2PathOpp.isEmpty()) b2 = b2.withPathFatigue(0, "", team2PathOpp);
 
         html.append("<tr class=\"detail-row\" data-path=\"").append(rowPath).append("\"")
                 .append(" data-team1=\"").append(escapeHtml(team1)).append("\"")
@@ -1034,7 +1022,7 @@ public class HtmlReporter extends ConsoleReporter {
         if (routeContextCount > 1) {
             html.append("<div class=\"small text-muted mb-2\">")
                     .append(routeContextCount)
-                    .append(" distinct route contexts can lead to this matchup; the top row uses the primary context.</div>");
+                    .append(" path combinations can lead to this matchup; the top row uses the primary display path.</div>");
         }
 
         if (b1 != null || b2 != null) {
@@ -1059,7 +1047,8 @@ public class HtmlReporter extends ConsoleReporter {
                 }
             }
             appendExpectedGoalsPanel(html, team1, b1, row.length > 15 ? row[15] : "", team2, b2, row.length > 16 ? row[16] : "",
-                    row.length > 29 ? row[29] : "", routeContexts, actualResultMode, actualResult, resolvedHomeScore, resolvedAwayScore);
+                    row.length > 29 ? row[29] : "", routeContexts, row.length > 13 ? row[13] : "", row.length > 14 ? row[14] : "",
+                    actualResultMode, actualResult, resolvedHomeScore, resolvedAwayScore);
             html.append("<div class=\"row g-3 mb-2 w-100 align-items-start\">");
             appendTeamEloBreakdown(html, team1, b1, row.length > 15 ? row[15] : "");
             appendTeamEloBreakdown(html, team2, b2, row.length > 16 ? row[16] : "");
@@ -1109,7 +1098,8 @@ public class HtmlReporter extends ConsoleReporter {
 
     private void appendExpectedGoalsPanel(StringBuilder html, String team1, EloBreakdown b1, String originSlot1,
                                                  String team2, EloBreakdown b2, String originSlot2, String matchupRuns,
-                                                 String routeContexts, boolean actualResultMode, String actualResult,
+                                                 String routeContexts, String team1RawPath, String team2RawPath,
+                                                 boolean actualResultMode, String actualResult,
                                                  String homeScore, String awayScore) {
         if (b1 == null || b2 == null) {
             return;
@@ -1122,7 +1112,7 @@ public class HtmlReporter extends ConsoleReporter {
         html.append("<div class=\"text-muted small fw-semibold mb-2\">Score model</div>");
         html.append("<div class=\"row g-2 align-items-stretch text-center\">");
         appendScoreModelTeamColumn(html, team1, b1, originSlot1, projection.team1ExpectedGoals(),
-                projection.team1WinPct(), projection.team1AdvancePct(), routeContexts, true);
+                projection.team1WinPct(), projection.team1AdvancePct(), routeContexts, true, team1RawPath);
         html.append("<div class=\"col-12 col-lg-4 d-flex align-items-stretch\">");
         html.append("<div class=\"w-100 border rounded-3 bg-light px-2 py-3 text-center d-flex flex-column justify-content-center\">");
         if (actualResultMode) {
@@ -1170,7 +1160,7 @@ public class HtmlReporter extends ConsoleReporter {
         html.append("</div>");
         html.append("</div>");
         appendScoreModelTeamColumn(html, team2, b2, originSlot2, projection.team2ExpectedGoals(),
-                projection.team2WinPct(), projection.team2AdvancePct(), routeContexts, false);
+                projection.team2WinPct(), projection.team2AdvancePct(), routeContexts, false, team2RawPath);
         html.append("</div>");
         if (!actualResultMode) {
             html.append("<div class=\"text-muted mt-2\" style=\"font-size:0.72rem\">")
@@ -1279,7 +1269,7 @@ public class HtmlReporter extends ConsoleReporter {
 
     private void appendScoreModelTeamColumn(StringBuilder html, String team, EloBreakdown breakdown, String originSlot,
                                                    double expectedGoals, int winPct, int advancePct,
-                                                   String routeContexts, boolean team1Side) {
+                                                   String routeContexts, boolean team1Side, String rawPath) {
         html.append("<div class=\"col-12 col-lg-4\">");
         html.append("<div class=\"h-100 border rounded bg-light-subtle p-2\">");
         html.append("<div class=\"fs-4 mb-1\">").append(flagHtml(team)).append("</div>");
@@ -1289,48 +1279,116 @@ public class HtmlReporter extends ConsoleReporter {
         appendScoreModelStat(html, "90-min W", winPct + "%");
         appendScoreModelStat(html, "Advance", advancePct + "%");
         html.append("</div>");
-        appendScoreModelTournamentPath(html, team, breakdown, originSlot, routeContexts, team1Side);
+        appendScoreModelTournamentPaths(html, team, breakdown, originSlot, routeContexts, team1Side, rawPath);
         html.append("</div>");
         html.append("</div>");
     }
 
-    private void appendRouteContextLines(StringBuilder html, String routeContexts, String team, boolean team1Side) {
-        if (routeContexts == null || routeContexts.isBlank()) return;
+    private List<RouteDisplayPath> routeDisplayPaths(String routeContexts, String team, boolean team1Side,
+                                                     String originSlot, String primaryOpponents) {
+        Map<String, RouteDisplayPath> paths = new LinkedHashMap<>();
+        if (routeContexts == null || routeContexts.isBlank()) {
+            addRouteDisplayPath(paths, originSlot, primaryOpponents, "", team, 0);
+            return new ArrayList<>(paths.values());
+        }
         String[] contexts = routeContexts.split("\\|\\|");
-        List<String> lines = new ArrayList<>();
         for (String context : contexts) {
             if (context == null || context.isBlank()) continue;
             String[] parts = context.split("~", -1);
             String opponents = team1Side
                     ? (parts.length > 1 ? parts[1] : "")
                     : (parts.length > 3 ? parts[3] : "");
-            String pathText = routePathText(opponents, team);
-            if (pathText.isBlank()) continue;
-            if (!lines.contains(pathText)) lines.add(pathText);
+            String slot = team1Side
+                    ? (parts.length > 6 ? parts[6] : originSlot)
+                    : (parts.length > 7 ? parts[7] : originSlot);
+            String likelihood = parts.length > 5 ? parts[5] : "";
+            addRouteDisplayPath(paths, slot, opponents, likelihood, team, paths.size());
         }
-        if (lines.isEmpty()) return;
-        html.append("<div class=\"mt-1\">");
-        int index = 1;
-        for (String line : lines) {
-            html.append("<div class=\"small text-muted\" style=\"font-size:0.72rem\">")
-                    .append("<span class=\"badge text-bg-light border text-muted me-1\">Route ")
-                    .append(index++)
-                    .append("</span>")
-                    .append(line)
-                    .append("</div>");
-        }
-        html.append("</div>");
+        return paths.values().stream()
+                .sorted(java.util.Comparator
+                        .comparingDouble(RouteDisplayPath::likelihoodValue).reversed()
+                        .thenComparingInt(RouteDisplayPath::order))
+                .collect(java.util.stream.Collectors.toCollection(ArrayList::new));
     }
 
-    private String routePathText(String opponents, String team) {
-        if (opponents == null || opponents.isBlank()) return "Group stage";
-        List<String> names = new ArrayList<>();
-        for (String segment : opponents.split(" > ")) {
-            String name = pathFatigueSegmentName(segment);
-            if (name.isEmpty() || "Group stage".equalsIgnoreCase(name)) continue;
-            names.add(pathOpponentLinkHtml(team, name, pathFatigueSegmentMatchId(segment)));
+    private void addRouteDisplayPath(Map<String, RouteDisplayPath> paths, String slot, String opponents,
+                                     String likelihood, String team, int order) {
+        String key = routePathKey(slot, opponents);
+        if (key.isBlank()) return;
+        String text = routePathText(slot, opponents, team);
+        if (text.isBlank()) return;
+        double likelihoodValue = parseDoubleOrZero(likelihood);
+        RouteDisplayPath existing = paths.get(key);
+        if (existing == null) {
+            paths.put(key, new RouteDisplayPath(text, likelihoodValue, order, 1));
+        } else {
+            paths.put(key, new RouteDisplayPath(existing.html(), existing.likelihoodValue() + likelihoodValue,
+                    Math.min(existing.order(), order), existing.occurrences() + 1));
         }
-        return names.isEmpty() ? "Group stage" : String.join(" <span class='text-muted'>›</span> ", names);
+    }
+
+    private String routePathText(String slot, String opponents, String team) {
+        List<String> names = new ArrayList<>();
+        String safeSlot = slot == null ? "" : slot.trim();
+        if (!safeSlot.isBlank()) {
+            names.add("<span class='text-muted fw-semibold'>" + escapeHtml(safeSlot) + "</span>");
+        }
+        if (opponents == null || opponents.isBlank()) {
+            return names.isEmpty() ? "" : String.join(" <span class='text-muted'>›</span> ", names);
+        }
+        for (String segment : opponents.split(" > ")) {
+            if ("G".equals(routeContextSegmentStage(segment))) continue;
+            String name = routeContextSegmentName(segment);
+            if (name.isEmpty() || "Group stage".equalsIgnoreCase(name)) continue;
+            names.add(pathOpponentLinkHtml(team, name, routeContextSegmentMatchId(segment)));
+        }
+        return String.join(" <span class='text-muted'>›</span> ", names);
+    }
+
+    private String routePathKey(String slot, String opponents) {
+        List<String> names = new ArrayList<>();
+        String safeSlot = slot == null ? "" : slot.trim();
+        if (!safeSlot.isBlank()) names.add("slot:" + safeSlot.toLowerCase(java.util.Locale.ROOT));
+        if (opponents != null && !opponents.isBlank()) {
+            for (String segment : opponents.split(" > ")) {
+                if ("G".equals(routeContextSegmentStage(segment))) continue;
+                String name = routeContextSegmentName(segment);
+                if (name.isEmpty() || "Group stage".equalsIgnoreCase(name)) continue;
+                names.add(name.toLowerCase(java.util.Locale.ROOT));
+            }
+        }
+        return String.join(">", names);
+    }
+
+    private static String routeContextSegmentStage(String segment) {
+        String value = segment == null ? "" : segment.trim();
+        int marker = value.indexOf('|');
+        if (marker > 0) {
+            return pathFatigueSegmentStage(value);
+        }
+        String prefix = value.split("\\s+", 2)[0].trim();
+        return "G".equalsIgnoreCase(prefix) ? "G" : "KO";
+    }
+
+    private static String routeContextSegmentName(String segment) {
+        String name = pathFatigueSegmentName(segment);
+        if (!name.contains(" ")) return name;
+        int firstSpace = name.indexOf(' ');
+        String prefix = name.substring(0, firstSpace).trim();
+        if ("G".equalsIgnoreCase(prefix) || prefix.startsWith("K@") || prefix.startsWith("U@")) {
+            return name.substring(firstSpace + 1).trim();
+        }
+        return name;
+    }
+
+    private static String routeContextSegmentMatchId(String segment) {
+        String matchId = pathFatigueSegmentMatchId(segment);
+        if (!matchId.isBlank()) return matchId;
+        String value = segment == null ? "" : segment.trim();
+        int marker = value.indexOf('|');
+        String prefix = marker > 0 ? value.substring(0, marker).trim() : value.split("\\s+", 2)[0].trim();
+        int at = prefix.indexOf('@');
+        return at >= 0 && at < prefix.length() - 1 ? prefix.substring(at + 1).trim() : "";
     }
 
     private String pathOpponentLinkHtml(String team, String opponent, String matchId) {
@@ -1349,42 +1407,40 @@ public class HtmlReporter extends ConsoleReporter {
         return flagHtml(opponent) + escapeHtml(opponent);
     }
 
-    private void appendScoreModelTournamentPath(StringBuilder html, String team, EloBreakdown b, String originSlot,
-                                                String routeContexts, boolean team1Side) {
-        if (b == null || (b.pathFatigueLabel.isEmpty() && b.pathOpponent.isEmpty()
-                && (originSlot == null || originSlot.isBlank()))) {
+    private void appendScoreModelTournamentPaths(StringBuilder html, String team, EloBreakdown b, String originSlot,
+                                                 String routeContexts, boolean team1Side, String rawPath) {
+        List<RouteDisplayPath> paths = routeDisplayPaths(routeContexts, team, team1Side, originSlot, rawPath);
+        if (paths.isEmpty()) {
             return;
         }
-        String badgeClass = switch (b.pathFatigueLabel) {
-            case "Very Easy", "Easy" -> "bg-success";
-            case "Hard", "Very Hard" -> "bg-danger";
-            default -> "bg-secondary";
-        };
         html.append("<div class=\"border-top mt-2 pt-2\">");
-        html.append("<div class=\"text-muted\" style=\"font-size:0.68rem\">Tournament Path</div>");
-        if (!b.pathOpponent.isEmpty() || (originSlot != null && !originSlot.isBlank())) {
-            String[] segments = b.pathOpponent.isEmpty() ? new String[0] : b.pathOpponent.split(" > ");
-            html.append("<div class=\"small\">");
-            boolean hasPathItem = false;
-            if (originSlot != null && !originSlot.isBlank()) {
-                html.append("<span class='text-muted fw-semibold'>").append(escapeHtml(originSlot)).append("</span>");
-                hasPathItem = true;
-            }
-            for (String segment : segments) {
-                String name = pathFatigueSegmentName(segment);
-                if (name.isEmpty() || "Group stage".equalsIgnoreCase(name)) continue;
-                if (hasPathItem) html.append(" <span class='text-muted'>›</span> ");
-                html.append(pathOpponentLinkHtml(team, name, pathFatigueSegmentMatchId(segment)));
-                hasPathItem = true;
-            }
-            html.append("</div>");
-            appendRouteContextLines(html, routeContexts, team, team1Side);
-        }
-        if (!b.pathFatigueLabel.isEmpty()) {
-            html.append("<span class=\"badge ").append(badgeClass).append(" fw-normal mt-1\" style=\"font-size:0.7rem\">")
-                    .append(escapeHtml(b.pathFatigueLabel)).append("</span>");
+        html.append("<div class=\"text-muted\" style=\"font-size:0.68rem\">Tournament Paths</div>");
+        for (RouteDisplayPath path : paths) {
+            html.append("<div class=\"small text-muted\" style=\"font-size:0.72rem\">")
+                    .append(path.html())
+                    .append(pathLikelihoodText(path.likelihoodValue()))
+                    .append(pathOccurrenceText(path.occurrences()))
+                    .append("</div>");
         }
         html.append("</div>");
+    }
+
+    private record RouteDisplayPath(String html, double likelihoodValue, int order, int occurrences) {}
+
+    private static String pathLikelihoodText(double likelihood) {
+        if (likelihood <= 0.0) return "";
+        if (likelihood < 0.05) {
+            return " <span class=\"text-muted\" data-bs-toggle=\"tooltip\" data-bs-title=\"Path likelihood\">(&lt;0.1%)</span>";
+        }
+        String formatted = likelihood >= 10.0
+                ? String.format(java.util.Locale.ROOT, "%.0f", likelihood)
+                : String.format(java.util.Locale.ROOT, "%.1f", likelihood);
+        return " <span class=\"text-muted\" data-bs-toggle=\"tooltip\" data-bs-title=\"Path likelihood\">(" + formatted + "%)</span>";
+    }
+
+    private static String pathOccurrenceText(int occurrences) {
+        return " <span class=\"text-muted\" data-bs-toggle=\"tooltip\" data-bs-title=\"Path occurrences\">("
+                + Math.max(1, occurrences) + ")</span>";
     }
 
     private static void appendScoreModelStat(StringBuilder html, String label, String value) {
@@ -1467,15 +1523,10 @@ public class HtmlReporter extends ConsoleReporter {
               .append("</div>");
         }
         // Tournament path — shown ABOVE qualifiers, only for knockout rounds
-        if (showTournamentPath && b != null && (!b.pathFatigueLabel.isEmpty() || !b.pathOpponent.isEmpty()
+        if (showTournamentPath && b != null && (!b.pathOpponent.isEmpty()
                 || (originSlot != null && !originSlot.isBlank()))) {
-            String badgeClass = switch (b.pathFatigueLabel) {
-                case "Very Easy", "Easy" -> "bg-success";
-                case "Hard", "Very Hard" -> "bg-danger";
-                default -> "bg-secondary";
-            };
             sb.append("<div class=\"text-center mb-1\">");
-            sb.append("<span class=\"text-muted\" style=\"font-size:0.65rem\">Tournament Path</span><br>");
+            sb.append("<span class=\"text-muted\" style=\"font-size:0.65rem\">Tournament Paths</span><br>");
             if (!b.pathOpponent.isEmpty() || (originSlot != null && !originSlot.isBlank())) {
                 String[] segments = b.pathOpponent.isEmpty() ? new String[0] : b.pathOpponent.split(" > ");
                 sb.append("<span style=\"font-size:0.75rem\">");
@@ -1494,9 +1545,6 @@ public class HtmlReporter extends ConsoleReporter {
                 }
                 sb.append("</span><br>");
             }
-            sb.append("<span class=\"badge ").append(badgeClass).append(" fw-normal\" style=\"font-size:0.7rem\">")
-              .append(escapeHtml(b.pathFatigueLabel)).append(" ")
-              .append(signedEloSpan(b.pathFatigueAdjustment)).append("</span>");
             sb.append("</div>");
         } else if (showTournamentPath && b != null) {
             sb.append("<div class=\"mb-1\"></div>");
@@ -1518,39 +1566,6 @@ public class HtmlReporter extends ConsoleReporter {
             sb.append("</div>");
             sb.append("<table class=\"table table-sm mb-0 align-middle elo-calc-table\">");
             sb.append("<tbody>");
-            // Path difficulty first
-            if (b.pathFatigueAdjustment != 0 || !b.pathOpponent.isEmpty()) {
-                String[] pathSegs = b.pathOpponent.isEmpty() ? new String[0] : b.pathOpponent.split(" > ");
-                StringBuilder groupHtml = new StringBuilder();
-                StringBuilder knockoutHtml = new StringBuilder();
-                for (String seg : pathSegs) {
-                    String segmentHtml = pathFatigueSegmentHtml(seg);
-                    if (segmentHtml.isEmpty()) continue;
-                    StringBuilder target = "G".equals(pathFatigueSegmentStage(seg)) ? groupHtml : knockoutHtml;
-                    if (target.length() > 0) target.append(", ");
-                    target.append(segmentHtml);
-                }
-                StringBuilder breakdownHtml = new StringBuilder();
-                if (groupHtml.length() > 0) {
-                    breakdownHtml.append("<span class='fw-semibold'>G:</span> ").append(groupHtml);
-                }
-                if (knockoutHtml.length() > 0) {
-                    if (breakdownHtml.length() > 0) breakdownHtml.append("<br>");
-                    breakdownHtml.append("<span class='fw-semibold'>KO:</span> ").append(knockoutHtml);
-                }
-                sb.append("<tr class=\"").append(b.pathFatigueAdjustment > 0 ? "table-success elo-positive" : "table-danger elo-negative").append("\">");
-                sb.append("<td class=\"border-end-0\" style=\"width:58%\"><div class=\"elo-signal-label\">Path Fatigue</div></td>");
-                sb.append("<td class=\"text-end border-start-0 elo-value\" style=\"width:42%\">");
-                if (breakdownHtml.length() > 0) {
-                    sb.append("<span class=\"d-inline-flex align-items-center justify-content-end gap-2 flex-wrap\">");
-                    appendPathFatigueChips(sb, pathSegs);
-                    sb.append("<span>").append(signedEloText(b.pathFatigueAdjustment)).append("</span>");
-                    sb.append("</span>");
-                } else {
-                    sb.append(signedEloText(b.pathFatigueAdjustment));
-                }
-                sb.append("</td></tr>");
-            }
             // Qualification form is intentionally excluded: base ELO already includes qualifiers.
             // Pre-tournament form uses only the most recent pre-tournament friendlies.
             sb.append("<tr class=\"").append(adjustmentRowClass(b.preTournamentBonus)).append("\">");

@@ -144,13 +144,13 @@ class EloBreakdownTest {
         assertEquals(1900, original.totalElo);
         assertEquals(0, original.pathFatigueAdjustment);
         assertEquals("", original.pathFatigueLabel);
-        assertEquals(1888, updated.totalElo);
+        assertEquals(1900, updated.totalElo);
         assertEquals(-12, updated.pathFatigueAdjustment);
         assertEquals("Very Hard", updated.pathFatigueLabel);
     }
 
     @Test
-    void totalElo_includesPathDifficultyAdjustment() {
+    void totalElo_excludesPathDifficultyAdjustment() {
         EloBreakdown b = new EloBreakdown(1900, false, 0,
                 0, 0, 0, 0, 0, 0, 0, 0,
                 0, 0, 0, 0,
@@ -158,7 +158,7 @@ class EloBreakdownTest {
                 "", "", "", "", "", "",
                 List.of(), List.of(),
                 12, "Easy");
-        assertEquals(1912, b.totalElo);
+        assertEquals(1900, b.totalElo);
         assertEquals(12, b.pathFatigueAdjustment);
         assertEquals("Easy", b.pathFatigueLabel);
     }
