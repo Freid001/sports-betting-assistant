@@ -2,16 +2,16 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head th:fragment="pageHead">
     <meta charset="UTF-8">
-    <title>Football Tournament Prediction Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Bet Assistant</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
-    <link rel="stylesheet" href="/vendor/flag-icons/css/flag-icons.min.css">
     <script defer src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
     <script>
+      // Show a spinner and disable the submit button while a form is posting.
       document.addEventListener('submit', function(event) {
         if (event.defaultPrevented) return;
-        var form = event.target;
-        var button = form.querySelector('button[type="submit"]');
+        var button = event.target.querySelector('button[type="submit"]');
         if (!button || button.disabled) return;
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
@@ -25,156 +25,13 @@
       html { color-scheme: light; }
       body { margin:0; color:#212529; background:#fff; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
       body > .container, nav .container { width:min(1320px, calc(100% - 2rem)); margin-inline:auto; }
-      table { color:inherit; }
-      .quality-level-neg-2 { background-color:#842029 !important; color:#fff !important; border-color:#842029 !important; }
-      .quality-level-neg-mid { background-color:#dc3545 !important; color:#fff !important; border-color:#b02a37 !important; }
-      .quality-level-neg-1 { background-color:#f8d7da !important; color:#842029 !important; border-color:#f1aeb5 !important; }
-      .quality-level-0 { background-color:#fff3cd !important; color:#664d03 !important; border-color:#ffe69c !important; }
-      .quality-level-pos-1 { background-color:#dff5e6 !important; color:#176b3a !important; border-color:#b7e4c7 !important; }
-      .quality-level-pos-mid { background-color:#75c98b !important; color:#123d21 !important; border-color:#52b66d !important; }
-      .quality-level-pos-2 { background-color:#2e9f55 !important; color:#fff !important; border-color:#278747 !important; }
-      .quality-level-neg-2 .text-danger, .quality-level-neg-2 .text-warning, .quality-level-pos-2 .text-success { color:inherit !important; }
-      .quality-badge { border:1px solid; }
-      select.quality-select, select.signal-select { border-width:1px; font-weight:600; }
-      .expand-icon { display:inline-block; width:0; height:0; border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:6px solid currentColor; opacity:.55; vertical-align:middle; transform-origin:35% 50%; transition:transform .15s ease; }
-      .expand-icon.expanded { transform:rotate(90deg); }
-      .btn-actual { background-color:#fff; border-color:#d39e00; color:#b78103; }
-      .btn-actual:hover, .btn-actual:focus { background-color:#fff8e1; border-color:#b78103; color:#8d6500; }
-      .path-badge-upset { background-color:#fd7e14 !important; color:#fff !important; border:1px solid #d96500; }
-      .elo-calc-card { border-color:#d7dde3 !important; }
-      .elo-calc-header { background:#f6f8fa; border-bottom:1px solid #d7dde3; }
-      .elo-base-pill { background:#fff; border:1px solid #cfd6dd; border-radius:999px; padding:.1rem .45rem; color:#212529; }
-      .elo-calc-table td { padding:.5rem .6rem; vertical-align:middle; }
-      .elo-signal-label { color:#212529; font-weight:650; line-height:1.15; }
-      .elo-note { color:#667085; font-size:.72rem; line-height:1.25; margin-top:.16rem; white-space:normal; }
-      .elo-value { font-weight:750; font-variant-numeric:tabular-nums; white-space:nowrap; }
-      .elo-positive .elo-value { color:#176b3a; }
-      .elo-negative .elo-value { color:#b02a37; }
-      .elo-neutral .elo-value { color:#495057; }
-      .elo-total-row td { background:#f8f9fa; border-top:2px solid #cfd6dd !important; }
-      .elo-total-row .elo-value { color:#111827; font-size:1rem; }
-      .path-opponent-link { font-weight:600; }
     </style>
 </head>
 <body>
 
 <nav th:fragment="navbar" class="navbar navbar-dark bg-dark mb-4">
-    <div class="container"><a class="navbar-brand" href="/">⚽ Football Tournament Prediction Engine</a></div>
+    <div class="container"><a class="navbar-brand" href="/">⚽ Bet Assistant</a></div>
 </nav>
-
-<!--
-  editHeader fragment - edit pages keep navigation minimal; save actions remain with the form.
--->
-<div th:fragment="editHeader" class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h1 class="h3 mb-1" th:text="${pageTitle}">Edit</h1>
-        <p class="text-muted mb-0" th:text="${tournamentLabel}">World Cup 2026</p>
-    </div>
-    <a class="btn btn-outline-secondary" th:href="@{/tournament/{name}(name=${tournament})}">Back to Tournament</a>
-</div>
-
-<!--
-  roundNav fragment — shared page header with nav buttons.
-  Model attributes:
-    tournament, tournamentLabel, pageTitle
-    prevNavUrl / prevNavLabel / prevNavEnabled  (prev ← button; null url = hidden)
-    nextNavUrl / nextNavLabel / nextNavEnabled  (next → button; null url = hidden)
-    canNextRun / nextRunMode / nextRunLabel  (optional next-stage action)
-  Note: editUrl is handled separately via the editLink fragment below.
--->
-<div th:fragment="roundNav" class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h1 class="h3 mb-1" th:text="${pageTitle}">Title</h1>
-        <p class="text-muted mb-0" th:text="${tournamentLabel}">World Cup 2026</p>
-    </div>
-    <div class="d-flex gap-2 flex-wrap">
-        <a class="btn btn-outline-secondary" th:href="@{/tournament/{name}(name=${tournament})}">Back to Tournament</a>
-        <a th:if="${prevNavUrl != null and !#strings.isEmpty(prevNavUrl)}"
-           th:href="${prevNavEnabled != false ? prevNavUrl : '#'}"
-           th:text="${prevNavLabel}"
-           th:classappend="${prevNavEnabled == false ? ' disabled' : ''}"
-           class="btn btn-outline-primary">← Prev</a>
-        <form th:if="${canNextRun}" th:action="@{/run/{mode}(mode=${nextRunMode}, tournament=${tournament})}" method="post" class="d-inline">
-            <button class="btn btn-primary" type="submit" th:text="${nextRunLabel}">Run</button>
-        </form>
-        <a th:if="${nextNavUrl != null and !#strings.isEmpty(nextNavUrl) and !canNextRun}"
-           th:href="${nextNavEnabled != false ? nextNavUrl : '#'}"
-           th:text="${nextNavLabel}"
-           th:classappend="${nextNavEnabled == false ? ' disabled' : ''}"
-           class="btn btn-primary">→ Next</a>
-    </div>
-</div>
-
-<!--
-  editLink fragment — small secondary edit link rendered just below the nav bar.
-  Uses editUrl model attribute; renders nothing if editUrl is null.
--->
-<div th:fragment="editLink" class="mb-3 text-end">
-    <a th:if="${editUrl != null}" th:href="${editUrl}"
-       class="btn btn-sm btn-outline-secondary">Edit</a>
-    <script th:if="${editUrl != null}" th:inline="javascript">
-      document.addEventListener('keydown', function(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-        if (e.key && e.key.toLowerCase() === 'e') {
-          e.preventDefault();
-          location.href = /*[[${editUrl}]]*/ '#';
-        }
-      });
-    </script>
-</div>
-
-<!--
-  groupDetailRow(colspan, breakdownHtml) — expandable ELO breakdown detail row.
-  Used by both view-round and edit-round group tables.
-  colspan: number of columns the detail cell should span, including the disclosure column.
-  breakdownHtml: pre-built HTML string from GroupViewRow/GroupPickRow.getBreakdownHtml().
--->
-<th:block th:fragment="groupDetailRow(colspan, breakdownHtml)">
-<tr class="group-detail-row" style="display:none">
-    <td th:colspan="${colspan}" class="p-0">
-        <div class="px-3 py-2" style="background:#f8f9fa;border-bottom:1px solid #dee2e6">
-            <div th:utext="${breakdownHtml}"></div>
-        </div>
-    </td>
-</tr>
-</th:block>
-
-<!--
-  toggleGroupDetailScript — shared JS for expanding/collapsing group detail rows.
-  Used by both view-round and edit-round.
--->
-<th:block th:fragment="toggleGroupDetailScript">
-<script>
-function toggleGroupDetail(row) {
-    const detail = row.nextElementSibling;
-    if (!detail || !detail.classList.contains('group-detail-row')) return;
-    const isHidden = detail.style.display === 'none';
-    detail.style.display = isHidden ? 'table-row' : 'none';
-    const icon = row.querySelector('.expand-icon');
-    if (icon) icon.classList.toggle('expanded', isHidden);
-    if (isHidden) {
-        detail.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-            new bootstrap.Tooltip(el);
-        });
-    }
-}
-</script>
-</th:block>
-
-<!--
-  keyboardNavScript — arrow key navigation between rounds.
-  Uses prevViewEnabled/prevViewUrl and nextViewEnabled/nextViewUrl model attributes.
-  Conditionally rendered only when hasPrevRound or hasNextRound is true.
--->
-<th:block th:fragment="keyboardNavScript">
-<script th:if="${hasPrevRound or hasNextRound}">
-  document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-    if (e.key === 'ArrowLeft' && [[${prevViewEnabled}]]) location.href = '[[${prevViewUrl}]]';
-    if (e.key === 'ArrowRight' && [[${nextViewEnabled}]]) location.href = '[[${nextViewUrl}]]';
-  });
-</script>
-</th:block>
 
 </body>
 </html>

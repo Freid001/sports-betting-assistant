@@ -4,21 +4,22 @@
 <body>
 <nav th:replace="~{fragments :: navbar}"></nav>
 <div class="container pb-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h3 mb-0">Tournaments</h1>
-    </div>
-    <div th:if="${#lists.isEmpty(tournaments)}" class="alert alert-info">No tournaments found.</div>
-    <div class="row g-3" th:if="${!#lists.isEmpty(tournaments)}">
-        <div class="col-md-6 col-xl-4" th:each="t : ${tournaments}">
+    <h1 class="h3 mb-3">Bet Assistant</h1>
+    <p class="text-muted">Compare bookmaker odds with researched win chances. Bets are placed manually.</p>
+    <div class="row g-3">
+        <div class="col-md-6 col-xl-4">
             <div class="card h-100 shadow-sm">
                 <div class="card-body">
-                    <h2 class="h5 card-title" th:text="${t.name}">world_cup_2026</h2>
-                    <p class="card-text text-muted mb-2" th:text="${t.stage}">Team Setup complete</p>
-                    <span class="badge text-bg-secondary" th:text="${t.completedSteps + ' / 4 complete'}">0 / 4 complete</span>
+                    <h2 class="h5 card-title">International football</h2>
+                    <p class="card-text text-muted mb-0">Coming soon</p>
                 </div>
-                <div class="card-footer bg-white border-0 pt-0">
-                    <a class="btn btn-primary" th:href="@{/tournament/{name}(name=${t.name})}">Predictions</a>
-                    <a class="btn btn-outline-secondary disabled" href="#">Paths</a>
+            </div>
+        </div>
+        <div class="col-md-6 col-xl-4">
+            <div class="card h-100 shadow-sm">
+                <div class="card-body">
+                    <h2 class="h5 card-title">Horse racing</h2>
+                    <p class="card-text text-muted mb-0">Later</p>
                 </div>
             </div>
         </div>
