@@ -68,6 +68,13 @@ window.Football = (function () {
   }
   function gcd(a, b) { return b ? gcd(b, a % b) : a; }
 
+  /** Nearest standard bookie price for any decimal odds (for estimates like "needs 7/2"). */
+  function nearestFraction(dec) {
+    var x = dec - 1, best = LADDER[0];
+    LADDER.forEach(function (f) { if (Math.abs(f.value - x) < Math.abs(best.value - x)) best = f; });
+    return best.text;
+  }
+
   /** Five colour bands by chance (darkest = most extreme). Colours are defined in the page CSS (fragments.html). */
   var BANDS = [
     { min: 0.70, cls: 'odds-very-good', label: '70%+' },
@@ -190,16 +197,15 @@ window.Football = (function () {
     'sporting lisbon': 'sporting clube portugal'
   };
 
-  function findCrest(teams, name) {
+  /** The football-data.org team (id, name, crest...) for an Odds API team name, or null. */
+  function findTeam(teams, name) {
     var n = norm(name);
     if (ALIASES[n]) n = ALIASES[n];
     if (!n) return null;
     var best = null;
     teams.forEach(function (t) {
       [t.name, t.shortName, t.tla].forEach(function (cand) {
-        var c = norm(cand);
-        if (!c || best) return;
-        if (c === n) best = t;
+        if (!best && norm(cand) === n) best = t;
       });
     });
     if (!best) {
@@ -209,7 +215,12 @@ window.Football = (function () {
         if ((c && (c.indexOf(n) >= 0 || n.indexOf(c) >= 0)) || (s && s.length > 3 && (s.indexOf(n) >= 0 || n.indexOf(s) >= 0))) best = t;
       });
     }
-    return best && best.crest ? best.crest : null;
+    return best;
+  }
+
+  function findCrest(teams, name) {
+    var t = findTeam(teams, name);
+    return t && t.crest ? t.crest : null;
   }
 
   /** A logo element: crest if found, else a country flag for national teams, else initials. */
@@ -243,7 +254,7 @@ window.Football = (function () {
     return c;
   }
 
-  return { loadTeams: loadTeams, logo: logo, el: el, title: title, ago: ago, day: day, time: time, loadAll: loadAll, fairChances: fairChances, fraction: fraction,
+  return { loadTeams: loadTeams, findTeam: findTeam, logo: logo, el: el, title: title, ago: ago, day: day, time: time, loadAll: loadAll, fairChances: fairChances, fraction: fraction, nearestFraction: nearestFraction,
            oddsBadge: oddsBadge, chanceClass: chanceClass, legend: legend,
            stake: stake, stakeInput: stakeInput, money: money };
 })();

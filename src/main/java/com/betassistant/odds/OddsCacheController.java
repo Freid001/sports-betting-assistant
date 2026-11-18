@@ -24,6 +24,20 @@ public class OddsCacheController {
         this.cache = cache;
     }
 
+    /**
+     * Credits left this month on The Odds API. Uses the /sports call, which costs nothing,
+     * and reads the quota headers it returns.
+     */
+    @GetMapping("/quota")
+    public java.util.Map<String, Object> quota() {
+        ResponseEntity<String> res = cache.quota();
+        java.util.Map<String, Object> out = new java.util.LinkedHashMap<>();
+        out.put("remaining", res.getHeaders().getFirst("x-requests-remaining"));
+        out.put("used", res.getHeaders().getFirst("x-requests-used"));
+        out.put("ok", res.getStatusCode().is2xxSuccessful());
+        return out;
+    }
+
     @GetMapping
     public List<String> list() {
         return cache.cachedSports();

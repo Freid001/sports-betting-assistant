@@ -150,6 +150,11 @@ public class OddsCacheService {
         return ResponseEntity.status(res.getStatusCode()).headers(res.getHeaders()).body(json);
     }
 
+    /** A free call (/sports) whose response headers carry the credits used and remaining. */
+    public ResponseEntity<String> quota() {
+        return client.get("/sports", Map.of());
+    }
+
     /** Cached JSON for a sport, if a refresh has been done. Free. */
     public Optional<String> read(String sport) {
         Path f = file(OddsApiClient.safeId(sport));

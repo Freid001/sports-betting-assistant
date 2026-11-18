@@ -3,11 +3,30 @@
 <head th:fragment="pageHead">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Bet Assistant</title>
+    <title>Sports Betting Assistant</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
     <script defer src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
-    <script>
+    <script th:inline="none">
+      // ---- Theme colours (header dropdown). Saved per browser; applied before the page draws. ----
+      window.THEMES = [
+        { name: 'Charcoal', theme: '#212529', hover: '#424649' },
+        { name: 'Navy',     theme: '#1e3a5f', hover: '#2c5282' },
+        { name: 'Teal',     theme: '#115e59', hover: '#0f766e' },
+        { name: 'Forest',   theme: '#1f4d3a', hover: '#2d6a4f' },
+        { name: 'Plum',     theme: '#4c2a5e', hover: '#6b3f82' },
+        { name: 'Burgundy', theme: '#6b1f2e', hover: '#8c2a3d' },
+        { name: 'Slate',    theme: '#334155', hover: '#475569' }
+      ];
+      window.applyTheme = function (name) {
+        var t = THEMES.find(function (x) { return x.name === name; }) || THEMES[0];
+        document.documentElement.style.setProperty('--theme', t.theme);
+        document.documentElement.style.setProperty('--theme-hover', t.hover);
+        try { localStorage.setItem('theme', t.name); } catch (e) { /* ignore */ }
+        return t;
+      };
+      (function () { var n; try { n = localStorage.getItem('theme'); } catch (e) {} if (n) applyTheme(n); })();
+
       // Show a spinner and disable the submit button while a form is posting.
       document.addEventListener('submit', function(event) {
         if (event.defaultPrevented) return;
@@ -23,7 +42,23 @@
     </script>
     <style>
       html { color-scheme: light; }
-      body { margin:0; color:#212529; background:#fff; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+      /* ===== Base theme colour: change it here to restyle the banner, card and pop-up headers, and main buttons ===== */
+      :root { --theme:#212529; --theme-hover:#424649; --theme-text:#fff; }
+      .theme-bg { background:var(--theme) !important; color:var(--theme-text); }
+      #themeMenu .dropdown-item.active, #themeMenu .dropdown-item:active { background:var(--theme); color:var(--theme-text); }
+      .btn-theme { --bs-btn-color:var(--theme-text); --bs-btn-bg:var(--theme); --bs-btn-border-color:var(--theme);
+                   --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
+                   --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme-hover); --bs-btn-active-border-color:var(--theme-hover);
+                   --bs-btn-disabled-color:var(--theme-text); --bs-btn-disabled-bg:var(--theme); --bs-btn-disabled-border-color:var(--theme); }
+      body { margin:0; color:#212529; background:#f3f4f6; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+      /* Cards: white on the light grey page, with dark headers */
+      .card { background:#fff; border-color:#e3e5e8; }
+      .card-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
+      .card-header .text-muted { color:rgba(255,255,255,.65) !important; }
+      .card-header a { color:#fff; }
+      /* Pop-ups (e.g. Refresh odds?) match the cards: dark header, white title and close button */
+      .modal-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
+      .modal-header .btn-close { filter:invert(1) grayscale(100%) brightness(200%); }
       body > .container, nav .container { width:min(1320px, calc(100% - 2rem)); margin-inline:auto; }
       /* Odds badges: chance bands from very likely (dark green) to long shot (dark red) */
       .odds-very-good { background:#0b5d33; color:#fff; }
@@ -31,18 +66,104 @@
       .odds-ok        { background:#f2c12e; color:#212529; }
       .odds-poor      { background:#e0533d; color:#fff; }
       .odds-very-poor { background:#8b1a1a; color:#fff; }
+      .verdict-small-cost { background:#f08a24; color:#fff; }   /* Value check: between Fair (yellow) and Poor (red) */
+      /* Top menu: sits next to the title; pills that light up on hover, active section underlined in green */
+      .site-nav .nav-link { color:rgba(255,255,255,.85); padding:.35rem .8rem; border-radius:.5rem; position:relative; }
+      .site-nav .nav-link:hover { color:#fff; background:rgba(255,255,255,.1); }
+      .site-nav .nav-link.active { color:#fff; background:rgba(255,255,255,.12); }
+      .site-nav .nav-link.active::after { content:""; position:absolute; left:.8rem; right:.8rem; bottom:-.55rem; height:3px; border-radius:2px; background:#2fa05a; }
+      /* Form tiles on the match page: W / D / L */
+      .form-tile { display:inline-block; width:1.4rem; height:1.4rem; line-height:1.4rem; text-align:center; border-radius:.25rem; font-size:.75rem; font-weight:600; cursor:help; }
+      .form-W { background:#2fa05a; color:#fff; } .form-D { background:#adb5bd; color:#212529; } .form-L { background:#e0533d; color:#fff; }
+      .stats-table td, .stats-table th { padding-top:.3rem; padding-bottom:.3rem; }
+      /* Chance tags (Value check): outlined in the same colour scale as the odds badges, so they don't look like verdicts */
+      .chance-tag { background:#fff; border:1.5px solid currentColor; font-weight:600; }
+      .chance-likely   { color:#0b5d33; }
+      .chance-tossup   { color:#9a7400; }
+      .chance-outsider { color:#c2410c; }
+      .chance-longshot { color:#c0392b; }
+      .chance-moonshot { color:#8b1a1a; }
+      /* Section title inside a card, e.g. "Match result", "Goals markets": centred and bold like the team names in table headers */
+      .section-label { font-weight:700; text-align:center; color:var(--bs-body-color); margin:0 0 .25rem; }
+      .section-label:not(:first-child) { margin-top:1rem; }
+      .tooltip-inner { white-space:pre-line; }
       .odds-tip .tooltip-inner { white-space:pre-line; text-align:left; max-width:260px; }
     </style>
 </head>
 <body>
 
-<nav th:fragment="navbar" class="navbar navbar-dark bg-dark mb-4">
-    <div class="container">
-        <a class="navbar-brand" href="/">⚽ Bet Assistant</a>
-        <div class="navbar-nav flex-row gap-3">
+<nav th:fragment="navbar" class="navbar navbar-dark theme-bg mb-4">
+    <div class="container justify-content-start gap-4">
+        <a class="navbar-brand fw-semibold me-2" href="/">Sports Betting Assistant</a>
+        <div class="navbar-nav flex-row gap-1 site-nav">
             <a class="nav-link" href="/football">Football</a>
+            <a class="nav-link" href="/horse-racing">Horse Racing</a>
+        </div>
+        <div class="dropdown ms-auto">
+            <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Theme</button>
+            <ul class="dropdown-menu dropdown-menu-end" id="themeMenu"></ul>
         </div>
     </div>
+    <!-- Pop-up messages (Bootstrap toasts): bottom-right, stack, fade after 5s. Use notify('text', 'danger'|'success'|'info'). -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts" style="z-index:1090"></div>
+    <script th:inline="none">
+      window.notify = function (message, type) {
+        var colours = { danger: 'text-bg-danger', success: 'text-bg-success', info: 'theme-bg', warning: 'text-bg-warning' };
+        var t = document.createElement('div');
+        t.className = 'toast align-items-center border-0 shadow ' + (colours[type] || colours.info);
+        t.setAttribute('role', type === 'danger' ? 'alert' : 'status');
+        t.setAttribute('aria-live', type === 'danger' ? 'assertive' : 'polite');
+        t.setAttribute('aria-atomic', 'true');
+        var row = document.createElement('div'); row.className = 'd-flex';
+        var body = document.createElement('div'); body.className = 'toast-body'; body.textContent = message;
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'btn-close me-2 m-auto' + (type === 'warning' ? '' : ' btn-close-white');
+        close.setAttribute('data-bs-dismiss', 'toast'); close.setAttribute('aria-label', 'Close');
+        row.appendChild(body); row.appendChild(close); t.appendChild(row);
+        document.getElementById('toasts').appendChild(t);
+        var show = function () {
+          var toast = bootstrap.Toast.getOrCreateInstance(t, { delay: 5000, autohide: true });
+          t.addEventListener('hidden.bs.toast', function () { t.remove(); });
+          toast.show();
+        };
+        if (window.bootstrap) show(); else window.addEventListener('load', show);
+      };
+
+      // Theme dropdown: one item per colour, with a swatch; tick on the current one
+      (function () {
+        var menu = document.getElementById('themeMenu');
+        if (!menu) return;
+        function draw() {
+          var current; try { current = localStorage.getItem('theme'); } catch (e) {}
+          current = current || THEMES[0].name;
+          menu.replaceChildren();
+          THEMES.forEach(function (t) {
+            var li = document.createElement('li');
+            var a = document.createElement('button');
+            a.type = 'button';
+            a.className = 'dropdown-item d-flex align-items-center gap-2' + (t.name === current ? ' active' : '');
+            var sw = document.createElement('span');
+            sw.style.cssText = 'width:1rem;height:1rem;border-radius:.25rem;display:inline-block;background:' + t.theme;
+            a.appendChild(sw);
+            a.appendChild(document.createTextNode(t.name));
+            a.addEventListener('click', function () { applyTheme(t.name); draw(); });
+            li.appendChild(a);
+            menu.appendChild(li);
+          });
+        }
+        draw();
+      })();
+
+      // Highlight the menu item for the section you're in (e.g. Football on /football/match/...).
+      document.currentScript.closest('nav').querySelectorAll('.nav-link').forEach(function (a) {
+        var href = a.getAttribute('href');
+        if (location.pathname === href || location.pathname.indexOf(href + '/') === 0) {
+          a.classList.add('active');
+          a.setAttribute('aria-current', 'page');
+        }
+      });
+    </script>
 </nav>
 
 </body>

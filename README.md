@@ -1,4 +1,4 @@
-# Bet Assistant
+# Sports Betting Assistant
 
 Personal Spring Boot + Bootstrap app for betting research: compare bookmaker odds with researched win chances. It never logs into a bookmaker or places bets; bets are placed manually.
 
