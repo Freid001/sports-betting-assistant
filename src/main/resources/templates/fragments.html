@@ -2,16 +2,18 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head th:fragment="pageHead">
     <meta charset="UTF-8">
-    <title>Football Tournament Prediction Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Sports Betting Assistant</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
-    <link rel="stylesheet" href="/vendor/flag-icons/css/flag-icons.min.css">
     <script defer src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
-    <script>
+    <script th:inline="none">
+      try { localStorage.removeItem('theme'); } catch (e) { /* old Theme dropdown choice */ }
+
+      // Show a spinner and disable the submit button while a form is posting.
       document.addEventListener('submit', function(event) {
         if (event.defaultPrevented) return;
-        var form = event.target;
-        var button = form.querySelector('button[type="submit"]');
+        var button = event.target.querySelector('button[type="submit"]');
         if (!button || button.disabled) return;
         button.disabled = true;
         button.setAttribute('aria-busy', 'true');
@@ -23,158 +25,154 @@
     </script>
     <style>
       html { color-scheme: light; }
-      body { margin:0; color:#212529; background:#fff; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+      /* ===== Base theme colour: change it here to restyle the banner, card and pop-up headers, and main buttons ===== */
+      :root { --theme:#6b1f2e; --theme-hover:#8c2a3d; --theme-text:#fff; }   /* Burgundy */
+      .theme-bg { background:var(--theme) !important; color:var(--theme-text); }
+      .btn-theme { --bs-btn-color:var(--theme-text); --bs-btn-bg:var(--theme); --bs-btn-border-color:var(--theme);
+                   --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
+                   --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme-hover); --bs-btn-active-border-color:var(--theme-hover);
+                   --bs-btn-disabled-color:var(--theme-text); --bs-btn-disabled-bg:var(--theme); --bs-btn-disabled-border-color:var(--theme); }
+      body { margin:0; color:#212529; background:#f3f4f6; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+      /* Cards: white on the light grey page, with dark headers */
+      .card { background:#fff; border-color:#e3e5e8; }
+      .card-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
+      .card-header .text-muted { color:rgba(255,255,255,.65) !important; }
+      .card-header a { color:#fff; }
+      /* Pop-ups (e.g. Refresh odds?) match the cards: dark header, white title and close button */
+      .modal-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
+      .modal-header .btn-close { filter:invert(1) grayscale(100%) brightness(200%); }
       body > .container, nav .container { width:min(1320px, calc(100% - 2rem)); margin-inline:auto; }
-      table { color:inherit; }
-      .quality-level-neg-2 { background-color:#842029 !important; color:#fff !important; border-color:#842029 !important; }
-      .quality-level-neg-mid { background-color:#dc3545 !important; color:#fff !important; border-color:#b02a37 !important; }
-      .quality-level-neg-1 { background-color:#f8d7da !important; color:#842029 !important; border-color:#f1aeb5 !important; }
-      .quality-level-0 { background-color:#fff3cd !important; color:#664d03 !important; border-color:#ffe69c !important; }
-      .quality-level-pos-1 { background-color:#dff5e6 !important; color:#176b3a !important; border-color:#b7e4c7 !important; }
-      .quality-level-pos-mid { background-color:#75c98b !important; color:#123d21 !important; border-color:#52b66d !important; }
-      .quality-level-pos-2 { background-color:#2e9f55 !important; color:#fff !important; border-color:#278747 !important; }
-      .quality-level-neg-2 .text-danger, .quality-level-neg-2 .text-warning, .quality-level-pos-2 .text-success { color:inherit !important; }
-      .quality-badge { border:1px solid; }
-      select.quality-select, select.signal-select { border-width:1px; font-weight:600; }
-      .expand-icon { display:inline-block; width:0; height:0; border-top:4px solid transparent; border-bottom:4px solid transparent; border-left:6px solid currentColor; opacity:.55; vertical-align:middle; transform-origin:35% 50%; transition:transform .15s ease; }
-      .expand-icon.expanded { transform:rotate(90deg); }
-      .btn-actual { background-color:#fff; border-color:#d39e00; color:#b78103; }
-      .btn-actual:hover, .btn-actual:focus { background-color:#fff8e1; border-color:#b78103; color:#8d6500; }
-      .path-badge-upset { background-color:#fd7e14 !important; color:#fff !important; border:1px solid #d96500; }
-      .elo-calc-card { border-color:#d7dde3 !important; }
-      .elo-calc-header { background:#f6f8fa; border-bottom:1px solid #d7dde3; }
-      .elo-base-pill { background:#fff; border:1px solid #cfd6dd; border-radius:999px; padding:.1rem .45rem; color:#212529; }
-      .elo-calc-table td { padding:.5rem .6rem; vertical-align:middle; }
-      .elo-signal-label { color:#212529; font-weight:650; line-height:1.15; }
-      .elo-note { color:#667085; font-size:.72rem; line-height:1.25; margin-top:.16rem; white-space:normal; }
-      .elo-value { font-weight:750; font-variant-numeric:tabular-nums; white-space:nowrap; }
-      .elo-positive .elo-value { color:#176b3a; }
-      .elo-negative .elo-value { color:#b02a37; }
-      .elo-neutral .elo-value { color:#495057; }
-      .elo-total-row td { background:#f8f9fa; border-top:2px solid #cfd6dd !important; }
-      .elo-total-row .elo-value { color:#111827; font-size:1rem; }
-      .path-opponent-link { font-weight:600; }
+      /* Odds badges: chance bands from very likely (dark green) to long shot (dark red) */
+      .odds-very-good { background:#0b5d33; color:#fff; }
+      .odds-good      { background:#2fa05a; color:#fff; }
+      .odds-ok        { background:#f2c12e; color:#212529; }
+      .odds-poor      { background:#e0533d; color:#fff; }
+      .odds-very-poor { background:#8b1a1a; color:#fff; }
+      .verdict-small-cost { background:#f08a24; color:#fff; }   /* Value check: between Fair (yellow) and Poor (red) */
+      /* Top menu: sits next to the title; pills that light up on hover, active section underlined in green */
+      .site-nav .nav-link { color:rgba(255,255,255,.85); padding:.35rem .8rem; border-radius:.5rem; position:relative; }
+      .site-nav .nav-link:hover { color:#fff; background:rgba(255,255,255,.1); }
+      .site-nav .nav-link.active { color:#fff; background:rgba(255,255,255,.12); }
+      .site-nav .nav-link.active::after { content:""; position:absolute; left:.8rem; right:.8rem; bottom:-.55rem; height:3px; border-radius:2px; background:#2fa05a; }
+      /* Form tiles on the match page: W / D / L */
+      .form-tile { display:inline-block; width:1.4rem; height:1.4rem; line-height:1.4rem; text-align:center; border-radius:.25rem; font-size:.75rem; font-weight:600; cursor:help; }
+      .form-W { background:#2fa05a; color:#fff; } .form-D { background:#adb5bd; color:#212529; } .form-L { background:#e0533d; color:#fff; }
+      .stats-table td, .stats-table th { padding-top:.3rem; padding-bottom:.3rem; }
+      /* Chance tags (Value check): outlined in the same colour scale as the odds badges, so they don't look like verdicts */
+      .chance-tag { background:#fff; border:1.5px solid currentColor; font-weight:600; }
+      .chance-likely   { color:#0b5d33; }
+      .chance-tossup   { color:#9a7400; }
+      .chance-outsider { color:#c2410c; }
+      .chance-longshot { color:#c0392b; }
+      .chance-moonshot { color:#8b1a1a; }
+      /* Section title inside a card, e.g. "Match result", "Goals markets": centred and bold like the team names in table headers */
+      .section-label { font-weight:700; text-align:center; color:var(--bs-body-color); margin:0 0 .25rem; }
+      .section-label:not(:first-child) { margin-top:1rem; }
+      .tooltip-inner { white-space:pre-line; }
+      .odds-tip .tooltip-inner { white-space:pre-line; text-align:left; max-width:260px; }
     </style>
 </head>
 <body>
 
-<nav th:fragment="navbar" class="navbar navbar-dark bg-dark mb-4">
-    <div class="container"><a class="navbar-brand" href="/">⚽ Football Tournament Prediction Engine</a></div>
-</nav>
 
-<!--
-  editHeader fragment - edit pages keep navigation minimal; save actions remain with the form.
--->
-<div th:fragment="editHeader" class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h1 class="h3 mb-1" th:text="${pageTitle}">Edit</h1>
-        <p class="text-muted mb-0" th:text="${tournamentLabel}">World Cup 2026</p>
+<!-- "Guide" pop-up: explains every badge and colour. Include with th:replace="~{fragments :: guide}" -->
+<div th:fragment="guide" class="modal fade" id="guideModal" tabindex="-1" aria-labelledby="guideTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title h5" id="guideTitle">Guide to labels and colours</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body small">
+                <div class="section-label">Stake</div>
+                <p class="mb-3">Type an amount or use <strong>No bet · £5 · £10 · £20 · £50</strong> in the top banner.
+                    With a stake, the odds badges show the total you'd get back (stake + winnings).</p>
+
+                <div class="section-label">Odds</div>
+                <p class="mb-2">Sky Bet's price, shown as a fraction (or, with a stake set, what you'd get back). The colour is how likely it is, with the bookmaker's margin removed.</p>
+                <div class="d-flex flex-wrap gap-2 justify-content-center mb-3">
+                    <span class="badge rounded-pill odds-very-good">1/6 · 70%+</span>
+                    <span class="badge rounded-pill odds-good">4/6 · 50-69%</span>
+                    <span class="badge rounded-pill odds-ok">8/5 · 25-49%</span>
+                    <span class="badge rounded-pill odds-poor">13/2 · 10-24%</span>
+                    <span class="badge rounded-pill odds-very-poor">16/1 · under 10%</span>
+                </div>
+
+                <div class="section-label">Chance</div>
+                <p class="mb-2">How likely an outcome is, by our estimate (Sky Bet's chance nudged by the stats).</p>
+                <div class="d-flex flex-wrap gap-2 justify-content-center mb-3">
+                    <span class="badge rounded-pill chance-tag chance-likely">Likely · 50%+</span>
+                    <span class="badge rounded-pill chance-tag chance-tossup">Toss-up · 35-49%</span>
+                    <span class="badge rounded-pill chance-tag chance-outsider">Outsider · 20-34%</span>
+                    <span class="badge rounded-pill chance-tag chance-longshot">Long shot · 10-19%</span>
+                    <span class="badge rounded-pill chance-tag chance-moonshot">Moonshot · under 10%</span>
+                </div>
+
+                <div class="section-label">Price verdict</div>
+                <p class="mb-2">Whether the odds pay enough for that chance, over many bets like it.</p>
+                <table class="table table-sm align-middle mb-2 stats-table">
+                    <tbody>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-good">Great value</span></td><td>Pays clearly more than the risk deserves (+15% or better on average).</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-good">Good value</span></td><td>Pays more than it should (+5% to +15%).</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle">Possible value</span></td><td>Looks like value, but there's little data yet, so treat it with caution.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-ok">Fair price</span></td><td>About right for the chance (within ±5%). An optional small bet at most.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill verdict-small-cost">Small cost</span></td><td>Slightly short, but likely to win (35%+). Your framework allows a few of these, capped.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-poor">Poor price</span></td><td>The odds are too short for the chance: costs you money over time, even if it usually wins.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill border text-secondary fw-normal">No value</span></td><td>Football list: nothing in the match is both a Toss-up or better (35%+) and at least a fair price.</td></tr>
+                    </tbody>
+                </table>
+                <p class="text-muted mb-0">A value verdict doesn't mean a bet will win: long shots lose most of the time even at a good price.</p>
+            </div>
+        </div>
     </div>
-    <a class="btn btn-outline-secondary" th:href="@{/tournament/{name}(name=${tournament})}">Back to Tournament</a>
 </div>
 
-<!--
-  roundNav fragment — shared page header with nav buttons.
-  Model attributes:
-    tournament, tournamentLabel, pageTitle
-    prevNavUrl / prevNavLabel / prevNavEnabled  (prev ← button; null url = hidden)
-    nextNavUrl / nextNavLabel / nextNavEnabled  (next → button; null url = hidden)
-    canNextRun / nextRunMode / nextRunLabel  (optional next-stage action)
-  Note: editUrl is handled separately via the editLink fragment below.
--->
-<div th:fragment="roundNav" class="d-flex justify-content-between align-items-center mb-3">
-    <div>
-        <h1 class="h3 mb-1" th:text="${pageTitle}">Title</h1>
-        <p class="text-muted mb-0" th:text="${tournamentLabel}">World Cup 2026</p>
+<nav th:fragment="navbar" class="navbar navbar-dark theme-bg mb-4">
+    <div class="container justify-content-start gap-4">
+        <a class="navbar-brand fw-semibold me-2" href="/">Sports Betting Assistant</a>
+        <div class="navbar-nav flex-row gap-1 site-nav">
+            <a class="nav-link" href="/football">Football</a>
+            <a class="nav-link" href="/horse-racing">Horse Racing</a>
+        </div>
+        <!-- Stake £ (right of the banner): pages that use it (Football list, match pages) put the input here -->
+        <div id="navStake" class="ms-auto"></div>
     </div>
-    <div class="d-flex gap-2 flex-wrap">
-        <a class="btn btn-outline-secondary" th:href="@{/tournament/{name}(name=${tournament})}">Back to Tournament</a>
-        <a th:if="${prevNavUrl != null and !#strings.isEmpty(prevNavUrl)}"
-           th:href="${prevNavEnabled != false ? prevNavUrl : '#'}"
-           th:text="${prevNavLabel}"
-           th:classappend="${prevNavEnabled == false ? ' disabled' : ''}"
-           class="btn btn-outline-primary">← Prev</a>
-        <form th:if="${canNextRun}" th:action="@{/run/{mode}(mode=${nextRunMode}, tournament=${tournament})}" method="post" class="d-inline">
-            <button class="btn btn-primary" type="submit" th:text="${nextRunLabel}">Run</button>
-        </form>
-        <a th:if="${nextNavUrl != null and !#strings.isEmpty(nextNavUrl) and !canNextRun}"
-           th:href="${nextNavEnabled != false ? nextNavUrl : '#'}"
-           th:text="${nextNavLabel}"
-           th:classappend="${nextNavEnabled == false ? ' disabled' : ''}"
-           class="btn btn-primary">→ Next</a>
-    </div>
-</div>
+    <!-- Pop-up messages (Bootstrap toasts): bottom-right, stack, fade after 5s. Use notify('text', 'danger'|'success'|'info'). -->
+    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts" style="z-index:1090"></div>
+    <script th:inline="none">
+      window.notify = function (message, type) {
+        var colours = { danger: 'text-bg-danger', success: 'text-bg-success', info: 'theme-bg', warning: 'text-bg-warning' };
+        var t = document.createElement('div');
+        t.className = 'toast align-items-center border-0 shadow ' + (colours[type] || colours.info);
+        t.setAttribute('role', type === 'danger' ? 'alert' : 'status');
+        t.setAttribute('aria-live', type === 'danger' ? 'assertive' : 'polite');
+        t.setAttribute('aria-atomic', 'true');
+        var row = document.createElement('div'); row.className = 'd-flex';
+        var body = document.createElement('div'); body.className = 'toast-body'; body.textContent = message;
+        var close = document.createElement('button');
+        close.type = 'button';
+        close.className = 'btn-close me-2 m-auto' + (type === 'warning' ? '' : ' btn-close-white');
+        close.setAttribute('data-bs-dismiss', 'toast'); close.setAttribute('aria-label', 'Close');
+        row.appendChild(body); row.appendChild(close); t.appendChild(row);
+        document.getElementById('toasts').appendChild(t);
+        var show = function () {
+          var toast = bootstrap.Toast.getOrCreateInstance(t, { delay: 5000, autohide: true });
+          t.addEventListener('hidden.bs.toast', function () { t.remove(); });
+          toast.show();
+        };
+        if (window.bootstrap) show(); else window.addEventListener('load', show);
+      };
 
-<!--
-  editLink fragment — small secondary edit link rendered just below the nav bar.
-  Uses editUrl model attribute; renders nothing if editUrl is null.
--->
-<div th:fragment="editLink" class="mb-3 text-end">
-    <a th:if="${editUrl != null}" th:href="${editUrl}"
-       class="btn btn-sm btn-outline-secondary">Edit</a>
-    <script th:if="${editUrl != null}" th:inline="javascript">
-      document.addEventListener('keydown', function(e) {
-        if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-        if (e.key && e.key.toLowerCase() === 'e') {
-          e.preventDefault();
-          location.href = /*[[${editUrl}]]*/ '#';
+      // Highlight the menu item for the section you're in (e.g. Football on /football/match/...).
+      document.currentScript.closest('nav').querySelectorAll('.nav-link').forEach(function (a) {
+        var href = a.getAttribute('href');
+        if (location.pathname === href || location.pathname.indexOf(href + '/') === 0) {
+          a.classList.add('active');
+          a.setAttribute('aria-current', 'page');
         }
       });
     </script>
-</div>
-
-<!--
-  groupDetailRow(colspan, breakdownHtml) — expandable ELO breakdown detail row.
-  Used by both view-round and edit-round group tables.
-  colspan: number of columns the detail cell should span, including the disclosure column.
-  breakdownHtml: pre-built HTML string from GroupViewRow/GroupPickRow.getBreakdownHtml().
--->
-<th:block th:fragment="groupDetailRow(colspan, breakdownHtml)">
-<tr class="group-detail-row" style="display:none">
-    <td th:colspan="${colspan}" class="p-0">
-        <div class="px-3 py-2" style="background:#f8f9fa;border-bottom:1px solid #dee2e6">
-            <div th:utext="${breakdownHtml}"></div>
-        </div>
-    </td>
-</tr>
-</th:block>
-
-<!--
-  toggleGroupDetailScript — shared JS for expanding/collapsing group detail rows.
-  Used by both view-round and edit-round.
--->
-<th:block th:fragment="toggleGroupDetailScript">
-<script>
-function toggleGroupDetail(row) {
-    const detail = row.nextElementSibling;
-    if (!detail || !detail.classList.contains('group-detail-row')) return;
-    const isHidden = detail.style.display === 'none';
-    detail.style.display = isHidden ? 'table-row' : 'none';
-    const icon = row.querySelector('.expand-icon');
-    if (icon) icon.classList.toggle('expanded', isHidden);
-    if (isHidden) {
-        detail.querySelectorAll('[data-bs-toggle="tooltip"]').forEach(el => {
-            new bootstrap.Tooltip(el);
-        });
-    }
-}
-</script>
-</th:block>
-
-<!--
-  keyboardNavScript — arrow key navigation between rounds.
-  Uses prevViewEnabled/prevViewUrl and nextViewEnabled/nextViewUrl model attributes.
-  Conditionally rendered only when hasPrevRound or hasNextRound is true.
--->
-<th:block th:fragment="keyboardNavScript">
-<script th:if="${hasPrevRound or hasNextRound}">
-  document.addEventListener('keydown', function(e) {
-    if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-    if (e.key === 'ArrowLeft' && [[${prevViewEnabled}]]) location.href = '[[${prevViewUrl}]]';
-    if (e.key === 'ArrowRight' && [[${nextViewEnabled}]]) location.href = '[[${nextViewUrl}]]';
-  });
-</script>
-</th:block>
+</nav>
 
 </body>
 </html>

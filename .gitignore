@@ -4,39 +4,11 @@ target/
 *.class
 *.log
 .DS_Store
-node_modules/
 .env
 
-# Generated Monte Carlo outputs.
-data/simulations/
-
-# Global ELO refresh output. Tournament-local snapshots under data/elo/snapshots/ are kept.
-data/elo/current/world.csv
-data/elo/current/history/
-
-# Generated historical calibration workspace. Rebuild with --mode=training.
-data/backtests/
-data/elo/snapshots/*/
-
-# Python caches are never source artifacts.
-__pycache__/
-*.pyc
-
-# Generated SQLite query/cache databases.
-data/cache/*.sqlite
-data/cache/*.sqlite-wal
-data/cache/*.sqlite-shm
-
-# SQLite database files.
+# Local databases
 *.sqlite
-*.sqlite-wal
-*.sqlite-shm
 *.db
-*.db-wal
-*.db-shm
 
-# Generated tournament prediction outputs.
-data/predictions/*/last_16.csv
-data/predictions/*/last_8.csv
-data/predictions/*/last_4.csv
-data/predictions/*/final.csv
+# Local odds cache (fetched from The Odds API)
+cache/

@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments :: pageHead}"></head>
+<body>
+<nav th:replace="~{fragments :: navbar}"></nav>
+<div class="container pb-5" th:attr="data-match-id=${matchId}" id="page">
+    <div id="notFound" class="alert alert-warning mt-3 d-none">
+        This match isn't in the saved odds. Go back to <a href="/football">Football matches</a> and refresh.
+    </div>
+
+    <!-- Header: crests and teams, competition, kick-off, all centred -->
+    <div id="header" class="text-center mb-4">
+        <div class="d-flex align-items-center justify-content-center gap-3 mb-2" id="teamsRow">
+            <span id="homeLogo"></span>
+            <h1 class="h3 mb-0" id="teams"></h1>
+            <span id="awayLogo"></span>
+        </div>
+        <div class="small text-muted" id="meta">Loading…</div>
+        <div class="small" id="kickoff"></div>
+    </div>
+
+    <div class="row g-3">
+        <!-- Left (wide): live stats, form, goals profile, head to head, key players -->
+        <div class="col-lg-7 d-flex flex-column gap-3">
+            <!-- Live match stats: data source to be added later (score, xG, shots, corners, cards during the game) -->
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Live Match Stats</div>
+                <div class="card-body small text-muted" id="liveStats">No data.</div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Form &amp; League Position</div>
+                <div class="card-body small" id="form"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Goals Profile</div>
+                <div class="card-body small" id="stats"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent py-1 small text-muted d-flex justify-content-between gap-2">
+                    <span id="goalsNote"></span>
+                    <span>Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></span>
+                </div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Head to Head</div>
+                <div class="card-body small" id="h2h"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Key Players <span class="small text-muted fw-normal">Top Scorers</span></div>
+                <div class="card-body small" id="keyPlayers"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></div>
+            </div>
+        </div>
+
+        <!-- Right: odds, then value check -->
+        <div class="col-lg-5 d-flex flex-column gap-3">
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Sky Bet Odds</div>
+                <div class="card-body" id="odds"></div>
+                <div class="card-footer bg-transparent py-1 small d-flex justify-content-between">
+                    <span class="text-muted" id="oddsMargin"></span>
+                    <span class="text-muted">Source: <a class="text-muted" href="https://the-odds-api.com" target="_blank" rel="noopener noreferrer">the-odds-api.com</a></span>
+                </div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Value Check</div>
+                <div class="card-body small" id="valueCheck"><span class="text-muted">Loading…</span></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/js/football-data.js"></script>
+<script src="/js/value-check.js"></script>
+<script src="/js/match-stats.js"></script>
+<script th:inline="none">
+(function () {
+  var F = window.Football, el = F.el;
+  var $ = function (id) { return document.getElementById(id); };
+  var matchId = $('page').getAttribute('data-match-id');
+
+  var MARKET_NAMES = { h2h: 'Match Result', h2h_3_way: 'Match Result (3-Way)', totals: 'Total Goals',
+    alternate_totals: 'Total Goals (All Lines)', btts: 'Both Teams to Score', double_chance: 'Double Chance',
+    draw_no_bet: 'Draw No Bet', h2h_3_way_h1: 'First-Half Result', halftime_fulltime: 'Half-Time / Full-Time',
+    player_goal_scorer_anytime: 'Anytime Goalscorer', player_first_goal_scorer: 'First Goalscorer',
+    player_shots_on_target: 'Player Shots on Target', player_to_score_or_assist: 'To Score or Assist',
+    alternate_totals_corners: 'Total Corners', alternate_totals_cards: 'Total Cards' };
+
+  function countdown(iso) {
+    var mins = Math.round((new Date(iso) - Date.now()) / 60000);
+    if (mins < 0) return 'Started';
+    if (mins < 60) return 'Kicks off in ' + mins + ' min';
+    if (mins < 48 * 60) return 'Kicks off in ' + Math.round(mins / 60) + ' h';
+    return 'Kicks off in ' + Math.round(mins / 1440) + ' days';
+  }
+
+  /** Two-column list: selection on the left, odds badge on the right (no header row). */
+  function oddsTable(rows) {
+    var table = el('table', 'table table-sm align-middle mb-0 stats-table');
+    var tbody = el('tbody');
+    rows.forEach(function (r) {
+      var row = el('tr');
+      row.appendChild(el('td', null, r[0]));
+      var td = el('td', 'text-end');
+      td.appendChild(r[1]);
+      row.appendChild(td);
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    return table;
+  }
+
+  // One market: group outcomes by line (e.g. 2.5) so each over/under pair is priced together.
+  function renderMarket(box, m, ev) {
+    box.appendChild(el('div', 'section-label', MARKET_NAMES[m.key] || m.key));
+    var groups = {};
+    m.outcomes.forEach(function (o) {
+      var g = (o.description || '') + '|' + (o.point !== undefined ? o.point : '');
+      (groups[g] = groups[g] || []).push(o);
+    });
+    var rows = [], margins = [];
+    Object.keys(groups).forEach(function (g) {
+      var outs = groups[g];
+      if (m.key === 'h2h' || m.key === 'h2h_3_way') {
+        var order = [ev.home_team, 'Draw', ev.away_team];
+        outs.sort(function (a, b) { return order.indexOf(a.name) - order.indexOf(b.name); });
+      }
+      var fair = outs.length > 1 ? F.fairChances(outs.map(function (o) { return o.price; })) : null;
+      if (fair) margins.push(fair.margin);
+      outs.forEach(function (o, i) {
+        var label = [o.description, o.name, o.point].filter(function (x) { return x !== undefined && x !== null && x !== ''; }).join(' ');
+        var chance = fair ? fair.chances[i] : 1 / o.price;
+        rows.push([label, F.oddsBadge(o.price, chance)]);
+      });
+    });
+    // With a stake the badges show what you'd get back (stake + winnings), so the column says Returns.
+    box.appendChild(oddsTable(rows));
+    if (margins.length) {
+      var avg = margins.reduce(function (a, b) { return a + b; }, 0) / margins.length;
+      marketMargins.push({ key: m.key, margin: avg });
+    }
+  }
+
+  var currentEvent = null;
+  var marketMargins = [];
+
+  function renderOdds() {
+    var ev = currentEvent, box = $('odds');
+    if (!ev) return;
+    box.replaceChildren();
+    marketMargins = [];
+    if (!ev.bookmakers.length) { box.appendChild(el('p', 'text-muted mb-0', 'No odds saved for this match yet.')); return; }
+    ev.bookmakers.forEach(function (bk) {
+      bk.markets.forEach(function (m) { renderMarket(box, m, ev); });
+    });
+    // Footer: bookmaker margin on the match result (or the first market shown)
+    var main = marketMargins.find(function (x) { return x.key === 'h2h'; }) || marketMargins[0];
+    $('oddsMargin').textContent = main ? 'Bookmaker margin ' + (main.margin * 100).toFixed(1) + '%' : '';
+  }
+  document.getElementById('navStake').appendChild(   // in the top banner
+    F.stakeInput(function () { renderOdds(); if (window.ValueCheck) ValueCheck.rerender(); }));
+
+  F.loadAll().then(function (data) {
+    var ev = data.matches.find(function (m) { return m.id === matchId; });
+    if (!ev) { $('notFound').classList.remove('d-none'); $('header').classList.add('d-none'); return; }
+    document.title = ev.home_team + ' v ' + ev.away_team + ' · Sports Betting Assistant';
+    $('meta').textContent = ev.comp;
+    $('teams').textContent = ev.home_team + ' v ' + ev.away_team;
+    F.loadTeams(ev.compKey).then(function (teams) {
+      $('homeLogo').replaceChildren(F.logo(teams, ev.home_team, 56));
+      $('awayLogo').replaceChildren(F.logo(teams, ev.away_team, 56));
+      MatchStats.render($('stats'), ev, F.findTeam(teams, ev.home_team), F.findTeam(teams, ev.away_team));
+    });
+    $('kickoff').textContent = F.day(ev.commence_time) + ', ' + F.time(ev.commence_time) + ' · ' + countdown(ev.commence_time);
+
+    currentEvent = ev;
+    renderOdds();
+  }).catch(function (e) {
+    $('meta').textContent = 'Could not load: ' + e.message;
+  });
+})();
+</script>
+</body>
+</html>
