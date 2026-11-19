@@ -8,24 +8,7 @@
     <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
     <script defer src="/vendor/bootstrap/bootstrap.bundle.min.js"></script>
     <script th:inline="none">
-      // ---- Theme colours (header dropdown). Saved per browser; applied before the page draws. ----
-      window.THEMES = [
-        { name: 'Charcoal', theme: '#212529', hover: '#424649' },
-        { name: 'Navy',     theme: '#1e3a5f', hover: '#2c5282' },
-        { name: 'Teal',     theme: '#115e59', hover: '#0f766e' },
-        { name: 'Forest',   theme: '#1f4d3a', hover: '#2d6a4f' },
-        { name: 'Plum',     theme: '#4c2a5e', hover: '#6b3f82' },
-        { name: 'Burgundy', theme: '#6b1f2e', hover: '#8c2a3d' },
-        { name: 'Slate',    theme: '#334155', hover: '#475569' }
-      ];
-      window.applyTheme = function (name) {
-        var t = THEMES.find(function (x) { return x.name === name; }) || THEMES[0];
-        document.documentElement.style.setProperty('--theme', t.theme);
-        document.documentElement.style.setProperty('--theme-hover', t.hover);
-        try { localStorage.setItem('theme', t.name); } catch (e) { /* ignore */ }
-        return t;
-      };
-      (function () { var n; try { n = localStorage.getItem('theme'); } catch (e) {} if (n) applyTheme(n); })();
+      try { localStorage.removeItem('theme'); } catch (e) { /* old Theme dropdown choice */ }
 
       // Show a spinner and disable the submit button while a form is posting.
       document.addEventListener('submit', function(event) {
@@ -43,9 +26,8 @@
     <style>
       html { color-scheme: light; }
       /* ===== Base theme colour: change it here to restyle the banner, card and pop-up headers, and main buttons ===== */
-      :root { --theme:#212529; --theme-hover:#424649; --theme-text:#fff; }
+      :root { --theme:#6b1f2e; --theme-hover:#8c2a3d; --theme-text:#fff; }   /* Burgundy */
       .theme-bg { background:var(--theme) !important; color:var(--theme-text); }
-      #themeMenu .dropdown-item.active, #themeMenu .dropdown-item:active { background:var(--theme); color:var(--theme-text); }
       .btn-theme { --bs-btn-color:var(--theme-text); --bs-btn-bg:var(--theme); --bs-btn-border-color:var(--theme);
                    --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
                    --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme-hover); --bs-btn-active-border-color:var(--theme-hover);
@@ -92,6 +74,59 @@
 </head>
 <body>
 
+
+<!-- "Guide" pop-up: explains every badge and colour. Include with th:replace="~{fragments :: guide}" -->
+<div th:fragment="guide" class="modal fade" id="guideModal" tabindex="-1" aria-labelledby="guideTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title h5" id="guideTitle">Guide to labels and colours</h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body small">
+                <div class="section-label">Stake</div>
+                <p class="mb-3">Type an amount or use <strong>No bet · £5 · £10 · £20 · £50</strong> in the top banner.
+                    With a stake, the odds badges show the total you'd get back (stake + winnings).</p>
+
+                <div class="section-label">Odds</div>
+                <p class="mb-2">Sky Bet's price, shown as a fraction (or, with a stake set, what you'd get back). The colour is how likely it is, with the bookmaker's margin removed.</p>
+                <div class="d-flex flex-wrap gap-2 justify-content-center mb-3">
+                    <span class="badge rounded-pill odds-very-good">1/6 · 70%+</span>
+                    <span class="badge rounded-pill odds-good">4/6 · 50-69%</span>
+                    <span class="badge rounded-pill odds-ok">8/5 · 25-49%</span>
+                    <span class="badge rounded-pill odds-poor">13/2 · 10-24%</span>
+                    <span class="badge rounded-pill odds-very-poor">16/1 · under 10%</span>
+                </div>
+
+                <div class="section-label">Chance</div>
+                <p class="mb-2">How likely an outcome is, by our estimate (Sky Bet's chance nudged by the stats).</p>
+                <div class="d-flex flex-wrap gap-2 justify-content-center mb-3">
+                    <span class="badge rounded-pill chance-tag chance-likely">Likely · 50%+</span>
+                    <span class="badge rounded-pill chance-tag chance-tossup">Toss-up · 35-49%</span>
+                    <span class="badge rounded-pill chance-tag chance-outsider">Outsider · 20-34%</span>
+                    <span class="badge rounded-pill chance-tag chance-longshot">Long shot · 10-19%</span>
+                    <span class="badge rounded-pill chance-tag chance-moonshot">Moonshot · under 10%</span>
+                </div>
+
+                <div class="section-label">Price verdict</div>
+                <p class="mb-2">Whether the odds pay enough for that chance, over many bets like it.</p>
+                <table class="table table-sm align-middle mb-2 stats-table">
+                    <tbody>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-good">Great value</span></td><td>Pays clearly more than the risk deserves (+15% or better on average).</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-good">Good value</span></td><td>Pays more than it should (+5% to +15%).</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle">Possible value</span></td><td>Looks like value, but there's little data yet, so treat it with caution.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-ok">Fair price</span></td><td>About right for the chance (within ±5%). An optional small bet at most.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill verdict-small-cost">Small cost</span></td><td>Slightly short, but likely to win (35%+). Your framework allows a few of these, capped.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-poor">Poor price</span></td><td>The odds are too short for the chance: costs you money over time, even if it usually wins.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill border text-secondary fw-normal">No value</span></td><td>Football list: nothing in the match is both a Toss-up or better (35%+) and at least a fair price.</td></tr>
+                    </tbody>
+                </table>
+                <p class="text-muted mb-0">A value verdict doesn't mean a bet will win: long shots lose most of the time even at a good price.</p>
+            </div>
+        </div>
+    </div>
+</div>
+
 <nav th:fragment="navbar" class="navbar navbar-dark theme-bg mb-4">
     <div class="container justify-content-start gap-4">
         <a class="navbar-brand fw-semibold me-2" href="/">Sports Betting Assistant</a>
@@ -99,10 +134,8 @@
             <a class="nav-link" href="/football">Football</a>
             <a class="nav-link" href="/horse-racing">Horse Racing</a>
         </div>
-        <div class="dropdown ms-auto">
-            <button class="btn btn-sm btn-outline-light dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">Theme</button>
-            <ul class="dropdown-menu dropdown-menu-end" id="themeMenu"></ul>
-        </div>
+        <!-- Stake £ (right of the banner): pages that use it (Football list, match pages) put the input here -->
+        <div id="navStake" class="ms-auto"></div>
     </div>
     <!-- Pop-up messages (Bootstrap toasts): bottom-right, stack, fade after 5s. Use notify('text', 'danger'|'success'|'info'). -->
     <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts" style="z-index:1090"></div>
@@ -129,31 +162,6 @@
         };
         if (window.bootstrap) show(); else window.addEventListener('load', show);
       };
-
-      // Theme dropdown: one item per colour, with a swatch; tick on the current one
-      (function () {
-        var menu = document.getElementById('themeMenu');
-        if (!menu) return;
-        function draw() {
-          var current; try { current = localStorage.getItem('theme'); } catch (e) {}
-          current = current || THEMES[0].name;
-          menu.replaceChildren();
-          THEMES.forEach(function (t) {
-            var li = document.createElement('li');
-            var a = document.createElement('button');
-            a.type = 'button';
-            a.className = 'dropdown-item d-flex align-items-center gap-2' + (t.name === current ? ' active' : '');
-            var sw = document.createElement('span');
-            sw.style.cssText = 'width:1rem;height:1rem;border-radius:.25rem;display:inline-block;background:' + t.theme;
-            a.appendChild(sw);
-            a.appendChild(document.createTextNode(t.name));
-            a.addEventListener('click', function () { applyTheme(t.name); draw(); });
-            li.appendChild(a);
-            menu.appendChild(li);
-          });
-        }
-        draw();
-      })();
 
       // Highlight the menu item for the section you're in (e.g. Football on /football/match/...).
       document.currentScript.closest('nav').querySelectorAll('.nav-link').forEach(function (a) {

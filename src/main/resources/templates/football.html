@@ -7,6 +7,7 @@
     <div class="d-flex flex-wrap align-items-center gap-2 mb-2">
         <h1 class="h3 mb-0 me-auto">Football matches</h1>
         <span id="quota" class="small text-muted"></span>
+        <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:.8rem" data-bs-toggle="modal" data-bs-target="#guideModal">Guide</button>
         <button id="refresh" class="btn btn-theme btn-sm py-0 px-2" style="font-size:.8rem">Refresh odds</button>
         <button id="refreshStats" class="btn btn-theme btn-sm py-0 px-2" style="font-size:.8rem">Refresh stats</button>
     </div>
@@ -24,10 +25,11 @@
             <input class="form-check-input" type="checkbox" id="filterStarted" checked>
             <label class="form-check-label" for="filterStarted">Hide started matches</label>
         </div>
-        <div id="stakeBox" class="ms-auto"></div>
+
     </div>
 
     <div id="error" class="alert alert-danger d-none"></div>
+    <div th:replace="~{fragments :: guide}"></div>
 
     <!-- Confirm before a refresh, so a stray click doesn't use credits/calls -->
     <div class="modal fade" id="confirmModal" tabindex="-1" aria-labelledby="confirmTitle" aria-hidden="true">
@@ -66,33 +68,30 @@
   var teamsByComp = {};
   var valueByMatch = {};   // match id -> analysis (or 'none'), filled in the background
 
-  /** Value check label for one match (best outcome and numbers on hover). */
-  function valueCell(m) {
+  /**
+   * Our pick: one decision per match, only among reasonably likely outcomes (35%+, Toss-up or Likely):
+   * a value price first, otherwise a fair price (an optional small bet in the framework).
+   * Otherwise "No value": poor prices, and long shots that lose too often even when the price looks generous.
+   */
+  var MIN_PICK_CHANCE = 0.35;
+  function pickCell(m) {
     var a = valueByMatch[m.id];
     if (a === undefined) return el('span', 'text-muted', '…');
     if (a === 'none' || !a.rows.length) return el('span', 'text-muted', '–');
-    var best = a.rows.slice().sort(function (x, y) { return y.ret - x.ret; })[0];
-    var span, tip;
-    if (best.ret >= 0.05) {
-      span = el('span', 'badge rounded-pill ' + best.verdict.cls, best.verdict.text);
-      tip = best.name + (best.tag ? ' · ' + best.tag : '') + '\nOur chance ' + Math.round(best.ours * 100) +
-            '%, break-even ' + Math.round(100 / best.price) + '%';
-    } else {
-      span = el('span', 'badge rounded-pill border text-secondary fw-normal', 'No value');
-      tip = 'None of home, draw or away is priced generously enough.';
+    // 1st choice: value and likely. 2nd: fair price and likely (framework: optional small bet).
+    var likely = a.rows.filter(function (r) { return r.ours >= MIN_PICK_CHANCE; })
+      .sort(function (x, y) { return y.ret - x.ret; });
+    var pick = likely.find(function (r) { return r.ret >= 0.05; }) || likely.find(function (r) { return r.ret > -0.05; });
+    if (pick) {
+      var cell = ValueCheck.pair(pick, true);
+      if (pick.name !== 'Draw') cell.prepend(F.logo(teamsByComp[m.compKey] || [], pick.name, 18));   // club crest
+      return cell;
     }
-    span.setAttribute('data-bs-toggle', 'tooltip');
-    span.setAttribute('data-bs-title', tip);
-    span.style.cursor = 'help';
-    return span;
-  }
-
-  /** Confidence badge for one match. */
-  function confidenceCell(m) {
-    var a = valueByMatch[m.id];
-    if (a === undefined) return el('span', 'text-muted', '…');
-    if (a === 'none' || !a.rows.length) return el('span', 'text-muted', '–');
-    return ValueCheck.confidenceBadge(a);
+    var none = el('span', 'badge rounded-pill border text-secondary fw-normal', 'No value');
+    none.setAttribute('data-bs-toggle', 'tooltip');
+    none.setAttribute('data-bs-title', 'No outcome is both likely (35%+) and at least a fair price.');
+    none.style.cursor = 'help';
+    return none;
   }
 
   /** Works out the value check for every listed match that hasn't been done yet, then redraws. */
@@ -126,7 +125,7 @@
     return Math.round(mins / 1440) + ' days ago';
   }
   function title(name) {
-    return { uefa_champs_league: 'Champions League', uefa_nations_league: 'Nations League',
+    return { epl: 'Premier League', uefa_champs_league: 'Champions League', uefa_nations_league: 'Nations League',
              uefa_european_championship: 'Euros', fifa_world_cup: 'World Cup' }[name] || name.replace(/_/g, ' ');
   }
 
@@ -187,8 +186,8 @@
         var wrap = el('div', 'table-responsive');
         var table = el('table', 'table table-sm table-hover align-middle mb-0 small');
         var head = el('tr', 'text-muted');
-        ['', 'Time', 'Competition', 'Match', 'Home', 'Draw', 'Away', 'Value Check', 'Confidence'].forEach(function (h, i) {
-          head.appendChild(el('th', i >= 4 && i <= 6 ? 'text-center' : null, h));
+        ['', 'Time', 'Competition', 'Match', 'Home', 'Draw', 'Away', ''].forEach(function (h, i) {
+          head.appendChild(el('th', i >= 4 && i <= 6 ? 'text-center' : i === 7 ? 'text-end' : null, h));
         });
         var thead = el('thead'); thead.appendChild(head); table.appendChild(thead);
         tbody = el('tbody'); table.appendChild(tbody);
@@ -226,12 +225,7 @@
         var td = el('td', 'text-center'); td.appendChild(F.oddsBadge(p, chances[i])); tr.appendChild(td);
       });
       // Value check: best-value outcome + confidence, worked out from saved results (same as the match page)
-      var tdValue = el('td', 'text-nowrap');
-      tdValue.appendChild(valueCell(m));
-      tr.appendChild(tdValue);
-      var tdConf = el('td');
-      tdConf.appendChild(confidenceCell(m));
-      tr.appendChild(tdConf);
+      var tdPick = el('td', 'text-nowrap text-end'); tdPick.appendChild(pickCell(m)); tr.appendChild(tdPick);
       // Click anywhere on the row to open the match page
       var href = '/football/match/' + encodeURIComponent(m.id);
       tr.style.cursor = 'pointer';
@@ -323,7 +317,7 @@
       .then(function () { busy(btn, false); });
   }
 
-  $('stakeBox').appendChild(F.stakeInput(render));
+  document.getElementById('navStake').appendChild(F.stakeInput(render));   // in the top banner
 
   // ---- Refresh stats: runs in the background on the server, we poll its progress ----
   var statsTimer = null;

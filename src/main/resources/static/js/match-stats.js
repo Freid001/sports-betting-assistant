@@ -4,7 +4,7 @@ window.MatchStats = (function () {
   var F = window.Football, el = F.el;
 
   // Our tournament names -> football-data.org competition codes.
-  var COMP_CODES = { uefa_champs_league: 'CL', fifa_world_cup: 'WC', uefa_european_championship: 'EC' };
+  var COMP_CODES = { epl: 'PL', uefa_champs_league: 'CL', fifa_world_cup: 'WC', uefa_european_championship: 'EC' };
 
   function getJson(url) {
     return fetch(url).then(function (r) {
@@ -189,7 +189,9 @@ window.MatchStats = (function () {
       var posCl = el('span', 'text-muted', '…'), posClAway = el('span', 'text-muted', '…');
       row(t1.body, 'League', posHome, posAway);
       var code = COMP_CODES[ev.compKey];
-      if (code) row(t1.body, ev.comp, posCl, posClAway);
+      // A league match (e.g. Premier League) is already the "League" row; only cups/tournaments get their own row.
+      var leagueMatch = code && [domesticLeague(lists[0]), domesticLeague(lists[1])].every(function (c) { return c && c.code === code; });
+      if (code && !leagueMatch) row(t1.body, ev.comp, posCl, posClAway);
       t1.table.classList.replace('mb-3', 'mb-0');
       document.getElementById('form').replaceChildren(t1.table);   // its own card above Match stats
 
@@ -230,10 +232,12 @@ window.MatchStats = (function () {
       fill(posHome, hl, homeTeam.id); fill(posAway, al, awayTeam.id);
       if (hl) posHome.after(el('div', 'small text-muted', hl.name));
       if (al) posAway.after(el('div', 'small text-muted', al.name));
-      if (code) { fill(posCl, { code: code }, homeTeam.id); fill(posClAway, { code: code }, awayTeam.id); }
+      if (code && !leagueMatch) { fill(posCl, { code: code }, homeTeam.id); fill(posClAway, { code: code }, awayTeam.id); }
 
-      keyPlayers(kpHome, homeTeam, [code && { code: code, name: ev.comp }, hl].filter(Boolean));
-      keyPlayers(kpAway, awayTeam, [code && { code: code, name: ev.comp }, al].filter(Boolean));
+      // Key players: this competition plus the team's league (once, if they're the same)
+      function comps(league) { return [code && { code: code, name: ev.comp }, league && league.code !== code ? league : null].filter(Boolean); }
+      keyPlayers(kpHome, homeTeam, comps(hl));
+      keyPlayers(kpAway, awayTeam, comps(al));
 
       // Head to head: find this fixture's football-data id, then its previous meetings.
       (code ? getJson('/api/football/data/competitions/' + code + '/matches?status=SCHEDULED')

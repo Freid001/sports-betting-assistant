@@ -1,6 +1,6 @@
 // Shared helpers for the football pages. Reads the local odds cache (free, no API credits).
 window.Football = (function () {
-  var NAMES = { uefa_champs_league: 'Champions League', uefa_nations_league: 'Nations League',
+  var NAMES = { epl: 'Premier League', uefa_champs_league: 'Champions League', uefa_nations_league: 'Nations League',
                 uefa_european_championship: 'Euros', fifa_world_cup: 'World Cup' };
 
   function el(tag, cls, text) {
@@ -106,22 +106,44 @@ window.Football = (function () {
    * With a stake set, badges show what you'd get back (stake + winnings) instead of the fraction.
    */
   function stakeInput(onChange) {
+    var outer = el('div', 'd-flex align-items-center gap-1');
     var group = el('div', 'input-group input-group-sm');
-    group.style.width = '9.5rem';
-    group.appendChild(el('span', 'input-group-text', 'Stake £'));
+    group.style.width = '10rem';
+    group.appendChild(el('span', 'input-group-text', '£'));   // reads: £ [10] Stake
     var input = el('input', 'form-control');
     // Arrows move in £5 steps; any amount (e.g. £2.50) can still be typed.
     input.type = 'number'; input.min = '0'; input.step = '5'; input.placeholder = '0';
     input.setAttribute('aria-label', 'Stake in pounds');
     if (stakeValue) input.value = stakeValue;
-    input.addEventListener('input', function () {
-      var v = parseFloat(input.value);
+    group.appendChild(input);
+    group.appendChild(el('span', 'input-group-text', 'Stake'));
+    outer.appendChild(group);
+
+    // Quick amounts: click to set, click the highlighted one again (or "No bet") to clear.
+    var presets = [0, 5, 10, 20, 50].map(function (amount) {
+      var b = el('button', 'btn btn-sm btn-outline-light', amount ? '£' + amount : 'No bet');   // same height as the input
+      b.type = 'button';
+      b.title = amount ? 'Show returns for a £' + amount + ' stake' : 'Clear the stake and show odds';
+      b.addEventListener('click', function () {
+        set(stakeValue === amount ? 0 : amount);
+        input.value = stakeValue || '';
+      });
+      outer.appendChild(b);
+      return { amount: amount, button: b };
+    });
+
+    function highlight() {
+      presets.forEach(function (p) { p.button.classList.toggle('active', p.amount === stakeValue); });
+    }
+    function set(v) {
       stakeValue = v > 0 ? v : 0;
       try { localStorage.setItem(STAKE_KEY, String(stakeValue)); } catch (e) { /* ignore */ }
+      highlight();
       onChange();
-    });
-    group.appendChild(input);
-    return group;
+    }
+    input.addEventListener('input', function () { set(parseFloat(input.value)); });
+    highlight();
+    return outer;
   }
 
   function money(v) { return '£' + (v >= 100 ? v.toFixed(0) : v.toFixed(2)); }

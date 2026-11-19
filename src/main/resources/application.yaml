@@ -50,6 +50,7 @@ football:
   # Tournaments shown on the Football page and refreshed together
   # (The Odds API sport keys without the "soccer_" prefix).
   tournaments:
+    - epl                         # Premier League
     - uefa_champs_league          # Champions League
     - uefa_nations_league         # Nations League
     - uefa_european_championship  # Euros

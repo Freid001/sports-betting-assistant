@@ -23,6 +23,7 @@ public class TeamLogoService {
 
     /** Our tournament names -> football-data.org competition codes (free tier). */
     private static final Map<String, String> COMPETITION_CODES = Map.of(
+            "epl", "PL",
             "uefa_champs_league", "CL",
             "fifa_world_cup", "WC",
             "uefa_european_championship", "EC");

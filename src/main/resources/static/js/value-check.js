@@ -72,7 +72,12 @@ window.ValueCheck = (function () {
     return 'Moonshot';                       // under 10%
   }
 
-  var TAG_RANGES = { 'Likely': '50% or more', 'Toss-up': '35-49%', 'Outsider': '20-34%', 'Long shot': '10-19%', 'Moonshot': 'under 10%' };
+  var TAG_RANGES = { 'Likely': '50%+', 'Toss-up': '35-49%', 'Outsider': '20-34%', 'Long shot': '10-19%', 'Moonshot': 'under 10%' };
+
+  /** Chance tag badge, e.g. "Likely · 50%+" (no tooltip: the range is on the badge). */
+  function tagBadge(tag) {
+    return el('span', 'badge rounded-pill chance-tag ' + tagClass(tag), tag + ' · ' + TAG_RANGES[tag]);
+  }
 
   /** Tooltip on one element (shown on hover, above it). */
   function tip(node, text) {
@@ -141,8 +146,8 @@ window.ValueCheck = (function () {
     var a = analyse(ev, homeViews, awayViews, stake);
     if (!a) { box.appendChild(el('p', 'text-muted mb-0', 'Not enough results yet to estimate chances.')); return; }
     var m = a.model;
-    var foot = document.getElementById('valueConfidence');   // one confidence for the whole match, in the header
-    if (foot) { foot.replaceChildren(confidenceBadge(a)); }
+    // Confidence isn't shown: it limits how far the stats move Sky Bet's chances and turns
+    // "Good value" into "Possible value" when data is thin, so the verdict already reflects it.
 
     if (a.rows.length) {
       box.appendChild(el('div', 'section-label', 'Match Result'));
@@ -154,13 +159,11 @@ window.ValueCheck = (function () {
         var verdict = el('td', 'text-nowrap text-end');
         // Each badge has its own tooltip: the chance tag explains how likely, the verdict explains the price.
         if (r.tag) {
-          var tag = el('span', 'badge rounded-pill chance-tag me-1 ' + tagClass(r.tag), r.tag);
-          tip(tag, pct(r.ours));
+          var tag = tagBadge(r.tag);
+          tag.classList.add('me-1');
           verdict.appendChild(tag);
         }
         var vb = el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text);
-        // Smallest odds that would be worth taking for our chance (fair odds), as a fraction
-        tip(vb, 'Needs ' + F.nearestFraction(1 / r.ours) + ' or bigger');
         verdict.appendChild(vb);
         tr.appendChild(verdict);
         tb.appendChild(tr);
@@ -192,9 +195,22 @@ window.ValueCheck = (function () {
       '. Verdicts judge the price, not the result: a value bet still loses most of the time if it\'s a long shot. Not financial advice.'));
   }
 
+  /**
+   * "Team  [Toss-up] [Fair price]" for one outcome row from analyse(), with the same tooltips as the match page.
+   * withName: include the team name in front.
+   */
+  function pair(r, withName) {
+    var wrap = el('span', 'd-inline-flex align-items-center gap-1 text-nowrap');
+    if (withName) wrap.appendChild(el('span', 'fw-semibold me-1', r.name));
+    if (r.tag) wrap.appendChild(tagBadge(r.tag));
+    var vb = el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text);
+    wrap.appendChild(vb);
+    return wrap;
+  }
+
   /** Redraw with the current Stake box value (called when the stake changes). */
   function rerender() { if (last) render.apply(null, last); }
 
-  return { render: render, rerender: rerender, model: model, analyse: analyse, confidenceBadge: confidenceBadge,
+  return { render: render, rerender: rerender, model: model, analyse: analyse, confidenceBadge: confidenceBadge, pair: pair,
            DEFAULT_STAKE: DEFAULT_STAKE };
 })();

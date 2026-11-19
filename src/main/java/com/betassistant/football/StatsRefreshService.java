@@ -32,6 +32,7 @@ public class StatsRefreshService {
 
     /** Our tournament names -> football-data.org competition codes (free plan). */
     static final Map<String, String> COMPETITION_CODES = Map.of(
+            "epl", "PL",
             "uefa_champs_league", "CL",
             "fifa_world_cup", "WC",
             "uefa_european_championship", "EC");
@@ -136,7 +137,8 @@ public class StatsRefreshService {
             for (String t : active) {
                 logos.teams(t, false).ifPresent(json -> listOf(parse(json), "teams").forEach(team -> {
                     String code = COUNTRY_LEAGUES.get(String.valueOf(asMap(team.get("area")).get("name")));
-                    if (code != null && leagues.contains(code) && !needed.contains(code)) {
+                    if (code != null && leagues.contains(code) && !needed.contains(code)
+                            && active.stream().noneMatch(a -> code.equals(COMPETITION_CODES.get(a)))) {
                         needed.add(code);
                     }
                 }));
@@ -275,8 +277,9 @@ public class StatsRefreshService {
 
     /** Rebuilds the index only when a saved results file has changed (i.e. after Refresh stats). */
     private Map<Long, List<String>> resultsIndex() {
-        List<String> codes = new ArrayList<>(COMPETITION_CODES.values());
-        codes.addAll(leagues);
+        java.util.LinkedHashSet<String> unique = new java.util.LinkedHashSet<>(COMPETITION_CODES.values());
+        unique.addAll(leagues);   // PL is both a tournament and a league: count it once
+        List<String> codes = new ArrayList<>(unique);
         StringBuilder key = new StringBuilder();
         for (String code : codes) {
             key.append(code).append('=')

@@ -55,10 +55,7 @@
         <!-- Right: odds, then value check -->
         <div class="col-lg-5 d-flex flex-column gap-3">
             <div class="card shadow-sm">
-                <div class="card-header d-flex flex-wrap gap-2 justify-content-between align-items-center py-2">
-                    <span class="fw-semibold">Sky Bet Odds</span>
-                    <span id="stakeBox"></span>
-                </div>
+                <div class="card-header py-2 fw-semibold">Sky Bet Odds</div>
                 <div class="card-body" id="odds"></div>
                 <div class="card-footer bg-transparent py-1 small d-flex justify-content-between">
                     <span class="text-muted" id="oddsMargin"></span>
@@ -66,10 +63,7 @@
                 </div>
             </div>
             <div class="card shadow-sm">
-                <div class="card-header py-2 d-flex justify-content-between align-items-center">
-                    <span class="fw-semibold">Value Check</span>
-                    <span id="valueConfidence"></span>
-                </div>
+                <div class="card-header py-2 fw-semibold">Value Check</div>
                 <div class="card-body small" id="valueCheck"><span class="text-muted">Loading…</span></div>
             </div>
         </div>
@@ -163,7 +157,8 @@
     var main = marketMargins.find(function (x) { return x.key === 'h2h'; }) || marketMargins[0];
     $('oddsMargin').textContent = main ? 'Bookmaker margin ' + (main.margin * 100).toFixed(1) + '%' : '';
   }
-  $('stakeBox').appendChild(F.stakeInput(function () { renderOdds(); if (window.ValueCheck) ValueCheck.rerender(); }));
+  document.getElementById('navStake').appendChild(   // in the top banner
+    F.stakeInput(function () { renderOdds(); if (window.ValueCheck) ValueCheck.rerender(); }));
 
   F.loadAll().then(function (data) {
     var ev = data.matches.find(function (m) { return m.id === matchId; });
