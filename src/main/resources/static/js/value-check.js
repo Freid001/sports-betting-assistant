@@ -76,10 +76,12 @@ window.ValueCheck = (function () {
 
   var TAG_RANGES = { 'Very Likely': '75%+', 'Likely': '50-74%', 'Toss Up': '35-49%', 'Outsider': '20-34%', 'Long Shot': '10-19%', 'Moonshot': 'under 10%' };
 
-  /** Chance tag badge, e.g. "Likely", with its range (e.g. 50-74%) on hover. */
-  function tagBadge(tag) {
+  /** Chance tag badge, e.g. "Likely", with our calculated chance on hover, e.g. "58.3%" (the range if no chance given). */
+  function tagBadge(tag, chance) {
     var b = el('span', 'badge rounded-pill chance-tag ' + tagClass(tag), tag);
-    b.title = TAG_RANGES[tag];
+    b.setAttribute('data-bs-toggle', 'tooltip');
+    b.setAttribute('data-bs-title', chance !== undefined ? (chance * 100).toFixed(1) + '%' : TAG_RANGES[tag]);
+    b.style.cursor = 'help';
     return b;
   }
 
@@ -341,7 +343,7 @@ window.ValueCheck = (function () {
         var tr = el('tr');
         tr.appendChild(el('td', null, r.name));
         var verdict = el('td', 'text-nowrap text-end');
-        var tag = tagBadge(r.tag);
+        var tag = tagBadge(r.tag, r.ours);
         tag.classList.add('me-1');
         verdict.appendChild(tag);
         verdict.appendChild(el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text));
@@ -398,7 +400,7 @@ window.ValueCheck = (function () {
             var r = find(mk, n), td = el('td');
             if (r) {
               var stack = el('div', 'd-inline-flex align-items-center gap-1 text-nowrap');   // chance tag, then price verdict
-              stack.append(tagBadge(r.tag), el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text));
+              stack.append(tagBadge(r.tag, r.ours), el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text));
               td.appendChild(stack);
             } else {
               td.appendChild(el('span', 'text-muted', '–'));
@@ -459,7 +461,7 @@ window.ValueCheck = (function () {
   function pair(r, withName) {
     var wrap = el('span', 'd-inline-flex align-items-center gap-1 text-nowrap');
     if (withName) wrap.appendChild(el('span', 'fw-semibold me-1', r.name));
-    if (r.tag) wrap.appendChild(tagBadge(r.tag));
+    if (r.tag) wrap.appendChild(tagBadge(r.tag, r.ours));   // the Football page's pick column
     var vb = el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text);
     wrap.appendChild(vb);
     return wrap;

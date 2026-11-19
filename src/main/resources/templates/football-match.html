@@ -110,7 +110,8 @@
   var ev = null, views = null;   // the match, and the home/away results the goals model uses (from the stats script)
 
   // The stats script hands its results to ValueCheck.render; here they feed the Markets card instead.
-  ValueCheck.render = function (box, e, homeVenue, awayVenue) { views = { home: homeVenue, away: awayVenue }; draw(); };
+  // (drawn just after, so the Goals Profile table it adds a row to is there)
+  ValueCheck.render = function (box, e, homeVenue, awayVenue) { views = { home: homeVenue, away: awayVenue }; setTimeout(draw, 0); };
   window.onTopScorers = function () { draw(); topScorers(); };   // goalscorer checks need the scorer tables
 
   function countdown(iso) {
@@ -123,10 +124,17 @@
 
   var TAGS = [[0.75, 'Very Likely', 'chance-verylikely'], [0.5, 'Likely', 'chance-likely'], [0.35, 'Toss Up', 'chance-tossup'],
               [0.2, 'Outsider', 'chance-outsider'], [0.1, 'Long Shot', 'chance-longshot'], [0, 'Moonshot', 'chance-moonshot']];
+  /** Chance label, with our calculated chance on hover, e.g. "21.4%". */
   function tagBadge(chance) {
     var t = TAGS.find(function (x) { return chance >= x[0]; });
-    return el('span', 'badge rounded-pill chance-tag ' + t[2], t[1]);
+    var b = el('span', 'badge rounded-pill chance-tag ' + t[2], t[1]);
+    b.setAttribute('data-bs-toggle', 'tooltip');
+    b.setAttribute('data-bs-title', pct(chance));
+    b.style.cursor = 'help';
+    return b;
   }
+  /** e.g. 0.2142 -> "21.4%". */
+  function pct(p) { return (p * 100).toFixed(1) + '%'; }
   function verdictBadge(r) {
     return r ? el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text) : el('span', 'text-muted', '–');
   }
@@ -229,7 +237,15 @@
         tr.appendChild(el('td', null, x.label));
         if (typed) tr.appendChild(el('td', 'text-nowrap', x.type));   // e.g. HT, FT or HT & FT
       }
-      var odds = el('td'); odds.appendChild(F.oddsBadge(x.o.price, x.chance)); tr.appendChild(odds);
+      // Odds: coloured by the bookmaker's own chance (margin removed). On hover the price's raw chance and the same
+      // without the bookmaker's margin, e.g. "10/3 · 23.1% (21.7% without margin)". Our chance is on the Chance label.
+      var bookChance = x.r ? x.r.fair : x.chance;
+      var oddsBadge = F.oddsBadge(x.o.price, bookChance);
+      // e.g. "10/3 · 23.1% (21.7% no margin)": the price's chance, then the bookmaker's own with its margin taken out
+      var margin = bookChance > 0 ? (1 / x.o.price) / bookChance - 1 : 0;
+      oddsBadge.setAttribute('data-bs-title', F.fraction(x.o.price) + ' · ' + pct(1 / x.o.price) +
+        (margin >= 0.0005 ? ' (' + pct(bookChance) + ' no margin)' : ''));
+      var odds = el('td'); odds.appendChild(oddsBadge); tr.appendChild(odds);
       var chance = el('td'); chance.appendChild(tagBadge(x.chance)); tr.appendChild(chance);
       var verdict = el('td'); verdict.appendChild(verdictBadge(x.r)); tr.appendChild(verdict);
       tb.appendChild(tr);
@@ -390,11 +406,42 @@
       box.appendChild(el('div', 'small text-muted mt-2', 'Fair Price and a decent chance (optional small bet): ' +
         fair.slice(0, 3).map(function (b) { return b.x.label + ' (' + b.market + ')'; }).join(', ') + '.'));
     }
+    showPrediction(a);
     var s = $('summary');
-    s.replaceChildren(el('span', null, 'Expected goals ' + a.model.lh.toFixed(1) + '–' + a.model.la.toFixed(1) + ' · Confidence '));
+    s.replaceChildren(el('span', null, 'Predicted goals ' + a.model.lh.toFixed(1) + '–' + a.model.la.toFixed(1) + ' · Confidence '));
     s.appendChild(ValueCheck.confidenceBadge(a));
     s.appendChild(el('span', null, (margin ? ' · Margin ' + (margin.margin * 100).toFixed(1) + '%' : '') +
       ' · Verdicts judge the price, not the result. Not financial advice.'));
+  }
+
+  /**
+   * The last row of the Goals Profile table: our goals model's predicted goals for each team in this match, e.g.
+   * "Predicted Goals  2.0  1.5", with how it's worked out on hover. Average goals each team is expected to score
+   * (from goals scored and conceded in recent home / away games), not shot-based xG.
+   */
+  function showPrediction(a) {
+    var tables = $('stats').querySelectorAll('table'), table = tables[tables.length - 1];
+    var body = table && table.querySelector('tbody');
+    if (!body) return;
+    var old = $('predictedRow');
+    if (old) old.remove();
+    var short = function (n) { return n.split(' ')[0]; };
+    var tr = el('tr', 'fw-bold');
+    tr.id = 'predictedRow';
+    var label = el('td', null, 'Predicted Goals');
+    label.setAttribute('data-bs-toggle', 'tooltip');
+    label.setAttribute('data-bs-title', 'Goals each team is expected to score in this match, from goals scored and conceded in ' +
+      'recent home games (' + short(ev.home_team) + ') and away games (' + short(ev.away_team) + '). Based on goals, not ' +
+      'shot-based xG. Confidence: ' + a.level.name + ' (' + a.games + ' games each).');
+    label.style.cursor = 'help';
+    tr.appendChild(label);
+    // same alignment as the other rows' numbers
+    var cells = body.querySelector('tr') ? body.querySelector('tr').children : [];
+    [a.model.lh, a.model.la].forEach(function (v, i) {
+      var cls = cells[i + 1] ? cells[i + 1].className : 'text-center';
+      tr.appendChild(el('td', cls, v.toFixed(1)));
+    });
+    body.appendChild(tr);
   }
 
   document.getElementById('navStake').appendChild(F.stakeInput(function () { draw(); }));
