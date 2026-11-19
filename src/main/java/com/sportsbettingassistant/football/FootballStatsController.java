@@ -1,13 +1,13 @@
-package com.betassistant.football;
+package com.sportsbettingassistant.football;
 
 import java.time.Duration;
+import java.time.Instant;
+import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Pattern;
 
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -15,9 +15,11 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import com.sportsbettingassistant.json.Json;
+
 /**
  * Match-page stats from football-data.org. Everything except head to head is saved by
- * "Refresh stats" (StatsRefreshService); these endpoints only read saved copies.
+ * "Refresh Stats" (StatsRefreshService) in the tables; these endpoints only read them.
  * Head to head is one call the first time a match page needs it.
  */
 @RestController
@@ -31,13 +33,15 @@ public class FootballStatsController {
 
     private final FootballDataClient client;
     private final StatsRefreshService refresh;
+    private final FootballTables tables;
 
-    public FootballStatsController(FootballDataClient client, StatsRefreshService refresh) {
+    public FootballStatsController(FootballDataClient client, StatsRefreshService refresh, FootballTables tables) {
         this.client = client;
         this.refresh = refresh;
+        this.tables = tables;
     }
 
-    // ---- Refresh stats (background) ----
+    // ---- Refresh Stats (background) ----
 
     @PostMapping("/stats/refresh")
     public StatsRefreshService.Status startRefresh() {
@@ -52,14 +56,16 @@ public class FootballStatsController {
 
     // ---- Data for the match page ----
 
-    /** A team's recent results, built from the saved competition results (falls back to one API call). */
+    /** A team's recent results, from the saved competition results (no calls). */
     @GetMapping("/data/teams/{id}/matches")
     public ResponseEntity<String> teamMatches(@PathVariable long id) {
-        return refresh.teamResults(id)
-                .map(json -> ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(json))
-                .orElseGet(() -> client.cached("/teams/" + id + "/matches",
-                        FootballDataClient.params("status", "FINISHED", "limit", "30"))
-                        .map(Json::ok).orElseGet(Json::notSaved));
+        return tables.teamResults(id).map(Json::ok).orElseGet(FootballStatsController::notSaved);
+    }
+
+    /** A team's squad: every player and his position (saved by Refresh Stats; no calls). */
+    @GetMapping("/data/teams/{id}/squad")
+    public ResponseEntity<String> teamSquad(@PathVariable long id) {
+        return tables.squadJson(id).map(Json::ok).orElseGet(FootballStatsController::notSaved);
     }
 
     /** A competition's fixtures (SCHEDULED) or results (FINISHED), e.g. CL. */
@@ -70,52 +76,50 @@ public class FootballStatsController {
         if (!STATUSES.contains(status)) {
             throw new IllegalArgumentException("status must be FINISHED or SCHEDULED");
         }
-        return client.cached("/competitions/" + code + "/matches", FootballDataClient.params("status", status))
-                .map(Json::ok).orElseGet(Json::notSaved);
+        return tables.matchesJson(code, status).map(Json::ok).orElseGet(FootballStatsController::notSaved);
     }
 
     /** League table, e.g. PL, BL1, CL: worked out from the saved season results (no call). */
     @GetMapping("/data/competitions/{code}/standings")
     public ResponseEntity<String> standings(@PathVariable String code) {
         checkCode(code);
-        return refresh.standings(code).map(Json::ok).orElseGet(Json::notSaved);
+        return tables.standingsJson(code).map(Json::ok).orElseGet(FootballStatsController::notSaved);
     }
 
     /** Top scorers in a competition (goals, assists, penalties, games played). */
     @GetMapping("/data/competitions/{code}/scorers")
     public ResponseEntity<String> scorers(@PathVariable String code) {
         checkCode(code);
-        return client.cached("/competitions/" + code + "/scorers", StatsRefreshService.SCORERS)
-                .map(Json::ok).orElseGet(() -> Json.ok("{\"scorers\":[]}"));
+        return tables.scorersJson(code).map(Json::ok).orElseGet(() -> Json.ok("{\"scorers\":[]}"));
     }
 
-    /** Previous meetings of the two teams in a football-data.org match. */
+    /**
+     * Previous meetings of the two teams in a football-data.org fixture: 1 call the first time,
+     * then the saved copy for a week (an old copy is used if the API refuses).
+     */
     @GetMapping("/data/matches/{id}/head2head")
     public ResponseEntity<String> headToHead(@PathVariable long id) {
-        return client.get("/matches/" + id + "/head2head", StatsRefreshService.H2H, H2H_KEEP);
+        Optional<Instant> saved = tables.headToHeadSavedAt(id);
+        if (saved.isPresent() && saved.get().isAfter(Instant.now().minus(H2H_KEEP))) {
+            return Json.ok(tables.headToHeadJson(id).orElseThrow());
+        }
+        ResponseEntity<String> res = client.fetch("/matches/" + id + "/head2head", StatsRefreshService.H2H);
+        if (res.getStatusCode().is2xxSuccessful() && res.getBody() != null) {
+            tables.saveHeadToHead(id, res.getBody());
+            return Json.ok(tables.headToHeadJson(id).orElseThrow());
+        }
+        return saved.isPresent() ? Json.ok(tables.headToHeadJson(id).orElseThrow()) : res;
     }
 
-    /** Small response helpers. */
-    static final class Json {
-        static ResponseEntity<String> ok(String json) {
-            return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(json);
-        }
-
-        static ResponseEntity<String> notSaved() {
-            return ResponseEntity.status(HttpStatus.NOT_FOUND).contentType(MediaType.APPLICATION_JSON)
-                    .body("{\"message\":\"Not saved yet. Click Refresh stats on the Football page.\",\"notSaved\":true}");
-        }
+    /** 404 telling the page to click Refresh Stats. */
+    private static ResponseEntity<String> notSaved() {
+        return Json.response(HttpStatus.NOT_FOUND,
+                "{\"message\":\"Not saved yet. Click Refresh Stats on the Football page.\",\"notSaved\":true}");
     }
 
     private static void checkCode(String code) {
         if (!CODE.matcher(code).matches()) {
             throw new IllegalArgumentException("Bad competition code");
         }
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
-                .body("{\"message\":\"" + String.valueOf(e.getMessage()).replace("\"", "'") + "\"}");
     }
 }

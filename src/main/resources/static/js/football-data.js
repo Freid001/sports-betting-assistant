@@ -19,13 +19,65 @@ window.Football = (function () {
   function day(iso) { return new Date(iso).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' }); }
   function time(iso) { return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }); }
 
+  /**
+   * GET (or send) JSON from our own server. Rejects with an Error whose message is the server's
+   * {"message"} if it gave one, "the app needs a restart…" for a route the running app doesn't have yet
+   * (new code not loaded), else "HTTP <status>". The status is on error.status.
+   */
+  function getJson(url, opts) {
+    return fetch(url, opts).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (body) {
+        if (!r.ok) {
+          var e = new Error(body.message || (r.status === 404 ? 'the app needs a restart to load this' : 'HTTP ' + r.status));
+          e.status = r.status;
+          throw e;
+        }
+        return body;
+      });
+    });
+  }
+  /** POST (or method) a JSON body, or nothing, and read the JSON answer. */
+  function sendJson(url, body, method) {
+    var opts = { method: method || 'POST' };
+    if (body !== undefined) {
+      opts.headers = { 'Content-Type': 'application/json' };
+      opts.body = JSON.stringify(body);
+    }
+    return getJson(url, opts);
+  }
+
+  /**
+   * The frame shared by the Live Stats and Favourites pop-ups: title, ×, a scrolling body, and a footer with
+   * a note on the left, then any extra buttons, Cancel and Save. Shows it, and returns { modal, q } where
+   * q('data-save') finds an element by its data- attribute.
+   *   opts: { title, body (HTML), note (data- attribute for the footer note), buttons: [[label, data-attr]] }
+   */
+  function modalFrame(modalEl, opts) {
+    var extra = (opts.buttons || []).map(function (b) {
+      return '<button type="button" class="btn btn-outline-secondary" ' + b[1] + '>' + b[0] + '</button>';
+    }).join('');
+    modalEl.innerHTML =
+      '<div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable"><div class="modal-content">' +
+      '<div class="modal-header"><h2 class="modal-title h5">' + opts.title + '</h2>' +
+      '<button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button></div>' +
+      '<div class="modal-body small">' + opts.body + '</div>' +
+      '<div class="modal-footer justify-content-between"><span class="small text-muted" ' + opts.note + '></span>' +
+      '<span class="d-flex gap-2">' + extra +
+      '<button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Cancel</button>' +
+      '<button type="button" class="btn btn-theme" data-save>Save</button></span></div></div></div>';
+    var modal = bootstrap.Modal.getOrCreateInstance(modalEl);
+    modal.show();
+    return { modal: modal, q: function (attr) { return modalEl.querySelector('[' + attr + ']'); } };
+  }
+
   /** Loads every cached tournament. Resolves to { tournaments, matches, notes }. */
   function loadAll() {
-    return fetch('/api/football/tournaments').then(function (r) { return r.json(); }).then(function (ts) {
+    return getJson('/api/football/tournaments').then(function (ts) {
       var cached = ts.filter(function (t) { return t.cached; });
       var notes = ts.filter(function (t) { return !t.cached; }).map(function (t) { return title(t.name) + ': no data yet'; });
       return Promise.all(cached.map(function (t) {
-        return fetch('/api/odds/cache/' + t.key).then(function (r) { return r.json(); }).then(function (c) {
+        return getJson('/api/odds/cache/' + t.key).then(function (c) {
+          t.fetchedAt = c.fetchedAt;
           notes.unshift(title(t.name) + ': updated ' + ago(c.fetchedAt));
           return c.events.map(function (ev) { ev.comp = title(t.name); ev.compKey = t.name; ev.fetchedAt = c.fetchedAt; return ev; });
         });
@@ -192,6 +244,22 @@ window.Football = (function () {
     brazil: 'br', argentina: 'ar', uruguay: 'uy', colombia: 'co', usa: 'us', 'united states': 'us', mexico: 'mx',
     canada: 'ca', japan: 'jp', 'south korea': 'kr', australia: 'au', morocco: 'ma', senegal: 'sn', nigeria: 'ng' };
 
+  /**
+   * The blue box at the top of the Refresh Odds / Refresh Stats / Live Stats pop-ups, always the same rows:
+   * API, Plan, Calls left, Limit, Resets, Last refreshed (plus an optional warning in red).
+   * No API says which plan you're on, so the plan is worked out from the limit it reports.
+   */
+  function infoBox(box, info) {
+    box.replaceChildren();
+    [['API', info.api], ['Plan', info.plan], ['Calls left', info.left], ['Limit', info.limit], ['Resets', info.reset], ['Last refreshed', info.last]].forEach(function (l) {
+      var row = el('div', 'd-flex justify-content-between gap-3');
+      row.appendChild(el('span', 'text-muted', l[0]));
+      row.appendChild(el('span', 'fw-semibold text-end', l[1] || 'unknown'));
+      box.appendChild(row);
+    });
+    if (info.warning) box.appendChild(el('div', 'text-danger mt-1', info.warning));
+  }
+
   /** Lower-case, no accents, no club words, so "Paris Saint-Germain FC" matches "Paris Saint Germain". */
   function norm(name) {
     return (name || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
@@ -202,8 +270,7 @@ window.Football = (function () {
 
   function loadTeams(tournament) {
     if (!teamCache[tournament]) {
-      teamCache[tournament] = fetch('/api/football/teams/' + tournament)
-        .then(function (r) { return r.ok ? r.json() : { teams: [] }; })
+      teamCache[tournament] = getJson('/api/football/teams/' + tournament)
         .then(function (d) { return d.teams || []; })
         .catch(function () { return []; });
     }
@@ -276,7 +343,57 @@ window.Football = (function () {
     return c;
   }
 
+  /** Same player? Bookmakers and football-data.org don't always spell names the same way. */
+  function samePlayer(a, b) {
+    var x = norm(a).split(" "), y = norm(b).split(" ");
+    if (!x[0] || !y[0]) return false;
+    if (x.join(' ') === y.join(' ')) return true;
+    if (x[x.length - 1] === y[y.length - 1] && x[0][0] === y[0][0]) return true;   // same surname and first initial
+    // One name inside the other, e.g. "Emersonn" and "Emersonn Correia da Silva"
+    var shorter = x.length <= y.length ? x : y, longer = shorter === x ? y : x;
+    return shorter.every(function (w) { return longer.indexOf(w) >= 0; });
+  }
+
+  /** football-data.org's position or section ("Offence", "Centre-Forward"...) as a short word: Forward, Midfielder... */
+  function positionName(raw) {
+    if (!raw) return null;
+    var r = raw.toLowerCase();
+    if (r.indexOf('goal') >= 0 || r === 'keeper') return 'Goalkeeper';
+    if (r.indexOf('def') >= 0 || r.indexOf('back') >= 0) return 'Defender';
+    if (r.indexOf('mid') >= 0) return 'Midfielder';
+    if (r.indexOf('off') >= 0 || r.indexOf('forward') >= 0 || r.indexOf('wing') >= 0 || r.indexOf('striker') >= 0 || r.indexOf('attack') >= 0) return 'Forward';
+    return raw;
+  }
+
+  /** Market names shown on the match page (odds card and Value check). */
+  var MARKET_NAMES = { h2h: 'Match Result', h2h_3_way: 'Match Result (3-Way)', totals: 'Over/Under Goals',
+    alternate_totals: 'Over/Under Goals', btts: 'Both Teams to Score', double_chance: 'Double Chance',
+    draw_no_bet: 'Draw No Bet', h2h_3_way_h1: 'First-Half Result', halftime_fulltime: 'Half-Time / Full-Time',
+    player_goal_scorer_anytime: 'Anytime Goalscorer', player_first_goal_scorer: 'First Goalscorer',
+    player_shots_on_target: 'Player Shots on Target', player_to_score_or_assist: 'To Score or Assist',
+    player_shots_on_target_alternate: 'Player Shots on Target', correct_score: 'Correct Score',
+    alternate_totals_corners: 'Over/Under Corners', alternate_totals_cards: 'Over/Under Cards', team_totals: 'Team Goals',
+    alternate_team_totals: 'Team Goals' };
+
+  // ---- The bookmaker whose odds the pages show (picked in Refresh Odds, remembered in this browser) ----
+  var BOOKMAKER_NAMES = { skybet: 'Sky Bet', betway: 'Betway', paddypower: 'Paddy Power', williamhill: 'William Hill' };
+  function bookmaker() {
+    try { return localStorage.getItem('bookmaker') || 'skybet'; } catch (e) { return 'skybet'; }
+  }
+  function setBookmaker(key) {
+    try { localStorage.setItem('bookmaker', key); } catch (e) { /* not kept */ }
+  }
+  function bookmakerName(key) { return BOOKMAKER_NAMES[key || bookmaker()] || key; }
+  /** The picked bookmaker's odds for a match (The Odds API event shape), or null if none are saved. */
+  function pickBook(ev) {
+    var key = bookmaker();
+    return (ev && ev.bookmakers || []).find(function (b) { return b.key === key; }) || null;
+  }
+
   return { loadTeams: loadTeams, findTeam: findTeam, logo: logo, el: el, title: title, ago: ago, day: day, time: time, loadAll: loadAll, fairChances: fairChances, fraction: fraction, nearestFraction: nearestFraction,
            oddsBadge: oddsBadge, chanceClass: chanceClass, legend: legend,
-           stake: stake, stakeInput: stakeInput, money: money };
+           stake: stake, stakeInput: stakeInput, money: money, norm: norm, infoBox: infoBox,
+           getJson: getJson, sendJson: sendJson, modalFrame: modalFrame,
+           bookmaker: bookmaker, setBookmaker: setBookmaker, bookmakerName: bookmakerName, pickBook: pickBook,
+           MARKET_NAMES: MARKET_NAMES, samePlayer: samePlayer, positionName: positionName };
 })();

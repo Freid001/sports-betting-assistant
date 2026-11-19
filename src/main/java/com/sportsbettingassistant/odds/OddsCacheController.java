@@ -1,17 +1,17 @@
-package com.betassistant.odds;
+package com.sportsbettingassistant.odds;
 
 import java.util.List;
+import java.util.Map;
 
-import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+
+import com.sportsbettingassistant.json.Json;
 
 /** Local odds cache: refresh costs credits, reading is free. */
 @RestController
@@ -38,6 +38,19 @@ public class OddsCacheController {
         return out;
     }
 
+    /** The bookmakers you can pick in Refresh Odds and the extra markets each offers (for the pop-up). */
+    @GetMapping("/extra-markets")
+    public Map<String, List<String>> extraMarkets() {
+        return cache.extraMarkets();
+    }
+
+    /** Test: which markets each UK bookmaker has for one match (1 credit). */
+    @PostMapping("/{sport}/events/{eventId}/markets")
+    public Map<String, Object> availableMarkets(@PathVariable String sport, @PathVariable String eventId,
+                                                @RequestParam(defaultValue = "uk") String regions) {
+        return cache.availableMarkets(sport, eventId, regions);
+    }
+
     @GetMapping
     public List<String> list() {
         return cache.cachedSports();
@@ -54,16 +67,13 @@ public class OddsCacheController {
     public ResponseEntity<String> refreshAll(@RequestParam(defaultValue = "h2h,totals") String markets,
                                              @RequestParam(defaultValue = "skybet") String bookmakers,
                                              @RequestParam(defaultValue = "30") int days) {
-        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
-                .body(cache.refreshAll(markets, bookmakers, days));
+        return Json.ok(cache.refreshAll(markets, bookmakers, days));
     }
 
     @GetMapping("/{sport}")
     public ResponseEntity<String> read(@PathVariable String sport) {
-        return cache.read(sport)
-                .map(json -> ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(json))
-                .orElse(ResponseEntity.status(HttpStatus.NOT_FOUND).contentType(MediaType.APPLICATION_JSON)
-                        .body("{\"message\":\"Nothing cached for " + sport + " yet. Refresh it first.\"}"));
+        return cache.read(sport).map(Json::ok)
+                .orElseGet(() -> Json.message(404, "Nothing cached for " + sport + " yet. Refresh it first."));
     }
 
     /** Costs markets x 1 credit (bookmakers up to 10 = one region). */
@@ -73,11 +83,5 @@ public class OddsCacheController {
                                           @RequestParam(defaultValue = "skybet") String bookmakers,
                                           @RequestParam(defaultValue = "30") int days) {
         return cache.refresh(sport, markets, bookmakers, days);
-    }
-
-    @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<String> badRequest(IllegalArgumentException e) {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST).contentType(MediaType.APPLICATION_JSON)
-                .body("{\"message\":\"" + e.getMessage().replace("\"", "'") + "\"}");
     }
 }

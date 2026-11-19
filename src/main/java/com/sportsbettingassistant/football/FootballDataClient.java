@@ -1,49 +1,41 @@
-package com.betassistant.football;
+package com.sportsbettingassistant.football;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayDeque;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
+import com.sportsbettingassistant.json.Json;
+
 /**
- * Read-only football-data.org client with a file cache (cache/football/data/...).
- * A cached answer is reused until it is older than its time-to-live, so a match page
- * makes a handful of calls the first time and none after that. Real calls are queued so
- * they never go over the plan's limit (free plan: 10 calls/minute).
+ * Read-only football-data.org client. Calls are queued so they never go over the plan's limit
+ * (free plan: 10 calls/minute), and a 429 is waited out and retried once. Answers are saved into
+ * the tables by the caller (FootballTables).
  */
 @Component
 public class FootballDataClient {
 
     private final RestClient http;
     private final String apiKey;
-    private final Path dir;
     private final int callsPerMinute;
     /** When each of the recent real API calls was made (for the calls-per-minute limit). */
     private final Deque<Instant> recentCalls = new ArrayDeque<>();
 
     public FootballDataClient(@Value("${football-data.key:}") String apiKey,
                               @Value("${football-data.base-url:https://api.football-data.org/v4}") String baseUrl,
-                              @Value("${odds-cache.dir:cache}") String cacheDir,
                               @Value("${football-data.calls-per-minute:10}") int callsPerMinute) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.http = RestClient.create(baseUrl);
-        this.dir = Path.of(cacheDir, "football", "data");
         this.callsPerMinute = Math.max(1, callsPerMinute);
     }
 
@@ -114,71 +106,21 @@ public class FootballDataClient {
     }
 
     /**
-     * GET {@code path} (e.g. /teams/57/matches) with query params, reusing the cached copy if it is
-     * younger than {@code ttl}. Errors (e.g. 403 for paid-only data, 429 rate limit) are returned as
-     * JSON with the API's status and are not cached.
+     * One call to the API, waiting for a free slot first. The caller saves what it needs into the tables.
+     * Errors come back with the API's status; without a key nothing is sent (503).
      */
-    public ResponseEntity<String> get(String path, Map<String, String> params, Duration ttl) {
-        Path file = dir.resolve(cacheName(path, params));
-        try {
-            if (Files.exists(file)
-                    && Files.getLastModifiedTime(file).toInstant().isAfter(Instant.now().minus(ttl))) {
-                return json(HttpStatus.OK, Files.readString(file, StandardCharsets.UTF_8));
-            }
-            if (apiKey.isEmpty()) {
-                return json(HttpStatus.SERVICE_UNAVAILABLE,
-                        "{\"message\":\"No football-data.org key. Add FOOTBALL_DATA_API_KEY to .env.\"}");
-            }
-            ResponseEntity<String> res = call(path, params);
-            if (res.getStatusCode().is2xxSuccessful() && res.getBody() != null) {
-                Files.createDirectories(file.getParent());
-                Files.writeString(file, res.getBody(), StandardCharsets.UTF_8);
-                return json(HttpStatus.OK, res.getBody());
-            }
-            // Use an old copy rather than nothing if the API refuses (e.g. rate limit).
-            if (Files.exists(file)) {
-                return json(HttpStatus.OK, Files.readString(file, StandardCharsets.UTF_8));
-            }
-            String body = res.getBody() == null || res.getBody().isBlank() ? "{}" : res.getBody();
-            return json(HttpStatus.valueOf(res.getStatusCode().value()), body);
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
+    public ResponseEntity<String> fetch(String path, Map<String, String> params) {
+        if (apiKey.isEmpty()) {
+            return json(HttpStatus.SERVICE_UNAVAILABLE,
+                    "{\"message\":\"No football-data.org key. Add FOOTBALL_DATA_API_KEY to .env.\"}");
         }
-    }
-
-    /** The saved copy of a call, if any (never calls the API). */
-    public Optional<String> cached(String path, Map<String, String> params) {
-        Path file = dir.resolve(cacheName(path, params));
-        try {
-            return Files.exists(file) ? Optional.of(Files.readString(file, StandardCharsets.UTF_8)) : Optional.empty();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    /** When the saved copy of a call was written, if there is one. */
-    public Optional<Instant> cachedTime(String path, Map<String, String> params) {
-        Path file = dir.resolve(cacheName(path, params));
-        try {
-            return Files.exists(file) ? Optional.of(Files.getLastModifiedTime(file).toInstant()) : Optional.empty();
-        } catch (IOException e) {
-            throw new UncheckedIOException(e);
-        }
-    }
-
-    /** /teams/57/matches + {status=FINISHED, limit=30} -> teams_57_matches__limit-30_status-FINISHED.json */
-    private static String cacheName(String path, Map<String, String> params) {
-        StringBuilder name = new StringBuilder(path.replaceAll("^/+", "").replaceAll("[^A-Za-z0-9]+", "_"));
-        if (!params.isEmpty()) {
-            name.append('_');
-            new java.util.TreeMap<>(params).forEach((k, v) ->
-                    name.append('_').append(k).append('-').append(v.replaceAll("[^A-Za-z0-9]+", "")));
-        }
-        return name + ".json";
+        ResponseEntity<String> res = call(path, params);
+        String body = res.getBody() == null || res.getBody().isBlank() ? "{}" : res.getBody();
+        return json(HttpStatus.valueOf(res.getStatusCode().value()), body);
     }
 
     private static ResponseEntity<String> json(HttpStatus status, String body) {
-        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(body);
+        return Json.response(status, body);
     }
 
     /** Small helper for building ordered query maps. */

@@ -10,5 +10,6 @@ target/
 *.sqlite
 *.db
 
-# Local odds cache (fetched from The Odds API)
-cache/
+
+# The database (everything the app saves, incl. favourites): local only
+data/

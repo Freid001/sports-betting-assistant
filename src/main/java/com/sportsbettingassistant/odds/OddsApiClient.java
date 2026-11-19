@@ -1,4 +1,4 @@
-package com.betassistant.odds;
+package com.sportsbettingassistant.odds;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -8,11 +8,12 @@ import java.util.regex.Pattern;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
-import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
+
+import com.sportsbettingassistant.json.Json;
 
 /**
  * Read-only client for The Odds API (https://the-odds-api.com/liveapi/guides/v4/).
@@ -51,9 +52,7 @@ public class OddsApiClient {
     /** GET a path on The Odds API and return its JSON body, status and quota headers. */
     public ResponseEntity<String> get(String path, Map<String, String> params) {
         if (!hasKey()) {
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body("{\"message\":\"No API key set. Add ODDS_API_KEY=... to the .env file in the project folder and restart the app.\"}");
+            return Json.message(503, "No API key set. Add ODDS_API_KEY=... to the .env file in the project folder and restart the app.");
         }
         return http.get()
                 .uri(builder -> {

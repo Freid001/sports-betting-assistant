@@ -32,15 +32,39 @@
                    --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
                    --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme-hover); --bs-btn-active-border-color:var(--theme-hover);
                    --bs-btn-disabled-color:var(--theme-text); --bs-btn-disabled-bg:var(--theme); --bs-btn-disabled-border-color:var(--theme); }
+      /* Outline version (e.g. the Off / Favourites / All matches switch): burgundy border, fills when selected */
+      .btn-outline-theme { --bs-btn-color:var(--theme); --bs-btn-bg:transparent; --bs-btn-border-color:var(--theme);
+                   --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
+                   --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme); --bs-btn-active-border-color:var(--theme); }
+      /* Ticked tick boxes and radio buttons in the theme colour */
+      .form-check-input:checked { background-color:var(--theme); border-color:var(--theme); }
+      .form-check-input:focus { border-color:var(--theme-hover); box-shadow:0 0 0 .2rem rgba(107,31,46,.2); }
       body { margin:0; color:#212529; background:#f3f4f6; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
       /* Cards: white on the light grey page, with dark headers */
       .card { background:#fff; border-color:#e3e5e8; }
       .card-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
       .card-header .text-muted { color:rgba(255,255,255,.65) !important; }
       .card-header a { color:#fff; }
-      /* Pop-ups (e.g. Refresh odds?) match the cards: dark header, white title and close button */
+      /* Pop-ups (e.g. Refresh Odds) match the cards: dark header, white title and close button */
       .modal-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
       .modal-header .btn-close { filter:invert(1) grayscale(100%) brightness(200%); }
+      /* Live Stats: red dot on the button while ticked games are monitored */
+      .live-dot { display:inline-block; width:.5rem; height:.5rem; border-radius:50%; background:#ff3b30; margin-right:.35rem; vertical-align:middle; box-shadow:0 0 0 2px rgba(255,255,255,.55); animation:livePulse 1.6s ease-in-out infinite; }
+      @keyframes livePulse { 50% { opacity:.35; } }
+      .live-score { font-variant-numeric:tabular-nums; }
+      /* Pop-up messages: slide in from the right, slide out and close the gap when they go */
+      #toasts .toast { animation:toastIn .35s cubic-bezier(.2,.9,.3,1.15) both; overflow:hidden;
+                       transition:transform .3s ease, opacity .3s ease, max-height .3s ease, margin .3s ease; }
+      #toasts .toast.toast-leaving { transform:translateX(115%); opacity:0; max-height:0 !important; margin-bottom:0 !important; }
+      /* Closed with ×: just slides out to the right */
+      #toasts .toast.toast-closing { animation:toastClose .25s ease-in forwards; }
+      @keyframes toastClose { to { opacity:0; transform:translateX(115%); } }
+      @keyframes toastIn { from { transform:translateX(115%); opacity:0; } to { transform:none; opacity:1; } }
+      /* Thin bar along the bottom showing time left before it fades (pauses while the mouse is over it) */
+      #toasts .toast-timer { height:3px; background:currentColor; opacity:.35; transform-origin:left; animation:toastTimer linear forwards; }
+      #toasts .toast:hover .toast-timer { animation-play-state:paused; }
+      @keyframes toastTimer { from { transform:scaleX(1); } to { transform:scaleX(0); } }
+      @media (prefers-reduced-motion: reduce) { #toasts .toast, #toasts .toast-timer { animation:none; transition:none; } }
       body > .container, nav .container { width:min(1320px, calc(100% - 2rem)); margin-inline:auto; }
       /* Odds badges: chance bands from very likely (dark green) to long shot (dark red) */
       .odds-very-good { background:#0b5d33; color:#fff; }
@@ -49,6 +73,7 @@
       .odds-poor      { background:#e0533d; color:#fff; }
       .odds-very-poor { background:#8b1a1a; color:#fff; }
       .verdict-small-cost { background:#f08a24; color:#fff; }   /* Value check: between Fair (yellow) and Poor (red) */
+      .verdict-possible   { background:#8fd19e; color:#0b3d1f; }  /* Value check: solid light green, between Fair (yellow) and Good (green) */
       /* Top menu: sits next to the title; pills that light up on hover, active section underlined in green */
       .site-nav .nav-link { color:rgba(255,255,255,.85); padding:.35rem .8rem; border-radius:.5rem; position:relative; }
       .site-nav .nav-link:hover { color:#fff; background:rgba(255,255,255,.1); }
@@ -58,13 +83,14 @@
       .form-tile { display:inline-block; width:1.4rem; height:1.4rem; line-height:1.4rem; text-align:center; border-radius:.25rem; font-size:.75rem; font-weight:600; cursor:help; }
       .form-W { background:#2fa05a; color:#fff; } .form-D { background:#adb5bd; color:#212529; } .form-L { background:#e0533d; color:#fff; }
       .stats-table td, .stats-table th { padding-top:.3rem; padding-bottom:.3rem; }
-      /* Chance tags (Value check): outlined in the same colour scale as the odds badges, so they don't look like verdicts */
-      .chance-tag { background:#fff; border:1.5px solid currentColor; font-weight:600; }
-      .chance-likely   { color:#0b5d33; }
-      .chance-tossup   { color:#9a7400; }
-      .chance-outsider { color:#c2410c; }
-      .chance-longshot { color:#c0392b; }
-      .chance-moonshot { color:#8b1a1a; }
+      /* Chance tags (Value check): solid, in the same colour scale as the odds badges */
+      .chance-tag { }   /* same as every badge: bold (700), same size and padding */
+      .chance-verylikely { background:#0b5d33; color:#fff; }
+      .chance-likely     { background:#2fa05a; color:#fff; }
+      .chance-tossup     { background:#f2c12e; color:#212529; }
+      .chance-outsider   { background:#f08a24; color:#fff; }
+      .chance-longshot   { background:#e0533d; color:#fff; }
+      .chance-moonshot   { background:#8b1a1a; color:#fff; }
       /* Section title inside a card, e.g. "Match result", "Goals markets": centred and bold like the team names in table headers */
       .section-label { font-weight:700; text-align:center; color:var(--bs-body-color); margin:0 0 .25rem; }
       .section-label:not(:first-child) { margin-top:1rem; }
@@ -80,7 +106,7 @@
     <div class="modal-dialog modal-dialog-centered modal-lg modal-dialog-scrollable">
         <div class="modal-content">
             <div class="modal-header">
-                <h2 class="modal-title h5" id="guideTitle">Guide to labels and colours</h2>
+                <h2 class="modal-title h5" id="guideTitle">Guide to Labels and Colours</h2>
                 <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
             <div class="modal-body small">
@@ -89,36 +115,41 @@
                     With a stake, the odds badges show the total you'd get back (stake + winnings).</p>
 
                 <div class="section-label">Odds</div>
-                <p class="mb-2">Sky Bet's price, shown as a fraction (or, with a stake set, what you'd get back). The colour is how likely it is, with the bookmaker's margin removed.</p>
-                <div class="d-flex flex-wrap gap-2 justify-content-center mb-3">
-                    <span class="badge rounded-pill odds-very-good">1/6 · 70%+</span>
-                    <span class="badge rounded-pill odds-good">4/6 · 50-69%</span>
-                    <span class="badge rounded-pill odds-ok">8/5 · 25-49%</span>
-                    <span class="badge rounded-pill odds-poor">13/2 · 10-24%</span>
-                    <span class="badge rounded-pill odds-very-poor">16/1 · under 10%</span>
-                </div>
+                <p class="mb-2">The bookmaker's price (the one picked in Refresh Odds), shown as a fraction (or, with a stake set, what you'd get back). The colour is how likely it is, with the bookmaker's margin removed.</p>
+                <table class="table table-sm align-middle mb-3 stats-table">
+                    <tbody>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-good">1/6</span></td><td>70% or more: very likely.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-good">4/6</span></td><td>50-69%: more likely than not.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-ok">8/5</span></td><td>25-49%: could go either way.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-poor">13/2</span></td><td>10-24%: unlikely.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-poor">16/1</span></td><td>Under 10%: very unlikely.</td></tr>
+                    </tbody>
+                </table>
 
                 <div class="section-label">Chance</div>
-                <p class="mb-2">How likely an outcome is, by our estimate (Sky Bet's chance nudged by the stats).</p>
-                <div class="d-flex flex-wrap gap-2 justify-content-center mb-3">
-                    <span class="badge rounded-pill chance-tag chance-likely">Likely · 50%+</span>
-                    <span class="badge rounded-pill chance-tag chance-tossup">Toss-up · 35-49%</span>
-                    <span class="badge rounded-pill chance-tag chance-outsider">Outsider · 20-34%</span>
-                    <span class="badge rounded-pill chance-tag chance-longshot">Long shot · 10-19%</span>
-                    <span class="badge rounded-pill chance-tag chance-moonshot">Moonshot · under 10%</span>
-                </div>
+                <p class="mb-2">How likely an outcome is, by our estimate (the bookmaker's chance nudged by the stats).</p>
+                <table class="table table-sm align-middle mb-3 stats-table">
+                    <tbody>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-verylikely">Very Likely</span></td><td>75%+. Expected to happen about 3 times in 4, or more.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-likely">Likely</span></td><td>50-74%. Expected to happen more often than not.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-tossup">Toss Up</span></td><td>35-49%. A real chance either way.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-outsider">Outsider</span></td><td>20-34%. Happens, but usually doesn't.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-longshot">Long Shot</span></td><td>10-19%. Rarely happens.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-moonshot">Moonshot</span></td><td>Under 10%. Very rarely happens.</td></tr>
+                    </tbody>
+                </table>
 
                 <div class="section-label">Price verdict</div>
                 <p class="mb-2">Whether the odds pay enough for that chance, over many bets like it.</p>
                 <table class="table table-sm align-middle mb-2 stats-table">
                     <tbody>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-good">Great value</span></td><td>Pays clearly more than the risk deserves (+15% or better on average).</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-good">Good value</span></td><td>Pays more than it should (+5% to +15%).</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill bg-success-subtle text-success-emphasis border border-success-subtle">Possible value</span></td><td>Looks like value, but there's little data yet, so treat it with caution.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-ok">Fair price</span></td><td>About right for the chance (within ±5%). An optional small bet at most.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill verdict-small-cost">Small cost</span></td><td>Slightly short, but likely to win (35%+). Your framework allows a few of these, capped.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-poor">Poor price</span></td><td>The odds are too short for the chance: costs you money over time, even if it usually wins.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill border text-secondary fw-normal">No value</span></td><td>Football list: nothing in the match is both a Toss-up or better (35%+) and at least a fair price.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-good">Great Value</span></td><td>Pays clearly more than the risk deserves (+15% or better on average).</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-good">Good Value</span></td><td>Pays more than it should (+5% to +15%).</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill verdict-possible">Possible Value</span></td><td>Looks like value, but there's little data yet, so treat it with caution.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-ok">Fair Price</span></td><td>About right for the chance (within ±5%). An optional small bet at most.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill verdict-small-cost">Small Cost</span></td><td>Slightly short, but likely to win (35%+). Your framework allows a few of these, capped.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-poor">Poor Price</span></td><td>The odds are too short for the chance: costs you money over time, even if it usually wins.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill border text-secondary fw-normal">No Value</span></td><td>Football list: nothing in the match is both a Toss Up or better (35%+) and at least a fair price.</td></tr>
                     </tbody>
                 </table>
                 <p class="text-muted mb-0">A value verdict doesn't mean a bet will win: long shots lose most of the time even at a good price.</p>
@@ -137,31 +168,170 @@
         <!-- Stake £ (right of the banner): pages that use it (Football list, match pages) put the input here -->
         <div id="navStake" class="ms-auto"></div>
     </div>
-    <!-- Pop-up messages (Bootstrap toasts): bottom-right, stack, fade after 5s. Use notify('text', 'danger'|'success'|'info'). -->
-    <div class="toast-container position-fixed bottom-0 end-0 p-3" id="toasts" style="z-index:1090"></div>
+    <!-- Pop-up messages (Bootstrap toasts), top-right, stacked. Every message uses notify(text, type):
+           'success' green ✓  something finished (saved, refreshed)        fades after 5s
+           'warning' yellow ⚠ done, but with a problem worth knowing        fades after 10s
+           'danger'  red ✕    something failed                              stays until closed
+           'info'    blue ℹ   neutral information                           fades after 5s
+         Work in progress uses progress(id, text): a blue pop-up with a spinner and no time-out, updated in place;
+         progress(id, null) removes it when the work is done (then notify the result).
+         Every pop-up has a × to close it. -->
+    <div class="toast-container position-fixed top-0 end-0 p-3" id="toasts" style="z-index:1090"></div>
     <script th:inline="none">
+      /** Bootstrap Icons (filled), drawn inline so nothing extra is loaded. Colour follows the text. */
+      var ICONS = {
+        success: ['M16 8A8 8 0 1 1 0 8a8 8 0 0 1 16 0zm-3.97-3.03a.75.75 0 0 0-1.08.022L7.477 9.417 5.384 7.323a.75.75 0 0 0-1.06 1.06L6.97 11.03a.75.75 0 0 0 1.079-.02l3.992-4.99a.75.75 0 0 0-.01-1.05z'],
+        info: ['M8 16A8 8 0 1 0 8 0a8 8 0 0 0 0 16zm.93-9.412-1 4.705c-.07.34.029.533.304.533.194 0 .487-.07.686-.246l-.088.416c-.287.346-.92.598-1.465.598-.703 0-1.002-.422-.808-1.319l.738-3.468c.064-.293.006-.399-.287-.47l-.451-.081.082-.381 2.29-.287zM8 5.5a1 1 0 1 1 0-2 1 1 0 0 1 0 2z'],
+        warning: ['M8.982 1.566a1.13 1.13 0 0 0-1.96 0L.165 13.233c-.457.778.091 1.767.98 1.767h13.713c.889 0 1.438-.99.98-1.767L8.982 1.566zM8 5c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 5.995A.905.905 0 0 1 8 5zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z'],
+        danger: ['M11.46.146A.5.5 0 0 0 11.107 0H4.893a.5.5 0 0 0-.353.146L.146 4.54A.5.5 0 0 0 0 4.893v6.214a.5.5 0 0 0 .146.353l4.394 4.394a.5.5 0 0 0 .353.146h6.214a.5.5 0 0 0 .353-.146l4.394-4.394a.5.5 0 0 0 .146-.353V4.893a.5.5 0 0 0-.146-.353L11.46.146zM8 4c.535 0 .954.462.9.995l-.35 3.507a.552.552 0 0 1-1.1 0L7.1 4.995A.905.905 0 0 1 8 4zm.002 6a1 1 0 1 1 0 2 1 1 0 0 1 0-2z'],
+        restart: ['M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z', 'M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z']
+      };
+      function svgIcon(name) {
+        var ns = 'http://www.w3.org/2000/svg';
+        var svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('width', '18'); svg.setAttribute('height', '18');
+        svg.setAttribute('fill', 'currentColor'); svg.setAttribute('aria-hidden', 'true');
+        svg.classList.add('flex-shrink-0');
+        (ICONS[name] || ICONS.info).forEach(function (d) {
+          var path = document.createElementNS(ns, 'path'); path.setAttribute('d', d); svg.appendChild(path);
+        });
+        return svg;
+      }
+
       window.notify = function (message, type) {
-        var colours = { danger: 'text-bg-danger', success: 'text-bg-success', info: 'theme-bg', warning: 'text-bg-warning' };
+        if (type === 'error') type = 'danger';
+        var styles = {
+          // Bootstrap's alert colours (as .alert-success etc.): pale background, dark text, matching border
+          success: { cls: 'bg-success-subtle text-success-emphasis border border-success-subtle', icon: '✓', delay: 5000 },
+          warning: { cls: 'bg-warning-subtle text-warning-emphasis border border-warning-subtle', icon: '⚠', delay: 10000 },
+          danger:  { cls: 'bg-danger-subtle text-danger-emphasis border border-danger-subtle', icon: '✕', delay: 0 },      // errors stay until closed
+          info:    { cls: 'bg-info-subtle text-info-emphasis border border-info-subtle', icon: 'ℹ', delay: 5000 }
+        };
+        var st = styles[type] || styles.info;
         var t = document.createElement('div');
-        t.className = 'toast align-items-center border-0 shadow ' + (colours[type] || colours.info);
+        t.className = 'toast align-items-center shadow-sm ' + st.cls;
         t.setAttribute('role', type === 'danger' ? 'alert' : 'status');
         t.setAttribute('aria-live', type === 'danger' ? 'assertive' : 'polite');
         t.setAttribute('aria-atomic', 'true');
         var row = document.createElement('div'); row.className = 'd-flex';
-        var body = document.createElement('div'); body.className = 'toast-body'; body.textContent = message;
+        var body = document.createElement('div'); body.className = 'toast-body d-flex align-items-center gap-2';
+        var text = document.createElement('span'); text.textContent = message;
+        body.append(svgIcon(type in ICONS ? type : 'info'), text);
         var close = document.createElement('button');
         close.type = 'button';
-        close.className = 'btn-close me-2 m-auto' + (type === 'warning' ? '' : ' btn-close-white');
-        close.setAttribute('data-bs-dismiss', 'toast'); close.setAttribute('aria-label', 'Close');
+        close.className = 'btn-close me-2 m-auto';
+        close.setAttribute('aria-label', 'Close');
+        close.onclick = function () { dismissToast(t, true); };
         row.appendChild(body); row.appendChild(close); t.appendChild(row);
+        t.classList.add('show');
+        if (st.delay > 0) {
+          // Fades after the delay; the bar shows the time left, and both pause while the mouse is over it
+          var bar = document.createElement('div'); bar.className = 'toast-timer';
+          bar.style.animationDuration = st.delay + 'ms';
+          t.appendChild(bar);
+          var left = st.delay, started = Date.now();
+          var timer = setTimeout(function () { dismissToast(t); }, left);
+          t.addEventListener('mouseenter', function () { clearTimeout(timer); left -= Date.now() - started; });
+          t.addEventListener('mouseleave', function () { started = Date.now(); timer = setTimeout(function () { dismissToast(t); }, Math.max(left, 800)); });
+        }
         document.getElementById('toasts').appendChild(t);
-        var show = function () {
-          var toast = bootstrap.Toast.getOrCreateInstance(t, { delay: 5000, autohide: true });
-          t.addEventListener('hidden.bs.toast', function () { t.remove(); });
-          toast.show();
-        };
-        if (window.bootstrap) show(); else window.addEventListener('load', show);
       };
+
+      /**
+       * Removes a pop-up. Timed out: slides out to the right and the ones below move up.
+       * Closed with × (byUser): just slides out to the right, then goes.
+       */
+      window.dismissToast = function (t, byUser) {
+        if (!t || !t.isConnected || t.classList.contains('toast-leaving') || t.classList.contains('toast-closing')) return;
+        if (window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches) { t.remove(); return; }
+        if (byUser) {
+          t.classList.add('toast-closing');
+          setTimeout(function () { t.remove(); }, 250);
+          return;
+        }
+        t.style.maxHeight = t.scrollHeight + 'px';
+        void t.offsetHeight;   // apply the starting height before animating it to 0
+        t.classList.add('toast-leaving');
+        setTimeout(function () { t.remove(); }, 320);
+      };
+
+      /** A × button that removes the pop-up it's in; onClose runs after. */
+      function closeButton(t, dark, onClose) {
+        var x = document.createElement('button');
+        x.type = 'button';
+        x.className = 'btn-close me-2 m-auto flex-shrink-0' + (dark ? '' : ' btn-close-white');
+        x.setAttribute('aria-label', 'Close');
+        x.onclick = function () { dismissToast(t, true); if (onClose) onClose(); };
+        return x;
+      }
+
+      window.progress = (function () {
+        var open = {}, closed = {};
+        return function (id, message) {
+          var t = open[id];
+          if (message === null || message === undefined) {   // work finished
+            if (t) dismissToast(t);
+            delete open[id]; delete closed[id];
+            return;
+          }
+          if (closed[id]) return;   // you closed it: stay hidden until this piece of work finishes
+          if (!t) {
+            t = document.createElement('div');
+            t.className = 'toast show shadow-sm bg-info-subtle text-info-emphasis border border-info-subtle';
+            t.setAttribute('role', 'status');
+            t.setAttribute('aria-live', 'polite');
+            var row = document.createElement('div'); row.className = 'd-flex';
+            var body = document.createElement('div'); body.className = 'toast-body d-flex align-items-center gap-2';
+            var sp = document.createElement('span'); sp.className = 'spinner-border spinner-border-sm flex-shrink-0'; sp.setAttribute('aria-hidden', 'true');
+            var text = document.createElement('span'); text.setAttribute('data-text', '');
+            body.append(sp, text);
+            row.append(body, closeButton(t, true, function () { delete open[id]; closed[id] = true; }));
+            t.appendChild(row);
+            document.getElementById('toasts').appendChild(t);
+            open[id] = t;
+          }
+          t.querySelector('[data-text]').textContent = message;
+        };
+      })();
+
+      // Restart needed: a green pop-up shown while Java code or config has changed since the app started.
+      // It clears itself once the app has been restarted; × hides it until you next open a page.
+      (function () {
+        var shown = null, dismissed = false;
+        function check() {
+          fetch('/api/app/status').then(function (r) { return r.ok ? r.json() : null; }).then(function (st) {
+            if (!st) return;
+            if (st.restartNeeded && !shown && !dismissed) {
+              shown = document.createElement('div');
+              shown.className = 'toast show shadow-sm bg-success-subtle text-success-emphasis border border-success-subtle';
+              shown.setAttribute('role', 'status');
+              shown.setAttribute('aria-live', 'polite');
+              var body = document.createElement('div');
+              body.className = 'toast-body';
+              var b = document.createElement('div'); b.className = 'fw-semibold mb-1 d-flex align-items-center gap-2';
+              b.append(svgIcon('restart'), document.createTextNode('Restart needed to load new changes'));
+              var t = document.createElement('div'); t.className = 'mb-1';
+              t.textContent = 'In the terminal, stop the app (Ctrl+C) and run:';
+              var c = document.createElement('code'); c.className = 'd-block bg-white text-dark border rounded px-2 py-1 mb-1';
+              c.textContent = 'mvn clean spring-boot:run';
+              var f = document.createElement('div'); f.className = 'small opacity-75';
+              f.textContent = 'Changed: ' + st.changed.join(', ') + '. This clears once the app has restarted.';
+              body.append(b, t, c, f);
+              var row = document.createElement('div'); row.className = 'd-flex align-items-start';
+              var x = closeButton(shown, true, function () { shown = null; dismissed = true; });
+              x.classList.remove('m-auto'); x.classList.add('mt-2');
+              row.append(body, x);
+              shown.appendChild(row);
+              document.getElementById('toasts').prepend(shown);
+            } else if (!st.restartNeeded && shown) {
+              dismissToast(shown); shown = null;
+              window.notify('App restarted with the latest changes.', 'success');
+            }
+          }).catch(function () { /* app stopped: keep the message until it's back */ });
+        }
+        check();
+        setInterval(check, 15000);
+      })();
 
       // Highlight the menu item for the section you're in (e.g. Football on /football/match/...).
       document.currentScript.closest('nav').querySelectorAll('.nav-link').forEach(function (a) {

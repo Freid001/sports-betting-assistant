@@ -2,15 +2,24 @@
 <html xmlns:th="http://www.thymeleaf.org">
 <head th:replace="~{fragments :: pageHead}"></head>
 <body>
+<style>
+  /* Markets: every badge fills its column, so each column is a block of equal-width badges with even gaps */
+  .market-table td .badge { display:block; width:100%; min-width:0 !important; text-align:center; }
+</style>
 <nav th:replace="~{fragments :: navbar}"></nav>
+<!--
+  Match page (/football/match/{id}).
+  Each outcome appears once, in the Markets card, with its odds, chance and price verdict on one row; related markets
+  share a table with a Type column (Result: FT / HT / HT & FT; Goalscorer: First / Anytime). Best Bets on top pulls
+  the best-value outcomes from every market. The stats sit in the narrower right column.
+-->
 <div class="container pb-5" th:attr="data-match-id=${matchId}" id="page">
     <div id="notFound" class="alert alert-warning mt-3 d-none">
         This match isn't in the saved odds. Go back to <a href="/football">Football matches</a> and refresh.
     </div>
 
-    <!-- Header: crests and teams, competition, kick-off, all centred -->
     <div id="header" class="text-center mb-4">
-        <div class="d-flex align-items-center justify-content-center gap-3 mb-2" id="teamsRow">
+        <div class="d-flex align-items-center justify-content-center gap-3 mb-2">
             <span id="homeLogo"></span>
             <h1 class="h3 mb-0" id="teams"></h1>
             <span id="awayLogo"></span>
@@ -20,51 +29,70 @@
     </div>
 
     <div class="row g-3">
-        <!-- Left (wide): live stats, form, goals profile, head to head, key players -->
+        <!-- Left (wide): what to bet on, then every market -->
         <div class="col-lg-7 d-flex flex-column gap-3">
-            <!-- Live match stats: data source to be added later (score, xG, shots, corners, cards during the game) -->
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Best Bets</div>
+                <div class="card-body small" id="bestBets"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent py-1 small text-muted" id="summary"></div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold" id="marketsTitle">Markets</div>
+                <div class="card-body small" id="markets"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent py-1 small d-flex justify-content-between">
+                    <span class="text-muted" id="marketsNote"></span>
+                    <span class="text-muted">Source: <a class="text-muted" href="https://the-odds-api.com" target="_blank" rel="noopener noreferrer">the-odds-api.com</a></span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: the stats behind it -->
+        <div class="col-lg-5 d-flex flex-column gap-3">
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Live Match Stats</div>
-                <div class="card-body small text-muted" id="liveStats">No data.</div>
+                <div class="card-body small text-muted" id="liveStats">Loading…</div>
+                <div class="card-footer bg-transparent py-1 small text-muted d-flex justify-content-between gap-2">
+                    <span id="liveNote"></span>
+                    <span>Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></span>
+                </div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Form &amp; League Position</div>
                 <div class="card-body small" id="form"><span class="text-muted">Loading…</span></div>
-                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Goals Profile</div>
                 <div class="card-body small" id="stats"><span class="text-muted">Loading…</span></div>
-                <div class="card-footer bg-transparent py-1 small text-muted d-flex justify-content-between gap-2">
-                    <span id="goalsNote"></span>
-                    <span>Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></span>
-                </div>
+                <div class="card-footer bg-transparent py-1 small text-muted"><span id="goalsNote"></span></div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Head to Head</div>
                 <div class="card-body small" id="h2h"><span class="text-muted">Loading…</span></div>
-                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></div>
             </div>
             <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold">Key Players <span class="small text-muted fw-normal">Top Scorers</span></div>
-                <div class="card-body small" id="keyPlayers"><span class="text-muted">Loading…</span></div>
+                <div class="card-header py-2 fw-semibold">Top Scorers</div>
+                <div class="card-body small" id="topScorers"><span class="text-muted">Loading…</span></div>
+                <!-- The stats script draws its own two-column version here; this layout shows the table above instead -->
+                <div id="keyPlayers" class="d-none"></div>
                 <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></div>
             </div>
+            <!-- The stats script draws its value check here; this layout shows it in Markets instead -->
+            <div id="valueCheck" class="d-none"></div>
         </div>
+    </div>
+</div>
 
-        <!-- Right: odds, then value check -->
-        <div class="col-lg-5 d-flex flex-column gap-3">
-            <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold">Sky Bet Odds</div>
-                <div class="card-body" id="odds"></div>
-                <div class="card-footer bg-transparent py-1 small d-flex justify-content-between">
-                    <span class="text-muted" id="oddsMargin"></span>
-                    <span class="text-muted">Source: <a class="text-muted" href="https://the-odds-api.com" target="_blank" rel="noopener noreferrer">the-odds-api.com</a></span>
-                </div>
+<!-- "Show all": a whole market in a pop-up -->
+<div class="modal fade" id="marketModal" tabindex="-1" aria-labelledby="marketModalTitle" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered modal-dialog-scrollable modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 class="modal-title h5" id="marketModalTitle"></h2>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
             </div>
-            <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold">Value Check</div>
-                <div class="card-body small" id="valueCheck"><span class="text-muted">Loading…</span></div>
+            <div class="modal-body small" id="marketModalBody"></div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Close</button>
             </div>
         </div>
     </div>
@@ -73,18 +101,17 @@
 <script src="/js/football-data.js"></script>
 <script src="/js/value-check.js"></script>
 <script src="/js/match-stats.js"></script>
+<script src="/js/live.js"></script>
 <script th:inline="none">
 (function () {
   var F = window.Football, el = F.el;
   var $ = function (id) { return document.getElementById(id); };
   var matchId = $('page').getAttribute('data-match-id');
+  var ev = null, views = null;   // the match, and the home/away results the goals model uses (from the stats script)
 
-  var MARKET_NAMES = { h2h: 'Match Result', h2h_3_way: 'Match Result (3-Way)', totals: 'Total Goals',
-    alternate_totals: 'Total Goals (All Lines)', btts: 'Both Teams to Score', double_chance: 'Double Chance',
-    draw_no_bet: 'Draw No Bet', h2h_3_way_h1: 'First-Half Result', halftime_fulltime: 'Half-Time / Full-Time',
-    player_goal_scorer_anytime: 'Anytime Goalscorer', player_first_goal_scorer: 'First Goalscorer',
-    player_shots_on_target: 'Player Shots on Target', player_to_score_or_assist: 'To Score or Assist',
-    alternate_totals_corners: 'Total Corners', alternate_totals_cards: 'Total Cards' };
+  // The stats script hands its results to ValueCheck.render; here they feed the Markets card instead.
+  ValueCheck.render = function (box, e, homeVenue, awayVenue) { views = { home: homeVenue, away: awayVenue }; draw(); };
+  window.onTopScorers = function () { draw(); topScorers(); };   // goalscorer checks need the scorer tables
 
   function countdown(iso) {
     var mins = Math.round((new Date(iso) - Date.now()) / 60000);
@@ -94,90 +121,310 @@
     return 'Kicks off in ' + Math.round(mins / 1440) + ' days';
   }
 
-  /** Two-column list: selection on the left, odds badge on the right (no header row). */
-  function oddsTable(rows) {
-    var table = el('table', 'table table-sm align-middle mb-0 stats-table');
-    var tbody = el('tbody');
-    rows.forEach(function (r) {
-      var row = el('tr');
-      row.appendChild(el('td', null, r[0]));
-      var td = el('td', 'text-end');
-      td.appendChild(r[1]);
-      row.appendChild(td);
-      tbody.appendChild(row);
-    });
-    table.appendChild(tbody);
-    return table;
+  var TAGS = [[0.75, 'Very Likely', 'chance-verylikely'], [0.5, 'Likely', 'chance-likely'], [0.35, 'Toss Up', 'chance-tossup'],
+              [0.2, 'Outsider', 'chance-outsider'], [0.1, 'Long Shot', 'chance-longshot'], [0, 'Moonshot', 'chance-moonshot']];
+  function tagBadge(chance) {
+    var t = TAGS.find(function (x) { return chance >= x[0]; });
+    return el('span', 'badge rounded-pill chance-tag ' + t[2], t[1]);
+  }
+  function verdictBadge(r) {
+    return r ? el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text) : el('span', 'text-muted', '–');
   }
 
-  // One market: group outcomes by line (e.g. 2.5) so each over/under pair is priced together.
-  function renderMarket(box, m, ev) {
-    box.appendChild(el('div', 'section-label', MARKET_NAMES[m.key] || m.key));
-    var groups = {};
-    m.outcomes.forEach(function (o) {
-      var g = (o.description || '') + '|' + (o.point !== undefined ? o.point : '');
-      (groups[g] = groups[g] || []).push(o);
+  /** An outcome's label, the same way the Value check names its rows. */
+  function label(key, o) {
+    if (key === 'halftime_fulltime') return o.name.replace('/', ' / ');
+    if (key.indexOf('player_') === 0) return o.description || o.name;
+    return [o.description, o.name, o.point].filter(function (x) { return x !== undefined && x !== null && x !== ''; }).join(' ');
+  }
+  function lineOf(o) { return (o.description || '') + '|' + o.point; }
+
+  /**
+   * One market as rows {label, o (priced outcome), r (Value check row or null), chance} in display order, and how
+   * many go on the card (the rest in "Show all").
+   */
+  function marketRows(mk, checked) {
+    var rows = mk.outcomes.map(function (o) {
+      var name = label(mk.key, o);
+      var r = (checked || []).find(function (x) {
+        return mk.key.indexOf('player_') === 0 ? F.samePlayer(x.name, name) : x.name === name;
+      }) || null;
+      return { label: r && mk.key.indexOf('player_') === 0 ? r.name : name, o: o, r: r, chance: r ? r.ours : 1 / o.price };
     });
-    var rows = [], margins = [];
+    // No Value check row: the bookmaker's chance with its margin taken out within each line or market
+    var groups = {};
+    rows.forEach(function (x) { if (!x.r) (groups[lineOf(x.o)] = groups[lineOf(x.o)] || []).push(x); });
     Object.keys(groups).forEach(function (g) {
-      var outs = groups[g];
-      if (m.key === 'h2h' || m.key === 'h2h_3_way') {
-        var order = [ev.home_team, 'Draw', ev.away_team];
-        outs.sort(function (a, b) { return order.indexOf(a.name) - order.indexOf(b.name); });
+      var list = groups[g];
+      if (list.length < 2 || mk.key.indexOf('player_') === 0) return;
+      var fair = F.fairChances(list.map(function (x) { return x.o.price; }));
+      if (fair) list.forEach(function (x, i) { x.chance = fair.chances[i]; });
+    });
+    var show = rows.length;
+    // Every market: best verdict first, then the more likely chance label, then the bigger odds
+    rows.sort(byVerdict);
+    var ou = rows.length && rows.every(function (x) { return x.o.name === 'Over' || x.o.name === 'Under'; });
+    if (mk.key.indexOf('player_') === 0) {
+      // Players: the ones the Value check could check (they have a verdict, so they come first); else the top 5
+      var checkedCount = rows.filter(function (x) { return x.r; }).length;
+      show = checkedCount || Math.min(5, rows.length);
+    } else if (rows.length > 6) {
+      show = 5;
+    }
+    var lines = ou ? Object.keys(rows.reduce(function (set, x) { set[lineOf(x.o)] = 1; return set; }, {})).length : 0;
+    return { rows: rows, show: show, more: ou && show < rows.length ? 'Show all ' + lines + ' lines' : null };
+  }
+
+  /** Order of the verdicts, best first; outcomes the Value check couldn't check come last. */
+  var VERDICT_ORDER = ['Great Value', 'Good Value', 'Possible Value', 'Fair Price', 'Small Cost', 'Poor Price'];
+  function verdictRank(x) {
+    var i = x.r ? VERDICT_ORDER.indexOf(x.r.verdict.text) : -1;
+    return i < 0 ? VERDICT_ORDER.length : i;
+  }
+  /** The chance label's place, most likely first (Very Likely 0 ... Moonshot 5). */
+  function chanceRank(x) {
+    for (var i = 0; i < TAGS.length; i++) if (x.chance >= TAGS[i][0]) return i;
+    return TAGS.length;
+  }
+  /** Best verdict first, then the more likely chance label, then the bigger odds (the bigger return if it wins). */
+  function byVerdict(a, b) { return verdictRank(a) - verdictRank(b) || chanceRank(a) - chanceRank(b) || b.o.price - a.o.price; }
+
+  /**
+   * Outcome | Odds | Chance | Verdict. Every table uses the same fixed column widths, so the columns line up from
+   * one market to the next (and in Best Bets).
+   */
+  var COLS = ['auto', '5rem', '5.5rem', '6.75rem'];   // Odds wide enough for returns too, e.g. "£2,050" at £50
+  // Player markets add Team and Pos after the player's name (e.g. "Zian Flemming  Ipswich  FWD")
+  var PLAYER_COLS = ['auto', '4.75rem', '2.75rem', '5rem', '5.5rem', '6.75rem'];
+  var TYPED_COLS = ['auto', '4.25rem', '5rem', '5.5rem', '6.75rem'];   // a merged table: + Type (e.g. HT & FT)
+  function table(rows, title, players) {
+    var typed = rows.some(function (x) { return x.type; });   // a merged table (Goalscorer, Half-Time)
+    var t = el('table', 'table table-sm align-middle mb-0 stats-table market-table');
+    if (!(typed && players)) {   // fixed widths so the columns line up from one market to the next
+      t.style.tableLayout = 'fixed';
+      var cg = el('colgroup');
+      (players ? PLAYER_COLS : typed ? TYPED_COLS : COLS).forEach(function (w) { var c = el('col'); if (w !== 'auto') c.style.width = w; cg.appendChild(c); });
+      t.appendChild(cg);
+    }
+    var head = el('tr');
+    // The market's name is the first heading (e.g. "Match Result  Odds  Chance  Verdict")
+    var heads = [title || ''].concat(typed ? ['Type'] : [], players ? ['Team', 'Pos'] : [], ['Odds', 'Chance', 'Verdict']);
+    var badgeFrom = heads.indexOf('Odds');
+    heads.forEach(function (h, i) {
+      head.appendChild(el('th', i === 0 ? 'fw-bold' : 'fw-semibold text-nowrap' + (i >= badgeFrom ? ' text-center' : ''), h));
+    });
+    var thead = el('thead'); thead.appendChild(head); t.appendChild(thead);
+    var tb = el('tbody');
+    rows.forEach(function (x) {
+      var tr = el('tr');
+      if (players) {
+        var info = scorerInfo(x.label) || {};
+        tr.appendChild(el('td', null, info.name || x.label));
+        if (typed) tr.appendChild(el('td', 'text-nowrap', x.type));   // First or Anytime
+        tr.appendChild(el('td', 'text-muted text-truncate', info.team ? info.team.split(' ')[0] : '–'));   // e.g. "Ipswich"
+        var pos = el('td', 'text-muted', info.position ? POS_SHORT[info.position] || info.position : '–');
+        if (info.position) pos.title = info.position;
+        tr.appendChild(pos);
+      } else {
+        tr.appendChild(el('td', null, x.label));
+        if (typed) tr.appendChild(el('td', 'text-nowrap', x.type));   // e.g. HT, FT or HT & FT
       }
-      var fair = outs.length > 1 ? F.fairChances(outs.map(function (o) { return o.price; })) : null;
-      if (fair) margins.push(fair.margin);
-      outs.forEach(function (o, i) {
-        var label = [o.description, o.name, o.point].filter(function (x) { return x !== undefined && x !== null && x !== ''; }).join(' ');
-        var chance = fair ? fair.chances[i] : 1 / o.price;
-        rows.push([label, F.oddsBadge(o.price, chance)]);
+      var odds = el('td'); odds.appendChild(F.oddsBadge(x.o.price, x.chance)); tr.appendChild(odds);
+      var chance = el('td'); chance.appendChild(tagBadge(x.chance)); tr.appendChild(chance);
+      var verdict = el('td'); verdict.appendChild(verdictBadge(x.r)); tr.appendChild(verdict);
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    if (!(typed && players)) return t;
+    var wrap = el('div', 'table-responsive');   // the merged table sizes itself; scrolls sideways if too narrow
+    wrap.appendChild(t);
+    return wrap;
+  }
+
+  var POS_SHORT = { Goalkeeper: 'GK', Defender: 'DEF', Midfielder: 'MID', Forward: 'FWD' };
+
+  /**
+   * A player's team and position: from the scorer tables (from the Top Scorers card), or else either team's squad
+   * (saved by Refresh Stats), so players who haven't scored yet get them too. Null if he's in neither.
+   */
+  function scorerInfo(name) {
+    var ts = window.TopScorers || {}, out = null;
+    ['home', 'away'].forEach(function (side) {
+      ((ts[side] || {}).scorers || []).forEach(function (p) {
+        if (!out && F.samePlayer(p.name, name)) out = { name: p.name, team: ts[side].team, position: p.position };
       });
     });
-    // With a stake the badges show what you'd get back (stake + winnings), so the column says Returns.
-    box.appendChild(oddsTable(rows));
-    if (margins.length) {
-      var avg = margins.reduce(function (a, b) { return a + b; }, 0) / margins.length;
-      marketMargins.push({ key: m.key, margin: avg });
-    }
-  }
-
-  var currentEvent = null;
-  var marketMargins = [];
-
-  function renderOdds() {
-    var ev = currentEvent, box = $('odds');
-    if (!ev) return;
-    box.replaceChildren();
-    marketMargins = [];
-    if (!ev.bookmakers.length) { box.appendChild(el('p', 'text-muted mb-0', 'No odds saved for this match yet.')); return; }
-    ev.bookmakers.forEach(function (bk) {
-      bk.markets.forEach(function (m) { renderMarket(box, m, ev); });
+    ['home', 'away'].forEach(function (side) {
+      ((ts[side] || {}).squad || []).forEach(function (p) {
+        if (!out && F.samePlayer(p.name, name)) out = { team: ts[side].team, position: p.position };
+        else if (out && !out.position && F.samePlayer(p.name, name)) out.position = p.position;
+      });
     });
-    // Footer: bookmaker margin on the match result (or the first market shown)
-    var main = marketMargins.find(function (x) { return x.key === 'h2h'; }) || marketMargins[0];
-    $('oddsMargin').textContent = main ? 'Bookmaker margin ' + (main.margin * 100).toFixed(1) + '%' : '';
+    return out;
   }
-  document.getElementById('navStake').appendChild(   // in the top banner
-    F.stakeInput(function () { renderOdds(); if (window.ValueCheck) ValueCheck.rerender(); }));
+
+  /**
+   * Top Scorers: one table like Goalscorer. Player | Team | Pos | Goals | Assists, the top 5 of each team,
+   * ordered by goals, then assists (both teams together), from the scorer tables.
+   */
+  function topScorers() {
+    var ts = window.TopScorers || {}, rows = [];
+    ['home', 'away'].forEach(function (side) {
+      ((ts[side] || {}).scorers || []).slice(0, 5).forEach(function (p) { rows.push({ p: p, team: ts[side].team }); });
+    });
+    rows.sort(function (a, b) { return b.p.goals - a.p.goals || (b.p.assists || 0) - (a.p.assists || 0); });
+    var box = $('topScorers');
+    if (!ts.home || !ts.away) return;   // wait for both teams
+    box.replaceChildren();
+    if (!rows.length) { box.appendChild(el('span', 'text-muted', 'No players in the scorer tables yet.')); return; }
+    var t = el('table', 'table table-sm align-middle mb-0 stats-table');
+    var head = el('tr');
+    ['Player', 'Team', 'Pos', 'Goals', 'Assists'].forEach(function (h, i) {
+      head.appendChild(el('th', 'fw-semibold text-nowrap' + (i >= 3 ? ' text-center' : ''), h));
+    });
+    var thead = el('thead'); thead.appendChild(head); t.appendChild(thead);
+    var tb = el('tbody');
+    rows.forEach(function (x) {
+      var tr = el('tr');
+      tr.appendChild(el('td', null, x.p.name));
+      tr.appendChild(el('td', 'text-muted text-nowrap', x.team.split(' ')[0]));
+      var pos = el('td', 'text-muted', x.p.position ? POS_SHORT[x.p.position] || x.p.position : '–');
+      if (x.p.position) pos.title = x.p.position;
+      tr.appendChild(pos);
+      tr.appendChild(el('td', 'text-center', String(x.p.goals)));
+      tr.appendChild(el('td', 'text-center', String(x.p.assists || 0)));
+      tb.appendChild(tr);
+    });
+    t.appendChild(tb);
+    box.appendChild(t);
+  }
+
+
+
+  function draw() {
+    if (!ev) return;
+    var box = $('markets'), bk = F.pickBook(ev), name = F.bookmakerName();
+    $('marketsTitle').textContent = 'Markets · ' + name;
+    box.replaceChildren();
+    if (!bk) {
+      box.appendChild(el('p', 'text-muted mb-0', 'No ' + name + ' odds saved for this match yet. Refresh Odds with ' + name + ' picked.'));
+      $('bestBets').replaceChildren(el('span', 'text-muted', 'No odds to check yet.'));
+      return;
+    }
+    var a = views ? ValueCheck.analyse(ev, views.home, views.away, F.stake() || ValueCheck.DEFAULT_STAKE) : null;
+    var checked = {};
+    if (a) {
+      checked.h2h = a.rows;
+      (a.markets || []).forEach(function (mk) { checked[mk.key] = mk.rows; });
+    }
+    var all = [];   // every checked outcome, for Best Bets
+    // Related markets share one table with a Type column (one row per bet), where the first of them would be:
+    // First / Anytime Goalscorer, and the results: full time (FT), first half (HT) and half-time/full-time (HT & FT)
+    var MERGED = [
+      { title: 'Goalscorer', types: { player_first_goal_scorer: 'First', player_goal_scorer_anytime: 'Anytime' } },
+      { title: 'Result', types: { h2h: 'FT', h2h_3_way_h1: 'HT', halftime_fulltime: 'HT & FT' } }
+    ];
+    var shown = {};
+    bk.markets.forEach(function (mk) {
+      var title = F.MARKET_NAMES[mk.key] || mk.key;
+      var m = marketRows(mk, checked[mk.key]);
+      m.rows.forEach(function (x) { if (x.r) all.push({ market: title, x: x }); });
+      var merge = MERGED.find(function (g) { return g.types[mk.key]; });
+      var parts = merge ? bk.markets.filter(function (x) { return merge.types[x.key]; }) : [];
+      if (parts.length > 1) {
+        if (shown[merge.title]) return;
+        shown[merge.title] = true;
+        var rows = [];
+        parts.forEach(function (pm) {
+          marketRows(pm, checked[pm.key]).rows.forEach(function (x) { rows.push(Object.assign({ type: merge.types[pm.key] }, x)); });
+        });
+        rows.sort(byVerdict);   // best verdict first, then most likely, whichever type
+        var checkedRows = rows.filter(function (x) { return x.r; }).length;
+        var playerRows = mk.key.indexOf('player_') === 0;
+        m = { rows: rows, show: playerRows ? (checkedRows || Math.min(5, rows.length)) : Math.min(5, rows.length) };
+        title = merge.title;
+      }
+      var players = mk.key.indexOf('player_') === 0;
+      var t = table(m.rows.slice(0, m.show), title, players);
+      if (box.children.length) t.classList.add('mt-3');   // a gap after the market above
+      box.appendChild(t);
+      if (m.rows.length > m.show) {
+        var more = el('a', 'small d-inline-block mt-1 link-secondary', m.more || 'Show all ' + m.rows.length);
+        more.href = '#';
+        more.addEventListener('click', function (e) {
+          e.preventDefault();
+          $('marketModalTitle').textContent = title + ' · ' + name;
+          $('marketModalBody').replaceChildren(table(m.sortAll ? m.sortAll(m.rows) : m.rows, title, players));
+          bootstrap.Modal.getOrCreateInstance($('marketModal')).show();
+        });
+        box.appendChild(more);
+      }
+    });
+    var h2h = bk.markets.find(function (mk) { return mk.key === 'h2h'; });
+    var margin = h2h ? F.fairChances(h2h.outcomes.map(function (o) { return o.price; })) : null;
+    // (the bookmaker's margin is in the Best Bets summary)
+    $('marketsNote').textContent = !(ev.extras_fetched_at || {})[bk.key] ? 'Match result only: tick more markets in Refresh Odds.' : '';
+    bestBets(a, all, margin);
+  }
+
+  /**
+   * Best Bets: value outcomes (Great / Good / Possible Value) across every market, best average return first.
+   * None: "No Bet", as the framework says. Footer: expected goals, confidence and the bookmaker's margin.
+   */
+  function bestBets(a, all, margin) {
+    var box = $('bestBets');
+    box.replaceChildren();
+    if (!a) { box.appendChild(el('span', 'text-muted', views ? 'Not enough results yet to estimate chances.' : 'Loading…')); return; }
+    var value = all.filter(function (b) { return b.x.r.ret >= 0.05; }).sort(function (p, q) { return q.x.r.ret - p.x.r.ret; });
+    // Optional small bets: fair price, 35%+ chance, and odds of at least 1/3 (shorter ones win too little to matter)
+    var MIN_ODDS = 4 / 3;
+    var fair = all.filter(function (b) { return b.x.r.ret > -0.05 && b.x.r.ret < 0.05 && b.x.r.ours >= 0.35 && b.x.o.price >= MIN_ODDS; })
+      .sort(function (p, q) { return q.x.r.ours - p.x.r.ours; });
+    if (!value.length) {
+      box.appendChild(el('p', 'mb-2', 'No Bet: nothing here is value at these prices.'));
+    } else {
+      var rows = value.slice(0, 5).map(function (b) { return Object.assign({}, b.x, { label: b.x.label + ' · ' + b.market }); });
+      box.appendChild(table(rows, 'Bet'));
+    }
+    if (fair.length) {
+      box.appendChild(el('div', 'small text-muted mt-2', 'Fair Price and a decent chance (optional small bet): ' +
+        fair.slice(0, 3).map(function (b) { return b.x.label + ' (' + b.market + ')'; }).join(', ') + '.'));
+    }
+    var s = $('summary');
+    s.replaceChildren(el('span', null, 'Expected goals ' + a.model.lh.toFixed(1) + '–' + a.model.la.toFixed(1) + ' · Confidence '));
+    s.appendChild(ValueCheck.confidenceBadge(a));
+    s.appendChild(el('span', null, (margin ? ' · Margin ' + (margin.margin * 100).toFixed(1) + '%' : '') +
+      ' · Verdicts judge the price, not the result. Not financial advice.'));
+  }
+
+  document.getElementById('navStake').appendChild(F.stakeInput(function () { draw(); }));
+
+  var liveTimer = null;
+  function showLive() {
+    Live.getState().then(function (state) {
+      return Live.renderCard($('liveStats'), $('liveNote'), state, ev).then(function (m) {
+        var on = m && m.fixture && !Live.finished(m.fixture);
+        if (on && !liveTimer) liveTimer = setInterval(showLive, 60000);
+        if (!on && liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+      });
+    }).catch(function (e) { $('liveStats').textContent = 'Live Stats unavailable: ' + e.message; });
+  }
 
   F.loadAll().then(function (data) {
-    var ev = data.matches.find(function (m) { return m.id === matchId; });
+    ev = data.matches.find(function (m) { return m.id === matchId; });
     if (!ev) { $('notFound').classList.remove('d-none'); $('header').classList.add('d-none'); return; }
     document.title = ev.home_team + ' v ' + ev.away_team + ' · Sports Betting Assistant';
     $('meta').textContent = ev.comp;
     $('teams').textContent = ev.home_team + ' v ' + ev.away_team;
+    $('kickoff').textContent = F.day(ev.commence_time) + ', ' + F.time(ev.commence_time) + ' · ' + countdown(ev.commence_time);
     F.loadTeams(ev.compKey).then(function (teams) {
       $('homeLogo').replaceChildren(F.logo(teams, ev.home_team, 56));
       $('awayLogo').replaceChildren(F.logo(teams, ev.away_team, 56));
       MatchStats.render($('stats'), ev, F.findTeam(teams, ev.home_team), F.findTeam(teams, ev.away_team));
     });
-    $('kickoff').textContent = F.day(ev.commence_time) + ', ' + F.time(ev.commence_time) + ' · ' + countdown(ev.commence_time);
-
-    currentEvent = ev;
-    renderOdds();
-  }).catch(function (e) {
-    $('meta').textContent = 'Could not load: ' + e.message;
-  });
+    draw();
+    showLive();
+  }).catch(function (e) { $('meta').textContent = 'Could not load: ' + e.message; });
 })();
 </script>
 </body>

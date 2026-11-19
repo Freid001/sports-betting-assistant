@@ -1,11 +1,10 @@
-package com.betassistant.football;
+package com.sportsbettingassistant.football;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Controller;
 import org.springframework.ui.Model;
@@ -15,8 +14,9 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.ResponseBody;
 
-import com.betassistant.odds.OddsApiClient;
-import com.betassistant.odds.OddsCacheService;
+import com.sportsbettingassistant.odds.OddsApiClient;
+import com.sportsbettingassistant.odds.OddsCacheService;
+import com.sportsbettingassistant.json.Json;
 
 /** Football page: every upcoming match in my tournaments, from the local cache. */
 @Controller
@@ -36,7 +36,7 @@ public class FootballController {
     public ResponseEntity<String> teams(@PathVariable String tournament,
                                         @RequestParam(defaultValue = "false") boolean refresh) {
         String body = logos.teams(OddsApiClient.safeId(tournament), refresh).orElse("{\"teams\":[]}");
-        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON).body(body);
+        return Json.ok(body);
     }
 
     @GetMapping("/football")
@@ -67,13 +67,36 @@ public class FootballController {
         return out;
     }
 
+    /**
+     * "Also fetch all markets": for every saved match kicking off within {@code days}, one request for the extra
+     * markets ticked in the pop-up (BTTS, goals lines, corners, cards, player shots...), comma-separated; all of
+     * odds-api.extra-markets if none given. {@code ids} limits it to those matches (the pop-up's "Favourites'
+     * matches"); all matches if not given. 1 credit per market the bookmaker returns per match.
+     */
+    @PostMapping("/api/football/refresh-markets")
+    @ResponseBody
+    public ResponseEntity<String> refreshMarkets(@RequestParam(defaultValue = "30") int days,
+                                                 @RequestParam(defaultValue = "skybet") String bookmaker,
+                                                 @RequestParam(required = false) String markets,
+                                                 @RequestParam(required = false) String ids) {
+        List<String> picked = markets == null || markets.isBlank() ? cache.extraMarkets(bookmaker)
+                : List.of(markets.replaceAll("\\s", "").split(","));
+        java.util.Set<String> only = ids == null ? null : ids.isBlank() ? java.util.Set.of() : new java.util.HashSet<>(List.of(ids.replaceAll("\\s", "").split(",")));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String sport : cache.cachedSports()) {
+            if (cache.tournaments().contains(sport) && cache.hasFixtures(sport)) {
+                out.add(cache.refreshExtras(sport, days, bookmaker, picked, only));
+            }
+        }
+        return Json.ok(out);
+    }
+
     /** Refresh all my tournaments (inactive ones are skipped for free). */
     @PostMapping("/api/football/refresh")
     @ResponseBody
     public ResponseEntity<String> refresh(@RequestParam(defaultValue = "h2h,totals") String markets,
                                           @RequestParam(defaultValue = "skybet") String bookmakers,
                                           @RequestParam(defaultValue = "30") int days) {
-        return ResponseEntity.ok().contentType(MediaType.APPLICATION_JSON)
-                .body(cache.refreshAll(markets, bookmakers, days));
+        return Json.ok(cache.refreshAll(markets, bookmakers, days));
     }
 }

@@ -6,14 +6,7 @@ window.MatchStats = (function () {
   // Our tournament names -> football-data.org competition codes.
   var COMP_CODES = { epl: 'PL', uefa_champs_league: 'CL', fifa_world_cup: 'WC', uefa_european_championship: 'EC' };
 
-  function getJson(url) {
-    return fetch(url).then(function (r) {
-      return r.json().then(function (body) {
-        if (!r.ok) { var e = new Error(body.message || ('HTTP ' + r.status)); e.status = r.status; throw e; }
-        return body;
-      });
-    });
-  }
+  var getJson = F.getJson;
 
   /** One finished match from a team's point of view. */
   function view(m, teamId) {
@@ -108,39 +101,71 @@ window.MatchStats = (function () {
   }
 
   /**
-   * A team's top scorers across the given competitions, e.g. Haaland: 5 CL goals, 12 PL goals.
-   * One cached call per competition (shared by every match in it).
+   * A team's top 5 scorers: goals and assists added up across the given competitions (this competition and
+   * the team's league). One saved scorer table per competition, no API calls.
    */
-  function keyPlayers(box, team, comps) {
+  function keyPlayers(box, team, comps, side) {
     box.appendChild(el('div', 'section-label', team.shortName || team.name));
     var list = el('div', 'text-muted', 'Loading…'); box.appendChild(list);
+    // The team's squad (saved by Refresh Stats) fills in positions the scorer tables leave out, and gives the
+    // odds a team and position for players who haven't scored yet
+    var squad = getJson('/api/football/data/teams/' + team.id + '/squad').then(function (d) {
+      return (d.squad || []).map(function (p) { return { name: p.name, position: F.positionName(p.position) }; });
+    }).catch(function () { return []; });
     Promise.all(comps.map(function (c) {
       return getJson('/api/football/data/competitions/' + c.code + '/scorers').then(function (d) {
-        return (d.scorers || []).filter(function (s) { return s.team && s.team.id === team.id; })
-          .map(function (s) { return { s: s, comp: c.code, compName: c.name || (d.competition && d.competition.name) }; });
+        return (d.scorers || []).filter(function (s) { return s.team && s.team.id === team.id; });
       }).catch(function () { return []; });
-    })).then(function (lists) {
-      // Merge per player: goals by competition
+    }).concat([squad])).then(function (lists) {
+      var squadList = lists.pop();
+      var squadPosition = function (name) {
+        var p = squadList.find(function (x) { return F.samePlayer(x.name, name); });
+        return p ? p.position : null;
+      };
+      // One row per player, goals and assists added up across competitions
       var players = {};
-      [].concat.apply([], lists).forEach(function (x) {
-        var p = players[x.s.player.id] = players[x.s.player.id] || { name: x.s.player.name, total: 0, parts: [], tips: [] };
-        p.total += x.s.goals || 0;
-        p.parts.push((x.s.goals || 0) + ' ' + x.comp);
-        p.tips.push(x.compName + ': ' + (x.s.goals || 0) + ' goals, ' + (x.s.assists || 0) + ' assists, ' +
-          (x.s.penalties || 0) + ' penalties in ' + (x.s.playedMatches || 0) + ' games');
+      [].concat.apply([], lists).forEach(function (s) {
+        var p = players[s.player.id] = players[s.player.id] || { name: s.player.name, position: s.player.position, goals: 0, assists: 0, games: 0 };
+        p.goals += s.goals || 0;
+        p.assists += s.assists || 0;
+        p.games += s.playedMatches || 0;
       });
-      var top = Object.keys(players).map(function (k) { return players[k]; })
-        .sort(function (a, b) { return b.total - a.total; }).slice(0, 3);
+      Object.keys(players).forEach(function (k) {   // no position in the scorer tables: the squad's
+        if (!players[k].position) players[k].position = squadPosition(players[k].name);
+      });
+      var everyone = Object.keys(players).map(function (k) { return players[k]; })
+        .sort(function (a, b) { return b.goals - a.goals || b.assists - a.assists; });
+      var top = everyone.slice(0, 5);   // top 5 per team on the card
       list.replaceChildren();
       list.className = '';
+      // Share these players with the odds card, so its goalscorer markets show the same players in the same order
+      window.TopScorers = window.TopScorers || {};
+      // scorers: every player of this team in the scorer tables, for the Value check's goalscorer markets
+      window.TopScorers[side] = { team: team.shortName || team.name, players: top.map(function (p) { return p.name; }),
+                                  scorers: everyone.map(function (p) {
+                                    return { name: p.name, goals: p.goals, assists: p.assists, games: p.games, position: F.positionName(p.position) };
+                                  }),
+                                  squad: squadList };
+      if (window.ValueCheck) window.ValueCheck.rerender();
+      if (typeof window.onTopScorers === 'function') window.onTopScorers();
       if (!top.length) { list.appendChild(el('div', 'text-muted', 'No players in the scorer tables yet.')); return; }
-      var t = el('table', 'table table-sm mb-0 stats-table'), tb = el('tbody');
+      var t = el('table', 'table table-sm mb-0 stats-table');
+      var head = el('tr', 'text-muted');
+      head.appendChild(el('th', 'fw-normal', ''));
+      head.appendChild(el('th', 'fw-normal text-end', 'Goals'));
+      head.appendChild(el('th', 'fw-normal text-end', 'Assists'));
+      var thead = el('thead'); thead.appendChild(head); t.appendChild(thead);
+      var tb = el('tbody');
       top.forEach(function (p) {
         var tr = el('tr');
-        var name = el('td', null, p.name);
-        name.setAttribute('data-bs-toggle', 'tooltip'); name.setAttribute('data-bs-title', p.tips.join('\n')); name.style.cursor = 'help';
-        tr.appendChild(name);
-        tr.appendChild(el('td', 'text-end text-nowrap', p.parts.join(' · ')));
+        var who = el('td', null, p.name);
+        if (p.position) {   // e.g. "Forward", once Refresh Stats has saved it
+          who.append(' ');
+          who.appendChild(el('span', 'text-muted small', F.positionName(p.position)));
+        }
+        tr.appendChild(who);
+        tr.appendChild(el('td', 'text-end', String(p.goals)));
+        tr.appendChild(el('td', 'text-end', String(p.assists)));
         tb.appendChild(tr);
       });
       t.appendChild(tb); list.appendChild(t);
@@ -236,8 +261,8 @@ window.MatchStats = (function () {
 
       // Key players: this competition plus the team's league (once, if they're the same)
       function comps(league) { return [code && { code: code, name: ev.comp }, league && league.code !== code ? league : null].filter(Boolean); }
-      keyPlayers(kpHome, homeTeam, comps(hl));
-      keyPlayers(kpAway, awayTeam, comps(al));
+      keyPlayers(kpHome, homeTeam, comps(hl), 'home');
+      keyPlayers(kpAway, awayTeam, comps(al), 'away');
 
       // Head to head: find this fixture's football-data id, then its previous meetings.
       (code ? getJson('/api/football/data/competitions/' + code + '/matches?status=SCHEDULED')
@@ -274,14 +299,14 @@ window.MatchStats = (function () {
         }
       }).catch(function (e) {
         h2hBox.replaceChildren(el('p', 'text-muted mb-0', e.status === 404
-          ? 'Not saved yet. Click Refresh stats on the Football page.' : 'No head-to-head data found.'));
+          ? 'Not saved yet. Click Refresh Stats on the Football page.' : 'No head-to-head data found.'));
       });
     }).catch(function (e) {
       ['form', 'h2h', 'keyPlayers', 'valueCheck'].forEach(function (id) {
         document.getElementById(id).replaceChildren(el('span', 'text-muted', '–'));
       });
       box.replaceChildren(el('p', 'text-muted mb-0', e.status === 404 || e.status === 429
-        ? 'Stats not saved yet. Click "Refresh stats" on the Football page.'
+        ? 'Stats not saved yet. Click "Refresh Stats" on the Football page.'
         : 'Couldn\'t load stats: ' + e.message));
     });
   }
