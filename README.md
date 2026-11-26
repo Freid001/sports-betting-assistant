@@ -115,7 +115,7 @@ Settings live in `src/main/resources/application.yaml`; API keys only on the app
 | `stats.league-scorers` | `false` saves a call per league (Key players then shows tournament goals only) |
 | `goal-api.refresh-minutes` / `max-games` / `reserve-calls` | Live Stats refresh rate, games you can tick, calls kept spare |
 | `goal-api.leagues` | GOAL API league id for each tournament |
-| `store.file` | The SQLite database (default `data/sports-betting-assistant.db`) |
+| `store.file` | The SQLite database. Normally left blank: the location is chosen on the Settings page (Storage) and remembered in your user's Java preferences (the registry on Windows); until then `data/sports-betting-assistant.db` |
 
 To add a tournament (e.g. the Championship): add its key to `football.tournaments`, its code and GOAL API league
 id to `Competitions.java` (and the code to `COMP_CODES` in `match-stats.js`), its display name in `football-data.js`,

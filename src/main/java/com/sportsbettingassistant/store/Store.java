@@ -24,7 +24,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 /**
- * Everything the app saves, in one SQLite file (default data/sports-betting-assistant.db).
+ * Everything the app saves, in one SQLite file (where: chosen on the Settings page; in memory until then).
  * The tables are listed in {@link #SCHEMA}; each part of the app reads and writes its own tables
  * (FootballTables, OddsCacheService, LiveService, FavouritesController) through the SQL helpers here.
  */
@@ -113,9 +113,13 @@ public class Store implements AutoCloseable {
             away_score TEXT, stats TEXT NOT NULL, saved_at TEXT, PRIMARY KEY (game_id, period));
         -- what happened in a followed game (goal, yellow, red, penalty, shot, kickoff, ht, second, ft), worked out
         -- refresh by refresh: the match page's Timeline card
-        CREATE TABLE IF NOT EXISTS live_events (game_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
-            side TEXT, player TEXT, score TEXT, minute TEXT, half INTEGER, elapsed INTEGER, sort_order INTEGER, at TEXT,
-            PRIMARY KEY (game_id, seq));
+        -- (source: 'api' for GOAL API's own goals and cards, with real minutes, or 'seen' for what the refreshes spotted)
+        DROP TABLE IF EXISTS live_events;
+        CREATE TABLE IF NOT EXISTS live_timeline (game_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
+            side TEXT, player TEXT, assist TEXT, info TEXT, score TEXT, minute TEXT, half INTEGER, elapsed INTEGER,
+            sort_order INTEGER, source TEXT, at TEXT, PRIMARY KEY (game_id, seq));
+        -- a finished game's highlights video (GOAL API /videos/match): url empty = none yet, checked_at for re-checking
+        CREATE TABLE IF NOT EXISTS live_videos (game_id TEXT PRIMARY KEY, url TEXT, title TEXT, checked_at TEXT);
         -- games to follow live once GOAL API lists them (on match day), picked with the match page's play button
         CREATE TABLE IF NOT EXISTS live_follow (tournament TEXT NOT NULL, kickoff TEXT NOT NULL, home TEXT NOT NULL,
             away TEXT NOT NULL, PRIMARY KEY (tournament, kickoff, home));
@@ -141,17 +145,37 @@ public class Store implements AutoCloseable {
         INSERT OR IGNORE INTO settings (name, value) VALUES ('stats-source', 'goal-api');
         """;
 
-    private final Path file;
-    private final Connection db;
+    private Path file;
+    private Connection db;
     private int depth;   // nested transaction() calls
 
-    public Store(@Value("${store.file:data/sports-betting-assistant.db}") String file) {
-        this.file = Path.of(file);
+    /**
+     * {@code file}: the database file. Blank (the app): the location chosen on the Settings page; with none chosen
+     * yet, everything is kept in memory (no file at all) until Settings saves it where you choose.
+     */
+    @org.springframework.beans.factory.annotation.Autowired
+    public Store(@Value("${store.file:}") String file) {
+        this(file == null || file.isBlank() ? chosen() : Path.of(file));
+    }
+
+    /** {@code file}: the database file, or null to keep everything in memory (until switchTo a file). */
+    public Store(Path file) {
+        this.file = file;
+        this.db = open(file);
+    }
+
+    private static Path chosen() {
+        String s = StorageLocation.forUser().saved();
+        return s == null ? null : Path.of(s);
+    }
+
+    /** Opens (or creates) a database file and brings its tables up to date; null: a database in memory. */
+    private static Connection open(Path file) {
         try {
-            if (this.file.toAbsolutePath().getParent() != null) {
-                Files.createDirectories(this.file.toAbsolutePath().getParent());
+            if (file != null && file.toAbsolutePath().getParent() != null) {
+                Files.createDirectories(file.toAbsolutePath().getParent());
             }
-            db = DriverManager.getConnection("jdbc:sqlite:" + this.file);
+            Connection db = DriverManager.getConnection(file == null ? "jdbc:sqlite::memory:" : "jdbc:sqlite:" + file);
             try (Statement s = db.createStatement()) {
                 s.execute("PRAGMA journal_mode=WAL");     // readers don't block the writer
                 s.execute("PRAGMA busy_timeout=5000");
@@ -170,13 +194,63 @@ public class Store implements AutoCloseable {
                     }
                 }
             }
+            return db;
         } catch (SQLException | IOException e) {
-            throw new IllegalStateException("Couldn't open the database " + file + ": " + e.getMessage(), e);
+            throw new IllegalStateException("Couldn't open the database " + (file == null ? "in memory" : file) + ": "
+                    + e.getMessage(), e);
         }
     }
 
-    /** The database file. */
-    public Path file() {
+    /**
+     * Carries on in another database file that already holds the same data (the Storage card copies it there first):
+     * the new file is opened before the old one is closed, so a failure leaves things as they were.
+     */
+    public synchronized void switchTo(Path newFile) {
+        if (depth > 0) {
+            throw new IllegalStateException("Can't switch database files in the middle of saving.");
+        }
+        Connection next = open(newFile);
+        Connection old = db;
+        db = next;
+        file = newFile;
+        try {
+            old.close();
+        } catch (SQLException e) {
+            log.warn("Couldn't close the old database: {}", e.getMessage());
+        }
+        log.info("Now using the database {}", newFile.toAbsolutePath());
+    }
+
+    /**
+     * Deletes everything: the database file (and its -wal / -shm files) is removed and a new empty one made in its
+     * place. Can't be undone.
+     */
+    public synchronized void wipe() {
+        if (file == null) {
+            throw new IllegalStateException("Nothing is saved to a file yet.");
+        }
+        if (depth > 0) {
+            throw new IllegalStateException("Can't delete the database in the middle of saving.");
+        }
+        try {
+            db.close();
+        } catch (SQLException e) {
+            log.warn("Couldn't close {}: {}", file, e.getMessage());
+        }
+        try {
+            for (String end : new String[] {"", "-wal", "-shm", "-journal"}) {
+                Files.deleteIfExists(Path.of(file + end));
+            }
+        } catch (IOException e) {
+            db = open(file);   // keep working with what's there
+            throw new IllegalStateException("Couldn't delete " + file + ": " + e.getMessage(), e);
+        }
+        db = open(file);
+        log.info("Deleted all data: {} is empty now", file.toAbsolutePath());
+    }
+
+    /** The database file, or null while everything is in memory (no location chosen yet). */
+    public synchronized Path file() {
         return file;
     }
 

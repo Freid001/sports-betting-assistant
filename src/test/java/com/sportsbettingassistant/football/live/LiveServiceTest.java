@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
 import java.nio.file.Path;
+import com.sportsbettingassistant.json.Json;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -224,6 +225,32 @@ class LiveServiceTest {
                 game("FINISHED", "FINISHED", null, "2", "0", true), cards(0, 1, 0, 0), cards(0, 1, 0, 0), null, null, sofar);
         assertThat(ft).extracting(e -> e.get("kind")).containsExactly("ft");
         assertThat(ft.get(0)).containsEntry("minute", "FT").containsEntry("score", "2–0");
+    }
+
+    @Test
+    void goalApisOwnGoalsAndCardsGiveRealMinutesScorersAssistsAndPenalties() {
+        Map<String, Object> goals = Json.parse("{\"data\":["
+                + "{\"time\":\"5\",\"timeNum\":5,\"type\":\"GOAL\",\"homeScorer\":null,\"awayScorer\":\"C. Humphreys\","
+                + "\"awayAssist\":\"A. Fletcher\",\"score\":\"0 - 1\",\"info\":null,\"scoreInfoTime\":\"1st Half\"},"
+                + "{\"time\":\"34\",\"timeNum\":34,\"type\":\"GOAL\",\"homeScorer\":\"I. Hutchinson\",\"awayScorer\":null,"
+                + "\"score\":\"1 - 2\",\"info\":\"Penalty\",\"scoreInfoTime\":\"1st Half\"},"
+                + "{\"time\":\"90+3\",\"timeNum\":90,\"type\":\"GOAL\",\"homeScorer\":\"O. Bailey\",\"score\":\"2 - 3\","
+                + "\"scoreInfoTime\":\"2nd Half\"}]}");
+        var g = LiveService.officialGoals(goals);
+        assertThat(g).hasSize(3);
+        assertThat(g.get(0)).containsEntry("side", "away").containsEntry("player", "C. Humphreys")
+                .containsEntry("assist", "A. Fletcher").containsEntry("score", "0–1").containsEntry("minute", "5'")
+                .containsEntry("half", 1).containsEntry("source", "api");
+        assertThat(g.get(1)).containsEntry("side", "home").containsEntry("info", "Penalty");
+        assertThat(g.get(2)).containsEntry("minute", "90+3'").containsEntry("half", 2);
+        assertThat((int) g.get(2).get("order")).isGreaterThan((int) g.get(1).get("order"));
+
+        Map<String, Object> cards = Json.parse("{\"data\":["
+                + "{\"time\":\"11\",\"timeNum\":11,\"card\":\"yellow card\",\"homeFault\":null,\"awayFault\":\"B. Mumba\",\"scoreInfoTime\":\"1st Half\"},"
+                + "{\"time\":\"33\",\"timeNum\":33,\"card\":\"red card\",\"homeFault\":null,\"awayFault\":\"B. Mumba\",\"scoreInfoTime\":\"1st Half\"}]}");
+        var c = LiveService.officialCards(cards);
+        assertThat(c).extracting(e -> e.get("kind")).containsExactly("yellow", "red");
+        assertThat(c.get(1)).containsEntry("player", "B. Mumba").containsEntry("side", "away").containsEntry("minute", "33'");
     }
 
     @Test

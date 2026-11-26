@@ -88,4 +88,10 @@ public class LiveStatsController {
     public ResponseEntity<String> match(@PathVariable String id) {
         return Json.ok(live.match(id));
     }
+
+    /** A finished game's highlights video: {url, title} or {} (1 GOAL API call at most every 6 hours a game). */
+    @GetMapping("/match/{id}/highlights")
+    public ResponseEntity<String> highlights(@PathVariable String id) {
+        return Json.ok(live.highlights(id));
+    }
 }

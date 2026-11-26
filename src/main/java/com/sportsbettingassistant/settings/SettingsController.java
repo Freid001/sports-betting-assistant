@@ -44,6 +44,39 @@ public class SettingsController {
         this.goal = goal;
     }
 
+    private StorageService storage;   // the Storage card: where the database file is
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setStorage(StorageService storage) {
+        this.storage = storage;
+    }
+
+    /** Storage: the database file in use, its size, and the location saved for the next start (if different). */
+    @GetMapping("/api/settings/storage")
+    @ResponseBody
+    public ResponseEntity<String> storage() {
+        return Json.ok(storage.status());
+    }
+
+    /** Storage: deletes all the app's data (an empty database in its place). The page asks first. */
+    @PostMapping("/api/settings/storage/delete")
+    @ResponseBody
+    public ResponseEntity<String> deleteStorage() {
+        Map<String, Object> out = new LinkedHashMap<>(storage.delete());
+        out.put("ready", settings.ready());
+        return Json.ok(out);
+    }
+
+    /** Storage: keep everything in this .db file ({"path": "..."}): a new one gets a copy of the data and is used now. */
+    @PostMapping("/api/settings/storage")
+    @ResponseBody
+    public ResponseEntity<String> moveStorage(@RequestBody String body) {
+        Map<String, Object> out = new LinkedHashMap<>(storage.choose(Json.text(Json.parse(body).get("path"))));
+        out.putAll(storage.status());
+        out.put("ready", settings.ready());
+        return Json.ok(out);
+    }
+
     @GetMapping("/settings")
     public String page() {
         return "settings";
@@ -57,6 +90,7 @@ public class SettingsController {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("keys", keys);
         out.put("ready", settings.ready());
+        out.put("keysSet", settings.keysSet());
         out.put("theme", settings.theme().key());
         out.put("stakeBar", settings.stakeBar());
         out.put("animations", settings.animations());

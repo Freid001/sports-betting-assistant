@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import org.slf4j.Logger;
@@ -66,6 +67,8 @@ public class LiveService {
     private final Map<String, Map<String, Map<String, Object>>> snapshots = new LinkedHashMap<>();  // id -> period -> snapshot
     /** What happened in each followed game, worked out refresh by refresh (goals, cards, shots on target...). */
     private final Map<String, List<Map<String, Object>>> timeline = new LinkedHashMap<>();
+    /** Games whose official goals and cards were already asked for this run (finished games: once). */
+    private final Set<String> officialTried = new LinkedHashSet<>();
     /** Every player with a shot in the last refresh (side -> players), to see who scored or hit the target since. */
     private final Map<String, Map<String, List<Map<String, Object>>>> lastPlayers = new LinkedHashMap<>();
     /** Games picked to follow before GOAL API lists them: {tournament, kickoff, home, away}. Ticked on match day. */
@@ -144,6 +147,12 @@ public class LiveService {
 
     /** One game's summary and its latest stats (null if none yet). */
     public synchronized Map<String, Object> match(String id) {
+        Map<String, Object> f0 = fixtures.get(id);
+        if (f0 != null && isFinished(f0) && !hasOfficial(id) && officialTried.add(id)) {
+            if (refreshOfficial(id)) {   // a game that wasn't followed (or finished before): its goals and cards, 2 calls once
+                save();
+            }
+        }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("fixture", fixtures.get(id));
         out.put("tracked", tracked.contains(id));
@@ -782,7 +791,158 @@ public class LiveService {
         if (players != null) {
             lastPlayers.put(id, players);
         }
-        list.addAll(events(before, f, prevStats, s, prevPlayers, players, list));
+        List<Map<String, Object>> found = events(before, f, prevStats, s, prevPlayers, players, list);
+        found.forEach(e -> e.put("source", "seen"));
+        list.addAll(found);
+        boolean big = found.stream().anyMatch(e -> List.of("goal", "yellow", "red", "penalty", "ft").contains(e.get("kind")));
+        if (big) {
+            refreshOfficial(id);   // GOAL API's own goals and cards: real minutes, scorers, assists (2 calls)
+        }
+    }
+
+    // ---------------------------------------------------------------- highlights video
+
+    static final Duration VIDEO_RECHECK = Duration.ofHours(6);
+
+    /**
+     * A finished game's highlights video from GOAL API (/videos/match/{id}, 1 call): {url, title}, or {} if there's
+     * none (yet). Videos can turn up days later, so "none" is checked again after 6 hours; one found is kept.
+     * Games not finished (or not known) get {} with no call.
+     */
+    public Map<String, Object> highlights(String id) {
+        Map<String, Object> f;
+        synchronized (this) {
+            f = fixtures.get(id);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        Optional<String[]> saved = store.first("SELECT url, title, checked_at FROM live_videos WHERE game_id = ?",
+                rs -> new String[] {rs.getString(1), rs.getString(2), rs.getString(3)}, id);
+        if (saved.isPresent() && saved.get()[0] != null && !saved.get()[0].isBlank()) {
+            out.put("url", saved.get()[0]);
+            out.put("title", saved.get()[1]);
+            return out;
+        }
+        if (f == null || !isFinished(f)) {
+            return out;
+        }
+        Instant checked = saved.map(x -> instant(x[2])).orElse(null);
+        if (checked != null && checked.plus(VIDEO_RECHECK).isAfter(Instant.now())) {
+            return out;
+        }
+        String url = null, title = null;
+        try {
+            for (Map<String, Object> v : Json.maps(api.getJson("/videos/match/" + id, Map.of()).get("data"))) {
+                String u = Json.text(v.get("url"));
+                if (u != null && u.startsWith("https://")) {
+                    url = u;
+                    title = Json.text(v.get("title"));
+                    break;
+                }
+            }
+        } catch (RuntimeException e) {
+            log.warn("GOAL API video for {} failed: {}", id, e.getMessage());
+            return out;
+        }
+        store.update("INSERT OR REPLACE INTO live_videos (game_id, url, title, checked_at) VALUES (?, ?, ?, ?)",
+                id, url, title, Instant.now().toString());
+        if (url != null) {
+            out.put("url", url);
+            out.put("title", title);
+        }
+        return out;
+    }
+
+    private boolean hasOfficial(String id) {
+        return timeline.getOrDefault(id, List.of()).stream().anyMatch(e -> "api".equals(e.get("source")));
+    }
+
+    /**
+     * Swaps the goals and cards the refreshes spotted for GOAL API's own (/fixtures/{id}/events and /cards: real
+     * minutes, scorers, assists, penalties). Shots on target, kick-off, HT, 2H and FT stay, and a penalty spotted
+     * stays unless an official penalty goal for that side is within 5 minutes (a missed one). Returns true if it got them.
+     */
+    boolean refreshOfficial(String id) {
+        List<Map<String, Object>> official = new ArrayList<>();
+        try {
+            official.addAll(officialGoals(api.getJson("/fixtures/" + id + "/events", Map.of())));
+            official.addAll(officialCards(api.getJson("/fixtures/" + id + "/cards", Map.of())));
+        } catch (RuntimeException e) {
+            log.warn("GOAL API events for {} failed: {}", id, e.getMessage());
+            return false;
+        }
+        List<Map<String, Object>> list = timeline.computeIfAbsent(id, k -> new ArrayList<>());
+        boolean haveOfficial = !official.isEmpty();
+        list.removeIf(e -> "api".equals(e.get("source")));
+        if (haveOfficial) {
+            list.removeIf(e -> List.of("goal", "yellow", "red").contains(e.get("kind")));
+            list.removeIf(e -> "penalty".equals(e.get("kind")) && official.stream().anyMatch(o -> "goal".equals(o.get("kind"))
+                    && "Penalty".equalsIgnoreCase(String.valueOf(o.get("info"))) && String.valueOf(o.get("side")).equals(e.get("side"))
+                    && Math.abs(num(Json.text(o.get("elapsed"))) - num(Json.text(e.get("elapsed")))) <= 5));
+        }
+        list.addAll(official);
+        list.sort(Comparator.comparingInt(e -> num(Json.text(e.get("order")))));
+        return true;
+    }
+
+    /** GOAL API's goals: [{time "34", timeNum, homeScorer / awayScorer, ...Assist, score "1 - 2", info "Penalty", scoreInfoTime}]. */
+    static List<Map<String, Object>> officialGoals(Map<String, Object> body) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> g : Json.maps(body.get("data"))) {
+            if (!"GOAL".equalsIgnoreCase(String.valueOf(g.get("type")))) {
+                continue;
+            }
+            boolean home = g.get("homeScorer") != null && !"null".equals(String.valueOf(g.get("homeScorer")));
+            String side = home ? "home" : "away";
+            Map<String, Object> e = official("goal", side, g, Json.text(g.get(side + "Scorer")));
+            e.put("assist", Json.text(g.get(side + "Assist")));
+            e.put("info", Json.text(g.get("info")));
+            String score = Json.text(g.get("score"));
+            e.put("score", score == null ? null : score.replace(" - ", "–"));
+            out.add(e);
+        }
+        return out;
+    }
+
+    /** GOAL API's cards: [{time, timeNum, card "yellow card" / "red card", homeFault / awayFault (the player), scoreInfoTime}]. */
+    static List<Map<String, Object>> officialCards(Map<String, Object> body) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> c : Json.maps(body.get("data"))) {
+            String card = String.valueOf(c.get("card")).toLowerCase(java.util.Locale.ROOT);
+            boolean home = c.get("homeFault") != null && !"null".equals(String.valueOf(c.get("homeFault")));
+            String side = home ? "home" : "away";
+            Map<String, Object> e = official(card.contains("red") ? "red" : "yellow", side, c, Json.text(c.get(side + "Fault")));
+            if (card.contains("yellow") && card.contains("red")) {
+                e.put("info", "Second yellow");
+            }
+            out.add(e);
+        }
+        return out;
+    }
+
+    private static Map<String, Object> official(String kind, String side, Map<String, Object> x, String player) {
+        String time = Json.text(x.get("time"));
+        time = time == null ? "" : time.replace("'", "").trim();
+        int el = num(Json.text(x.get("timeNum")));
+        if (el == 0) {
+            el = num(time.replaceAll("\\+.*", ""));
+        }
+        int extra = time.contains("+") ? num(time.substring(time.indexOf('+') + 1)) : 0;
+        String when = String.valueOf(x.get("scoreInfoTime")).toLowerCase(java.util.Locale.ROOT);
+        int half = when.startsWith("1st") ? 1 : when.startsWith("2nd") ? 2 : el > 45 ? 2 : 1;
+        Map<String, Object> e = new LinkedHashMap<>();
+        e.put("kind", kind);
+        e.put("side", side);
+        e.put("player", player);
+        e.put("assist", null);
+        e.put("info", null);
+        e.put("score", null);
+        e.put("minute", (time.isEmpty() ? String.valueOf(el) : time) + "'");
+        e.put("half", half);
+        e.put("elapsed", el);
+        e.put("order", half * 100000 + el * 100 + extra * 2);
+        e.put("source", "api");
+        e.put("at", Instant.now().toString());
+        return e;
     }
 
     /** The new events between two refreshes (see addEvents); goals found earlier without a scorer get him filled in. */
@@ -1060,7 +1220,7 @@ public class LiveService {
     private void save() {
         try {
             store.transaction(() -> {
-                for (String table : new String[] {"live_events", "live_snapshots", "live_players", "live_stat_rows", "live_stats", "live_games"}) {
+                for (String table : new String[] {"live_timeline", "live_snapshots", "live_players", "live_stat_rows", "live_stats", "live_games"}) {
                     store.update("DELETE FROM " + table);
                 }
                 List<String> ticks = new ArrayList<>(tracked);
@@ -1105,10 +1265,11 @@ public class LiveService {
                 timeline.forEach((id, list) -> {
                     int seq = 0;
                     for (Map<String, Object> e : list) {
-                        store.update("INSERT INTO live_events (game_id, seq, kind, side, player, score, minute, half, elapsed, "
-                                + "sort_order, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, seq++, text(e, "kind"),
-                                text(e, "side"), text(e, "player"), text(e, "score"), text(e, "minute"), e.get("half"),
-                                e.get("elapsed"), e.get("order"), text(e, "at"));
+                        store.update("INSERT INTO live_timeline (game_id, seq, kind, side, player, assist, info, score, minute, "
+                                + "half, elapsed, sort_order, source, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, seq++,
+                                text(e, "kind"), text(e, "side"), text(e, "player"), text(e, "assist"), text(e, "info"),
+                                text(e, "score"), text(e, "minute"), e.get("half"), e.get("elapsed"), e.get("order"),
+                                text(e, "source"), text(e, "at"));
                     }
                 });
                 store.update("DELETE FROM live_follow");
@@ -1207,12 +1368,15 @@ public class LiveService {
             String id = String.valueOf(snap.remove("id"));
             snapshots.computeIfAbsent(id, k -> new LinkedHashMap<>()).put(String.valueOf(snap.get("period")), snap);
         }
-        for (Map<String, Object> e : store.query("SELECT * FROM live_events ORDER BY game_id, seq", rs -> {
+        for (Map<String, Object> e : store.query("SELECT * FROM live_timeline ORDER BY game_id, seq", rs -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", rs.getString("game_id"));
             m.put("kind", rs.getString("kind"));
             m.put("side", rs.getString("side"));
             m.put("player", rs.getString("player"));
+            m.put("assist", rs.getString("assist"));
+            m.put("info", rs.getString("info"));
+            m.put("source", rs.getString("source"));
             m.put("score", rs.getString("score"));
             m.put("minute", rs.getString("minute"));
             m.put("half", rs.getInt("half"));

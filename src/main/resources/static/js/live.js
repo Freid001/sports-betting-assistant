@@ -554,17 +554,17 @@ window.Live = (function () {
       view.appendChild(checklistBox(check, ev, true));
     }
     view.appendChild(statsTable(snap.rows, ev));
-    // Timeline: what's happened up to this point; a game that wasn't followed live has none, so its shooters instead
+    // Timeline: the events up to this point (only built while a game is followed live, refresh by refresh)
     var upTo = eventsUpTo(gameEvents, snap);
-    var shots = !gameEvents.length && full ? shooters(full, !playersHost, ev) : null;
     if (playersHost) {
-      playersHost.replaceChildren(upTo.length ? timelineBox(upTo, ev) : shots && shots.childNodes.length ? shots
-        : el('div', 'text-muted', gameEvents.length ? 'Nothing yet: goals, cards and shots on target show here as they happen.'
-          : full ? 'No Player Stats' : 'Player stats are for full time and live games only'));
+      playersHost.replaceChildren(upTo.length ? timelineBox(upTo, ev) : el('div', 'text-muted', gameEvents.length
+        ? 'Nothing yet: goals, shots on target, cards and penalties show here as they happen.'
+        : 'No timeline for this game: it\'s built while a game is followed live, so start following before kick-off.'));
     } else if (upTo.length) {
       view.appendChild(timelineBox(upTo, ev));
-    } else if (shots) {
-      view.appendChild(shots);
+    } else if (full) {   // the Live Stats pop-up, for a game with no timeline: who had shots
+      var shots = shooters(full, true, ev);
+      if (shots.childNodes.length) view.appendChild(shots);
     }
     if (window.onLiveView) window.onLiveView(snap);   // the match page's Best Bets switch to this point in the match
   }
@@ -659,53 +659,51 @@ window.Live = (function () {
     });
   }
 
-  var EVENT_ICONS = { goal: '⚽', yellow: '🟨', red: '🟥', penalty: '🥅', shot: '🎯' };
+  // Each event's tag: text, colour (Bootstrap badge classes) and what it means (hover)
+  var EVENT_TAGS = {
+    goal:    ['GOAL',   'text-bg-success', 'Goal'],
+    shot:    ['SOT',    'text-bg-light border', 'Shot on target'],
+    yellow:  ['YELLOW', 'text-bg-warning', 'Yellow card'],
+    red:     ['RED',    'text-bg-danger', 'Red card'],
+    penalty: ['PEN',    'text-bg-primary', 'Penalty'],
+    kickoff: ['KO',     'text-bg-secondary', 'Kick-off'],
+    ht:      ['HT',     'text-bg-secondary', 'Half time'],
+    second:  ['2H',     'text-bg-secondary', 'Second half'],
+    ft:      ['FT',     'text-bg-dark', 'Full time']
+  };
   /**
-   * Timeline: newest at the top. Home team's events on the left, away team's on the right, the minute in the
-   * middle; kick-off, half time, second half and full time across the middle.
+   * Timeline: newest at the top, one row per event: Time | Event (GOAL, SOT, YELLOW...) | Team | Player.
+   * Goals show the new score; HT and FT the score then. Cards and penalties have no player (GOAL API only counts them).
    */
   function timelineBox(events, ev) {
     var names = namesOf(ev);
-    var box = el('div', 'live-timeline');
-    events.slice().sort(function (a, b) { return (b.order || 0) - (a.order || 0); }).forEach(function (e) {
-      if (['kickoff', 'ht', 'second', 'ft'].indexOf(e.kind) >= 0) {
-        var words = { kickoff: 'Kick-off', ht: 'Half time', second: 'Second half', ft: 'Full time' }[e.kind];
-        var mid = el('div', 'd-flex align-items-center gap-2 my-2 text-muted');
-        mid.appendChild(el('hr', 'flex-grow-1 my-0'));
-        mid.appendChild(el('span', 'fw-semibold text-nowrap', words + (e.score && e.kind !== 'kickoff' ? ' · ' + e.score : '')));
-        mid.appendChild(el('hr', 'flex-grow-1 my-0'));
-        box.appendChild(mid);
-        return;
-      }
-      var row = el('div', 'd-flex align-items-center py-1' + (e.kind === 'shot' ? ' text-muted' : ''));
-      var left = el('div', 'w-50 text-end pe-2'), right = el('div', 'w-50 text-start ps-2');
-      var text = el('span');
-      var what = e.kind === 'goal' ? (e.player || 'Goal') : e.kind === 'shot' ? 'Shot on target · ' + e.player
-        : e.kind === 'yellow' ? 'Yellow card' : e.kind === 'red' ? 'Red card' : 'Penalty';
-      var icon = EVENT_ICONS[e.kind] || '';
-      var team = e.side === 'away' ? names[1] : names[0];
-      if (e.kind === 'goal') {
-        text.appendChild(el('span', 'fw-bold', what));
-        if (e.score) text.appendChild(el('span', 'ms-1 badge text-bg-light border', e.score));
-      } else {
-        text.appendChild(el('span', e.kind === 'red' || e.kind === 'penalty' ? 'fw-semibold' : '', what));
-      }
-      if (e.kind !== 'goal' && e.kind !== 'shot') text.title = team;
-      if (e.side === 'away') {
-        right.appendChild(document.createTextNode(icon + ' '));
-        right.appendChild(text);
-      } else {
-        left.appendChild(text);
-        left.appendChild(document.createTextNode(' ' + icon));
-      }
-      var minute = el('span', 'badge rounded-pill text-bg-secondary flex-shrink-0', e.minute || '');
-      minute.style.minWidth = '3.2rem';
-      row.appendChild(left);
-      row.appendChild(minute);
-      row.appendChild(right);
-      box.appendChild(row);
+    var table = el('table', 'table table-sm align-middle mb-0 event-timeline');
+    var hr = el('tr');
+    [['Time', 'text-nowrap'], ['Event', ''], ['Team', ''], ['Player', 'w-50']].forEach(function (h) { hr.appendChild(el('th', h[1], h[0])); });
+    var thead = el('thead'); thead.appendChild(hr); table.appendChild(thead);
+    var tb = el('tbody');
+    // newest first; events in the same minute in reverse too (the later one in the list happened after: yellow, then red)
+    events.map(function (e, i) { return { e: e, i: i }; })
+      .sort(function (a, b) { return (b.e.order || 0) - (a.e.order || 0) || b.i - a.i; })
+      .map(function (x) { return x.e; }).forEach(function (e) {
+      var tag = EVENT_TAGS[e.kind] || [String(e.kind).toUpperCase(), 'text-bg-secondary', ''];
+      var tr = el('tr', e.kind === 'shot' ? 'text-muted' : e.kind === 'goal' ? 'fw-semibold' : '');
+      tr.appendChild(el('td', 'text-nowrap', e.minute || ''));
+      var badge = el('span', 'badge ' + tag[1], tag[0]);
+      badge.title = tag[2];
+      var what = el('td', 'text-nowrap'); what.appendChild(badge);
+      if (e.score && ['goal', 'ht', 'ft'].indexOf(e.kind) >= 0) what.appendChild(el('span', 'ms-1', e.score));
+      tr.appendChild(what);
+      tr.appendChild(el('td', 'text-nowrap', e.side === 'home' ? names[0] : e.side === 'away' ? names[1] : ''));
+      var who = el('td');
+      who.appendChild(document.createTextNode(e.player || (e.kind === 'goal' ? 'Scorer not known yet' : '')));
+      if (e.info) who.appendChild(el('span', 'ms-1 text-muted fw-normal', /^penalty$/i.test(e.info) ? '(pen)' : '(' + e.info + ')'));
+      if (e.assist) who.appendChild(el('div', 'small text-muted fw-normal', 'Assist: ' + e.assist));
+      tr.appendChild(who);
+      tb.appendChild(tr);
     });
-    return box;
+    table.appendChild(tb);
+    return table;
   }
 
   /** Players with shots on target (live, or full time). */

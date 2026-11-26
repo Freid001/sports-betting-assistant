@@ -293,9 +293,9 @@ test('match card: Checklist and player shots in cards of their own', async () =>
   await c.run();
   assert.match(checklist.textContent, /Tottenham Hotspur 4\/4/);
   assert.doesNotMatch(c.box.textContent, /Checklist|Solanke/, 'not in the stats card');
-  assert.match(players.textContent, /Solanke 2 \(4\) ⚽/);
+  assert.match(players.textContent, /No timeline for this game/);   // not followed live: no events
   timeline.querySelector('button[data-period="HT"]').click();
-  assert.match(players.textContent, /full time and live games only/);
+  assert.match(players.textContent, /No timeline for this game/);
   timeline.querySelector('button[data-period="PRE"]').click();
   assert.equal(checklist.textContent, 'Match Not Started');
   assert.equal(players.textContent, 'Match Not Started');
@@ -465,11 +465,12 @@ test('Timeline card: newest first, home left / away right, and only what had hap
   const events = [
     { kind: 'kickoff', minute: "0'", half: 1, elapsed: 0, order: 0 },
     { kind: 'goal', side: 'home', player: 'Solanke', score: '1–0', minute: "23'", half: 1, elapsed: 23, order: 102300 },
-    { kind: 'yellow', side: 'away', minute: "40'", half: 1, elapsed: 40, order: 104000 },
+    { kind: 'yellow', side: 'away', player: 'Mumba', minute: "40'", half: 1, elapsed: 40, order: 104000 },
+    { kind: 'red', side: 'away', player: 'Mumba', minute: "40'", half: 1, elapsed: 40, order: 104000 },
     { kind: 'ht', score: '1–0', minute: 'HT', half: 1, elapsed: 45, order: 104501 },
     { kind: 'shot', side: 'away', player: 'Delap', minute: "55'", half: 2, elapsed: 55, order: 205500 },
     { kind: 'goal', side: 'away', player: null, score: '1–1', minute: "70'", half: 2, elapsed: 70, order: 207000 },
-    { kind: 'goal', side: 'home', player: 'Kudus', score: '2–1', minute: "88'", half: 2, elapsed: 88, order: 208800 },
+    { kind: 'goal', side: 'home', player: 'Kudus', assist: 'Maddison', info: 'Penalty', score: '2–1', minute: "88'", half: 2, elapsed: 88, order: 208800 },
     { kind: 'ft', score: '2–1', minute: 'FT', half: 2, elapsed: 90, order: 209002 }];
   const c = card({ '/api/football/live/match/g1': { fixture: live, refreshMinutes: 1, events,
     stats: { updatedAt: NOW, final: true, rows: ROWS_FT, homePlayers: [{ name: 'Solanke', shots: 4, onTarget: 2, goals: 1 }], awayPlayers: [] },
@@ -481,15 +482,19 @@ test('Timeline card: newest first, home left / away right, and only what had hap
   c.w.Live.setHosts({ checklist, players });
   await c.run();
   const t = players.textContent;
-  assert.match(t, /Full time · 2–1/);
+  assert.match(t, /FT2–1/);
+  assert.match(t, /GOAL2–1Tottenham Hotspur|GOAL2–1Spurs|GOAL2–1/);
   assert.ok(t.indexOf('Kudus') < t.indexOf('Solanke'), 'newest first');
-  assert.match(t, /Shot on target · Delap/);
+  assert.ok(t.indexOf('RED') < t.indexOf('YELLOW'), 'same minute: the red (after the second yellow) on top');
+  assert.match(t, /SOT.*Delap/);
+  assert.match(t, /Scorer not known yet/);
+  assert.match(t, /Kudus\(pen\)Assist: Maddison/);
   assert.doesNotMatch(t, /Solanke 2 \(4\)/, 'the timeline, not the shooters table');
   timeline.querySelector('button[data-period="HT"]').click();
   assert.match(players.textContent, /Solanke/);
-  assert.match(players.textContent, /Half time · 1–0/);
+  assert.match(players.textContent, /HT1–0/);
   assert.doesNotMatch(players.textContent, /Delap|Kudus/);
   timeline.querySelector('button[data-period="60"]').click();
   assert.match(players.textContent, /Delap/);
-  assert.doesNotMatch(players.textContent, /Kudus|Full time/);
+  assert.doesNotMatch(players.textContent, /Kudus|FT2/);
 });

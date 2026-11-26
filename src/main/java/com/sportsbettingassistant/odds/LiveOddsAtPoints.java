@@ -56,11 +56,6 @@ public class LiveOddsAtPoints {
         return out;
     }
 
-    /** The markets a point fetches now (from Settings), for the match page's test button; null without Settings. */
-    public java.util.List<String> marketsFromSettings() {
-        return marketsFor(null);
-    }
-
     /** Fetches and saves the prices for one point; returns true if it did (nothing ticked: nothing fetched). */
     boolean fetch(LiveService.PointSaved p) {
         java.util.List<String> markets = marketsFor(p);

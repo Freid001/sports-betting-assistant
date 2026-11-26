@@ -96,7 +96,19 @@ public class SettingsService {
 
     /** Both keys saved: the app can work. Without them it's a new user, who gets the Settings page. */
     public boolean ready() {
+        return keysSet() && (storage == null || storage.chosen());
+    }
+
+    /** Both API keys saved. */
+    public boolean keysSet() {
         return KEYS.stream().allMatch(k -> !apiKey(k.name()).isEmpty());
+    }
+
+    private StorageService storage;   // set up = a storage location chosen and both keys saved
+
+    @Autowired(required = false)
+    public void setStorage(StorageService storage) {
+        this.storage = storage;
     }
 
     /** Saves a key (blank removes it). */

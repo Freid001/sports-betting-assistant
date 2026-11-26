@@ -10,7 +10,7 @@
 <!--
   Match page (/football/match/{id}).
   Each outcome appears once, in the Markets card, with its odds, chance and price verdict on one row; related markets
-  share a table with a Type column (Result: FT / HT / HT & FT; Goalscorer: First / Anytime). Best Bets on top pulls
+  share a table with a Type column (Result: FT / HT / HT & FT; Goalscorer: First / Anytime). Recommended Bets on top pulls
   the best-value outcomes from every market. The stats sit in the narrower right column.
 -->
 <div class="container pb-5" th:attr="data-match-id=${matchId}" id="page">
@@ -25,18 +25,21 @@
             <span id="awayLogo"></span>
         </div>
         <div class="small text-muted" id="meta">Loading…</div>
-        <div class="d-flex align-items-baseline justify-content-center"><div class="h3 fw-bold mb-0 d-none" id="score"></div><span id="goalMute"></span></div>
+        <div class="h3 fw-bold mb-0 d-none" id="score"></div>
         <div class="small" id="kickoff"></div>
         <div class="mt-2" id="timeline"></div>
-        <!-- TEMP: re-run the automatic window odds fetch now (remove once checked) -->
-        <button type="button" class="btn btn-sm btn-outline-secondary mt-2 d-none" id="testOdds"></button>
     </div>
 
     <div class="row g-3">
         <!-- Left (wide): what to bet on, then every market -->
         <div class="col-lg-7 d-flex flex-column gap-3">
             <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold" id="bestTitle">Best Bets</div>
+                <div class="card-header py-2 fw-semibold">Checklist</div>
+                <div class="card-body small" id="checklist"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent py-1 small text-muted text-end">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold" id="bestTitle">Recommended Bets</div>
                 <div class="card-body small" id="bestBets"><span class="text-muted">Loading…</span></div>
                 <div class="card-footer bg-transparent py-1 small text-muted d-flex justify-content-between gap-2">
                     <span class="ms-auto">Source: <a class="text-muted" href="https://the-odds-api.com/" target="_blank" rel="noopener noreferrer">the-odds-api.com</a></span>
@@ -54,6 +57,12 @@
 
         <!-- Right: the stats behind it -->
         <div class="col-lg-5 d-flex flex-column gap-3">
+            <!-- a finished game's highlights (YouTube, from GOAL API): only shown when there's a video -->
+            <div class="card shadow-sm d-none" id="highlightsCard">
+                <div class="card-header py-2 fw-semibold">Highlights</div>
+                <div class="card-body p-0"><div class="ratio ratio-16x9" id="highlights"></div></div>
+                <div class="card-footer bg-transparent py-1 small text-muted text-end">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a> · YouTube</div>
+            </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Live Match Stats</div>
                 <div class="card-body small text-muted" id="liveStats">Loading…</div>
@@ -61,11 +70,6 @@
                     <span id="liveNote"></span>
                     <span>Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></span>
                 </div>
-            </div>
-            <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold">Checklist</div>
-                <div class="card-body small" id="checklist"><span class="text-muted">Loading…</span></div>
-                <div class="card-footer bg-transparent py-1 small text-muted text-end">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Timeline</div>
@@ -175,7 +179,7 @@
     });
   }
   // A point picked on the Live Match Stats timeline: the header shows the score and time at that point (HT 1–0),
-  // and Best Bets switch to it (Pre-Match: the pre-match bets, no score)
+  // and Recommended Bets switch to it (Pre-Match: the pre-match bets, no score)
   window.onLiveView = function (snap) {
     liveView = snap.period === 'PRE' ? null : snap;
     if (snap.period === 'PRE' && ev && new Date(ev.commence_time) > new Date()) showScore('', countdown(ev.commence_time));   // not started
@@ -183,13 +187,12 @@
     else if (!snap.live && snap.period && snap.homeScore !== undefined && snap.homeScore !== null) {
       showScore(snap.homeScore + '–' + snap.awayScore, periodName(snap.period));
     }
-    draw();   // Markets and Best Bets switch to this point
+    draw();   // Markets and Recommended Bets switch to this point
   };
   function showScore(score, status) {
     if (!ev) return;
     $('score').textContent = score || '';
     $('score').classList.toggle('d-none', !score);
-    if (score && window.GoalAlert && !$('goalMute').firstChild) $('goalMute').appendChild(GoalAlert.muteButton());   // once the game has a score
     // FT / HT / 61' as the coloured status label (same as the Football list); anything else as text
     var label = F.statusBadge(status);
     $('kickoff').replaceChildren(document.createTextNode(F.day(ev.commence_time) + ', ' + F.time(ev.commence_time) + ' · '),
@@ -200,7 +203,7 @@
   // (drawn just after, so the Goals Profile table it adds a row to is there)
   ValueCheck.render = function (box, e, homeVenue, awayVenue) { views = { home: homeVenue, away: awayVenue }; setTimeout(draw, 0); };
   window.onTopScorers = function () { draw(); topScorers(); };   // goalscorer checks need the scorer tables
-  // the stats couldn't load (e.g. Refresh Stats not run yet): Top Scorers says why, Best Bets says No Bet
+  // the stats couldn't load (e.g. Refresh Stats not run yet): Top Scorers says why, Recommended Bets says No Bet
   window.onNoStats = function (text) {
     noStats = true;
     $('topScorers').replaceChildren(el('span', 'text-muted', text));
@@ -288,7 +291,7 @@
 
   /**
    * Outcome | Odds | Chance | Verdict. Every table uses the same fixed column widths, so the columns line up from
-   * one market to the next (and in Best Bets).
+   * one market to the next (and in Recommended Bets).
    */
   var COLS = ['auto', '5rem', '5.5rem', '6.75rem'];   // Odds wide enough for returns too, e.g. "£2,050" at £50
   // Player markets add Team and Pos after the player's name (e.g. "Zian Flemming  Ipswich  FWD")
@@ -433,7 +436,7 @@
       checked.h2h = a.rows;
       (a.markets || []).forEach(function (mk) { checked[mk.key] = mk.rows; });
     }
-    var all = [];   // every checked outcome, for Best Bets
+    var all = [];   // every checked outcome, for Recommended Bets
     // Related markets share one table with a Type column (one row per bet), where the first of them would be:
     // First / Anytime Goalscorer, and the results: full time (FT), first half (HT) and half-time/full-time (HT & FT)
     var MERGED = [
@@ -446,7 +449,7 @@
       var title = F.MARKET_NAMES[mk.key] || mk.key;
       var m = marketRows(mk, checked[mk.key]);
       m.rows.forEach(function (x) { if (x.r) all.push({ market: title, key: mk.key, x: x }); });
-      if (inPlay) return;   // Best Bets still gets the pre-match outcomes (for Pre-Match)
+      if (inPlay) return;   // Recommended Bets still gets the pre-match outcomes (for Pre-Match)
       var merge = MERGED.find(function (g) { return g.types[mk.key]; });
       var parts = merge ? bk.markets.filter(function (x) { return merge.types[x.key]; }) : [];
       if (parts.length > 1) {
@@ -486,14 +489,14 @@
   }
 
   /**
-   * Best Bets: value outcomes (Great / Good / Possible Value) across every market, best average return first.
+   * Recommended Bets: value outcomes (Great / Good / Possible Value) across every market, best average return first.
    * None: "No Bet", as the framework says.
    */
   function bestBets(a, all, margin) {
     lastBest = [a, all, margin];
     var box = $('bestBets');
     box.replaceChildren();
-    $('bestTitle').textContent = 'Best Bets · Pre-Match';
+    $('bestTitle').textContent = 'Recommended Bets · Pre-Match';
     if (!a) {
       box.appendChild(el('span', 'text-muted', views ? 'Not enough results yet to estimate chances.'
         : noStats ? 'No Bet' : 'Loading…'));
@@ -517,7 +520,7 @@
   function periodName(p) { return p === 'PRE' ? 'Pre-Match' : /^\d+$/.test(p) ? p + '\'' : p; }
 
   /**
-   * In-play Best Bets for the point picked in Live Match Stats: our chances from the score, the time left and the
+   * In-play Recommended Bets for the point picked in Live Match Stats: our chances from the score, the time left and the
    * live stats, and the lowest price worth taking (no live odds yet: compare with the bookmaker's app).
    */
   /** Markets the bookmaker is asked for in-play (the rest close at kick-off). */
@@ -571,7 +574,7 @@
 
   function inPlayBets(a, snap) {
     var box = $('bestBets');
-    $('bestTitle').textContent = 'Best Bets · ' + periodName(snap.period);
+    $('bestTitle').textContent = 'Recommended Bets · ' + periodName(snap.period);
     var check = Live.checklist(snap.rows);
     var holder = el('div');
     box.appendChild(holder);
@@ -583,31 +586,6 @@
     });
     showPrediction(a);
   }
-
-  // TEMP: the Test odds refresh button (remove once checked): does what the automatic fetch at a window does (the
-  // bookmaker and markets in Settings) for the latest window reached, replacing that window's saved odds
-  var testPoint = null;
-  function showTestOdds(saved) {
-    testPoint = saved.length ? saved[saved.length - 1] : null;
-    var b = $('testOdds');
-    b.classList.toggle('d-none', !testPoint);
-    if (testPoint) b.textContent = '🔄 Test odds refresh (' + (/^\d+$/.test(testPoint) ? testPoint + '\'' : testPoint) + ')';
-  }
-  $('testOdds').addEventListener('click', function () {
-    if (!testPoint || !ev) return;
-    var b = $('testOdds');
-    b.disabled = true;
-    F.sendJson('/api/odds/cache/' + ev.sport_key + '/events/' + encodeURIComponent(ev.id) + '/live?point=' +
-        encodeURIComponent(testPoint) + '&asSettings=true')
-      .then(function (o) {
-        liveOdds[testPoint] = o;
-        var back = (o.markets || []).map(function (m) { return m.key; });
-        notify('Asked ' + o.bookmaker + ' for: ' + (o.asked || []).join(', ') + '. Got back: ' + (back.join(', ') || 'nothing') +
-          ' (' + o.credits + ' credit' + (o.credits === 1 ? '' : 's') + ').', 'success');
-      })
-      .catch(function (e) { notify('Odds refresh failed: ' + e.message, 'danger'); })
-      .then(function () { b.disabled = false; draw(); });
-  });
 
   /** Fetches the bookmaker's in-play prices now (about 3 credits), saved under this point, and redraws. */
   function refreshLiveOdds(point) {
@@ -681,7 +659,26 @@
       }, 500);
     }
   }
-  /** The saved in-play odds (no API call): redraws Best Bets and Markets when a new point's odds have arrived. */
+  var highlightsAsked = false;
+  /** Full time: the game's highlights video if GOAL API has one (asked once per page; the server checks at most every 6h). */
+  function showHighlights(gameId) {
+    if (highlightsAsked || !gameId) return;
+    highlightsAsked = true;
+    F.getJson('/api/football/live/match/' + encodeURIComponent(gameId) + '/highlights').then(function (v) {
+      // only YouTube's embed player (what GOAL API sends)
+      if (!v || !/^https:\/\/www\.youtube(-nocookie)?\.com\/embed\/[\w-]+/.test(v.url || '')) return;
+      var frame = document.createElement('iframe');
+      frame.src = v.url;
+      frame.title = (v.title || 'Highlights') + ': ' + ev.home_team + ' v ' + ev.away_team;
+      frame.allow = 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture';
+      frame.allowFullscreen = true;
+      frame.loading = 'lazy';
+      frame.referrerPolicy = 'strict-origin-when-cross-origin';
+      $('highlights').replaceChildren(frame);
+      $('highlightsCard').classList.remove('d-none');
+    }).catch(function () { /* no video: the card stays hidden */ });
+  }
+  /** The saved in-play odds (no API call): redraws Recommended Bets and Markets when a new point's odds have arrived. */
   var oddsRetry = null;
   /**
    * wanted: the points the timeline has (snapshots saved). A window's odds are fetched just after its snapshot, so
@@ -697,7 +694,7 @@
       // a bet window's odds just came in: a chime and a note (not for the ones there when the page opened)
       if (window.GoalAlert) GoalAlert.checkPoints(Object.keys(points)).forEach(function (k) {
         var name = /^\d+$/.test(k) ? k + '\'' : k;
-        GoalAlert.windowOpen('🔔 ' + name + ' bet window: new odds are in, Best Bets updated');
+        GoalAlert.windowOpen('🔔 ' + name + ' bet window: new odds are in, Recommended Bets updated');
       });
     }).catch(function () { /* keep what we have */ });
   }
@@ -717,8 +714,8 @@
         var saved = ((m && m.snapshots) || []).map(function (x) { return String(x.period); })
           .filter(function (k) { return ['10', '25', 'HT', '60', '80'].indexOf(k) >= 0; });
         if (on) rereadLiveOdds(saved.slice(-1));
-        showTestOdds(saved);   // TEMP
         showRefreshBar(state, on && m && m.fixture && Live.isLive(m.fixture));
+        if (m && m.fixture && Live.finished(m.fixture)) showHighlights(m.fixture.id);
       });
     }).catch(function (e) {
       ['liveStats', 'checklist', 'players'].forEach(function (id) { $(id).textContent = 'Live Stats unavailable: ' + e.message; });

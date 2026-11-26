@@ -69,8 +69,10 @@ goal-api:
 
 # Everything the app saves (odds, crests, results, live stats, favourites) is in ONE SQLite file,
 # so pages load without spending calls. Delete it to start fresh (you'll need to refresh again).
+# Where it is: chosen on the Settings page (Storage) and remembered in your user's Java preferences (on Windows,
+# the registry). Until one is chosen: data/sports-betting-assistant.db. Setting store.file here overrides both.
 store:
-  file: data/sports-betting-assistant.db
+  file:
 
 football:
   # Tournaments shown on the Football page and refreshed together
