@@ -1,35 +1,48 @@
 # Sports Betting Assistant configuration.
-# API keys are NOT stored here. They live in .env in the project folder (git-ignored),
-# e.g.  ODDS_API_KEY=...  and  FOOTBALL_DATA_API_KEY=...   (see .env.example).
+# API keys are NOT stored here: paste them on the app's Settings page (saved in the local database, git-ignored).
 
 spring:
   application:
-    name: bet-assistant
+    name: sports-betting-assistant
   main:
     banner-mode: off
-  config:
-    # Loads the local secrets file if it exists.
-    import: optional:file:.env[.properties]
 
 server:
   port: 8080
 
-# The Odds API: bookmaker odds (Sky Bet). Free plan = 500 credits/month.
+# The Odds API: bookmaker odds. Free plan = 500 credits/month, reset on the 1st.
+#   Refresh Odds:  one request per competition gets every match's match result from the bookmaker picked in
+#                  the pop-up (about 2 credits per competition with fixtures; others are skipped for free).
+#   Extra markets: one request per match for the ticked markets; you pay 1 credit for each market the
+#                  bookmaker returns for that match (markets it doesn't offer cost nothing).
 odds-api:
   base-url: https://api.the-odds-api.com/v4
-  key: ${ODDS_API_KEY:}
+  # The bookmakers you can pick in Refresh Odds, and the extra markets each one offers through The Odds API
+  # (checked on 19 Nov 2026 with the event markets endpoint). Only these are asked for: asking a bookmaker
+  # for a market it doesn't have can make the whole answer come back empty.
+  bookmakers:
+    skybet: >-
+      alternate_totals,btts,h2h_3_way_h1,halftime_fulltime,
+      player_goal_scorer_anytime,player_first_goal_scorer
+    betway: >-
+      alternate_totals,btts,double_chance,draw_no_bet,alternate_team_totals,correct_score,
+      h2h_3_way_h1,halftime_fulltime,alternate_totals_corners,alternate_totals_cards,
+      player_shots_on_target_alternate,player_goal_scorer_anytime,player_first_goal_scorer
+    paddypower: >-
+      alternate_totals,btts,double_chance,correct_score,h2h_3_way_h1,halftime_fulltime,
+      alternate_totals_corners,player_shots_on_target_alternate,player_first_goal_scorer
+    williamhill: >-
+      alternate_totals,btts,double_chance,draw_no_bet,correct_score,player_shots_on_target,
+      player_goal_scorer_anytime,player_first_goal_scorer,player_to_score_or_assist
 
-# football-data.org: team crests (later fixtures, tables, form). Free plan = 10 calls/minute.
-football-data:
-  base-url: https://api.football-data.org/v4
-  key: ${FOOTBALL_DATA_API_KEY:}
-  calls-per-minute: 10      # free plan limit; extra calls wait for a free slot instead of failing
-  # "Refresh stats" (Football page) fetches everything below and saves it; match pages then read the saved copies.
-  # About 17 calls: per tournament with fixtures, season results + top scorers + fixtures; per domestic
-  # league its teams play in, season results + top scorers. Tables are worked out from results.
-  # Head to head is 1 call the first time you open a match (kept for a week).
+# "Refresh Stats" (Football page): teams, results, fixtures, league tables, top scorers and squads from GOAL API,
+# saved so match pages read the saved copies. Per competition with fixtures: about 6 calls (results are 100 a call);
+# per domestic league its clubs play in (e.g. Bundesliga for Bayern in the Champions League): about 3; then 1 per
+# squad of teams playing in the next 2 weeks (kept for a month). Head to head is 1 call the first time you open a
+# match (kept for a week).
+stats:
   league-scorers: true      # false = 1 call fewer per league; Key players then shows tournament goals only
-  leagues:                  # domestic leagues on the free plan that may be fetched (only those needed are)
+  leagues:                  # domestic leagues that may be fetched (only those needed are)
     - PL                    # Premier League
     - ELC                   # Championship
     - BL1                   # Bundesliga
@@ -39,18 +52,34 @@ football-data:
     - DED                   # Eredivisie
     - PPL                   # Primeira Liga
 
-# Where API results are saved so we don't fetch them again (relative to the project folder).
-#   cache/football/<tournament>.json        odds
-#   cache/football/teams/<tournament>.json  team crests
-#   cache/football/data/...                 football-data.org results, tables, head to head
-odds-cache:
-  dir: cache
+# GOAL API: stats (Refresh Stats), badges, live scores and match stats. Free plan = 1,000 calls/day. Key: Settings page.
+# While ticked games are being played, every refresh costs 1 call per competition playing + 1 call per live game.
+goal-api:
+  base-url: https://api.goal-api.com/v1
+  refresh-minutes: 5        # how often ticked live games are refreshed
+  max-games: 20             # most games you can tick at once
+  reserve-calls: 50         # stop refreshing when fewer calls than this are left today
+  leagues:                  # GOAL API league id for each of our tournaments
+    epl: cmr77dvkr005nrx06lp7rvp49
+    uefa_champs_league: cmr77dw3900f5rx06j05wgzv4
+    england_league1: cmr77dvkr005lrx061tywzotk
+    uefa_nations_league: cmr77dw4800fgrx06rwmig2h8
+    uefa_european_championship: cmr77dw4800ferx06u57oohrh
+    fifa_world_cup: cmr77dw4s00fmrx069yvhf8ce
+
+# Everything the app saves (odds, crests, results, live stats, favourites) is in ONE SQLite file,
+# so pages load without spending calls. Delete it to start fresh (you'll need to refresh again).
+# Where it is: chosen on the Settings page (Storage) and remembered in your user's Java preferences (on Windows,
+# the registry). Until one is chosen: data/sports-betting-assistant.db. Setting store.file here overrides both.
+store:
+  file:
 
 football:
   # Tournaments shown on the Football page and refreshed together
   # (The Odds API sport keys without the "soccer_" prefix).
   tournaments:
     - epl                         # Premier League
+    - england_league1             # League One (added 26 Nov for testing only: remove afterwards)
     - uefa_champs_league          # Champions League
     - uefa_nations_league         # Nations League
     - uefa_european_championship  # Euros

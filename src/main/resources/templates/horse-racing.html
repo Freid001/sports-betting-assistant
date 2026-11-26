@@ -11,5 +11,10 @@
         </div>
     </div>
 </div>
+<script src="/js/football-data.js"></script>
+<script th:inline="none">
+  // the Stake bar in the top banner, as on every page
+  document.getElementById('navStake').appendChild(Football.stakeInput(function () {}));
+</script>
 </body>
 </html>
