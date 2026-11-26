@@ -228,6 +228,24 @@ public class OddsCacheService {
         return bookmakerMarkets;
     }
 
+    /**
+     * The bookmaker picked in Refresh Odds (Sky Bet until another is picked). One choice for the whole app: the pages
+     * show its prices and the live odds at each point are fetched from it.
+     */
+    public String bookmaker() {
+        return store.first("SELECT value FROM settings WHERE name = 'bookmaker'", rs -> rs.getString(1))
+                .filter(bookmakerMarkets::containsKey).orElse("skybet");
+    }
+
+    /** Picks the bookmaker (one listed in odds-api.bookmakers). */
+    public String setBookmaker(String key) {
+        if (!bookmakerMarkets.containsKey(key)) {
+            throw new IllegalArgumentException("Unknown bookmaker: " + key);
+        }
+        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES ('bookmaker', ?)", key);
+        return key;
+    }
+
     /** The extra markets one bookmaker offers (odds-api.bookmakers); an error for a bookmaker not listed there. */
     public List<String> extraMarkets(String bookmaker) {
         List<String> markets = bookmakerMarkets.get(bookmaker);
@@ -322,6 +340,166 @@ public class OddsCacheService {
         out.put("errors", errors);
         out.put("lastError", lastError);
         out.put("stopped", stopped);
+        return out;
+    }
+
+    /** Markets fetched in-play: the match result plus whichever of these the bookmaker offers. */
+    static final List<String> LIVE_MARKETS = List.of("alternate_totals", "totals", "btts", "draw_no_bet");
+    /** The points in a match that in-play prices are saved for (the match page's timeline). */
+    static final List<String> LIVE_POINTS = List.of("10", "25", "HT", "60", "80");
+
+    /**
+     * In-play prices for one match right now (The Odds API lists games while they're being played): the match
+     * result plus the goals, BTTS and Draw No Bet markets this bookmaker offers. 1 credit per market returned.
+     * Saved apart from the pre-match prices, under the point in the match they were fetched at (10, 25, HT, 60, 80),
+     * so clicking that point on the timeline later shows them again without another call.
+     * Returns {eventId, bookmaker, point, fetchedAt, credits, markets:[{key, outcomes:[{name, price, point}]}]}.
+     */
+    public Map<String, Object> refreshLive(String sport, String eventId, String bookmaker, String point) {
+        return refreshLive(sport, eventId, bookmaker, point, null);
+    }
+
+    /**
+     * As above, but exactly {@code only} (null: the usual match result + goals + BTTS): e.g. what's ticked in
+     * Settings. Markets this bookmaker doesn't offer are left out ("h2h" is always offered).
+     */
+    public Map<String, Object> refreshLive(String sport, String eventId, String bookmaker, String point, List<String> only) {
+        OddsApiClient.safeId(sport);
+        OddsApiClient.safeId(eventId);
+        if (!LIVE_POINTS.contains(point)) {
+            throw new IllegalArgumentException("Unknown point in the match: " + point);
+        }
+        List<String> offered = extraMarkets(bookmaker);
+        List<String> markets = new ArrayList<>();
+        if (only == null || only.isEmpty()) {
+            markets.add("h2h");
+            for (String m : offered) {
+                if (LIVE_MARKETS.contains(m)) {
+                    markets.add(m);
+                }
+            }
+        } else {
+            for (String m : only) {
+                if (("h2h".equals(m) || offered.contains(m)) && !markets.contains(m)) {
+                    markets.add(m);
+                }
+            }
+        }
+        if (creditsLeft == 0) {
+            throw new IllegalStateException("No Odds API credits left this month.");
+        }
+        Map<String, String> params = new LinkedHashMap<>();
+        params.put("markets", String.join(",", markets));
+        params.put("bookmakers", bookmaker);
+        params.put("oddsFormat", "decimal");
+        params.put("dateFormat", "iso");
+        ResponseEntity<String> res = client.get("/sports/" + sport + "/events/" + eventId + "/odds", params);
+        remember(res);
+        if (!res.getStatusCode().is2xxSuccessful()) {
+            throw new IllegalStateException("The Odds API answered " + res.getStatusCode().value() + ": "
+                    + Json.text(Json.parse(res.getBody()).get("message")));
+        }
+        List<Map<String, Object>> got = new ArrayList<>();
+        for (Map<String, Object> b : Json.maps(Json.parse(res.getBody()).get("bookmakers"))) {
+            if (bookmaker.equals(b.get("key"))) {
+                for (Map<String, Object> m : Json.maps(b.get("markets"))) {
+                    List<Map<String, Object>> outcomes = new ArrayList<>();
+                    for (Map<String, Object> o : Json.maps(m.get("outcomes"))) {
+                        Map<String, Object> x = new LinkedHashMap<>();
+                        x.put("name", o.get("name"));
+                        x.put("price", o.get("price"));
+                        if (o.get("point") != null) {
+                            x.put("point", o.get("point"));
+                        }
+                        outcomes.add(x);
+                    }
+                    got.add(Map.of("key", String.valueOf(m.get("key")), "outcomes", outcomes));
+                }
+            }
+        }
+        if (got.isEmpty()) {   // e.g. after full time, or the bookmaker has suspended its markets: keep what was saved
+            throw new IllegalStateException("The bookmaker has no in-play odds for this match right now (asked for "
+                    + String.join(", ", markets) + "). Nothing was charged and the saved odds are kept.");
+        }
+        String fetchedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS).toString();
+        int cost = number(res.getHeaders().getFirst("x-requests-last"));
+        store.update("INSERT OR REPLACE INTO odds_live_points (event_id, bookmaker, point, fetched_at_iso, credits, markets) "
+                + "VALUES (?, ?, ?, ?, ?, ?)", eventId, bookmaker, point, fetchedAt, cost, Json.write(got));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("eventId", eventId);
+        out.put("bookmaker", bookmaker);
+        out.put("point", point);
+        out.put("fetchedAt", fetchedAt);
+        out.put("credits", cost);
+        out.put("asked", markets);
+        out.put("markets", got);
+        return out;
+    }
+
+    /** Odds API credits left this month, as of the last call (-1 if unknown). */
+    public long creditsLeft() {
+        return creditsLeft;
+    }
+
+    /**
+     * The saved match for a game from another source (GOAL API): kick-off within 30 minutes and similar team names.
+     * Returns {sport, id}, or empty if it isn't in the saved odds.
+     */
+    public Optional<Map<String, String>> findEvent(String kickoff, String home, String away) {
+        Instant ko;
+        try {
+            ko = Instant.parse(kickoff);
+        } catch (RuntimeException e) {
+            return Optional.empty();
+        }
+        Map<String, String> best = null;
+        int bestScore = 3;
+        for (Map<String, String> e : store.query("SELECT id, sport, kickoff, home_team, away_team FROM odds_events", rs -> {
+            Map<String, String> m = new LinkedHashMap<>();
+            m.put("id", rs.getString("id"));
+            m.put("sport", rs.getString("sport"));
+            m.put("kickoff", rs.getString("kickoff"));
+            m.put("home", rs.getString("home_team"));
+            m.put("away", rs.getString("away_team"));
+            return m;
+        })) {
+            Instant t;
+            try {
+                t = Instant.parse(e.get("kickoff"));
+            } catch (RuntimeException ex) {
+                continue;
+            }
+            if (java.time.Duration.between(t, ko).abs().toMinutes() > 30) {
+                continue;
+            }
+            int score = com.sportsbettingassistant.football.live.LiveService.similar(e.get("home"), home)
+                    + com.sportsbettingassistant.football.live.LiveService.similar(e.get("away"), away);
+            if (score > bestScore) {
+                best = Map.of("sport", e.get("sport"), "id", e.get("id"));
+                bestScore = score;
+            }
+        }
+        return Optional.ofNullable(best);
+    }
+
+    /**
+     * The in-play prices saved for a match (no API call), by point in the match:
+     * {eventId, bookmaker, points:{"HT":{fetchedAt, credits, markets}, ...}} (points is empty when there are none).
+     */
+    public Map<String, Object> live(String eventId, String bookmaker) {
+        Map<String, Object> points = new LinkedHashMap<>();
+        store.query("SELECT * FROM odds_live_points WHERE event_id = ? AND bookmaker = ?", rs -> {
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("fetchedAt", rs.getString("fetched_at_iso"));
+            p.put("credits", rs.getInt("credits"));
+            p.put("markets", Json.parse("{\"m\":" + rs.getString("markets") + "}").get("m"));
+            points.put(rs.getString("point"), p);
+            return p;
+        }, eventId, bookmaker);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("eventId", eventId);
+        out.put("bookmaker", bookmaker);
+        out.put("points", points);
         return out;
     }
 

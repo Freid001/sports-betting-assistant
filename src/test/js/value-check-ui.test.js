@@ -19,7 +19,7 @@ test('the card shows a verdict per outcome, the goals markets and expected goals
   assert.deepEqual(rows, ['Home', 'Draw', 'Away']);
   assert.match(box.textContent, /Tick more markets in Refresh Odds/);
   assert.match(box.textContent, /Expected goals \d\.\d–\d\.\d/);
-  assert.match(box.textContent, /(Very Likely|Likely|Toss Up|Outsider|Long Shot|Moonshot)/);
+  assert.match(box.textContent, /(Very Likely|Likely|Coin Flip|Outsider|Long Shot|Moonshot)/);
   assert.doesNotMatch(box.textContent, / · \d/);   // no ranges on the badges
 });
 

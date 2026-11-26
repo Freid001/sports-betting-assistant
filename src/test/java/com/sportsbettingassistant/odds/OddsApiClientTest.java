@@ -26,7 +26,7 @@ class OddsApiClientTest {
         ResponseEntity<String> res = client.get("/sports", Map.of());
         assertThat(client.hasKey()).isFalse();
         assertThat(res.getStatusCode().value()).isEqualTo(503);
-        assertThat(res.getBody()).contains("ODDS_API_KEY");
+        assertThat(res.getBody()).contains("Settings page");
         assertThat(api.requests).isEmpty();
     }
 

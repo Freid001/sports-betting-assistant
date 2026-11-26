@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import com.sun.net.httpserver.HttpServer;
 
 /**
- * A tiny web server on localhost that stands in for The Odds API, football-data.org or GOAL API,
+ * A tiny web server on localhost that stands in for The Odds API or GOAL API,
  * so tests never call the real services or spend credits. Answers are set per path; every request
  * is recorded.
  */

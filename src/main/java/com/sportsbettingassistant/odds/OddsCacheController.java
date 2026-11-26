@@ -20,8 +20,15 @@ public class OddsCacheController {
 
     private final OddsCacheService cache;
 
+    private LiveOddsAtPoints atPoints;   // the automatic fetch at each point: what it asks for
+
     public OddsCacheController(OddsCacheService cache) {
         this.cache = cache;
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setAtPoints(LiveOddsAtPoints atPoints) {
+        this.atPoints = atPoints;
     }
 
     /**
@@ -38,6 +45,18 @@ public class OddsCacheController {
         return out;
     }
 
+    /** The bookmaker picked in Refresh Odds: {"bookmaker": "skybet"}. */
+    @GetMapping("/bookmaker")
+    public Map<String, String> bookmaker() {
+        return Map.of("bookmaker", cache.bookmaker());
+    }
+
+    /** Picks the bookmaker for the whole app (pages and live odds); 400 for one not configured. */
+    @PostMapping("/bookmaker")
+    public Map<String, String> setBookmaker(@RequestParam String key) {
+        return Map.of("bookmaker", cache.setBookmaker(key));
+    }
+
     /** The bookmakers you can pick in Refresh Odds and the extra markets each offers (for the pop-up). */
     @GetMapping("/extra-markets")
     public Map<String, List<String>> extraMarkets() {
@@ -49,6 +68,32 @@ public class OddsCacheController {
     public Map<String, Object> availableMarkets(@PathVariable String sport, @PathVariable String eventId,
                                                 @RequestParam(defaultValue = "uk") String regions) {
         return cache.availableMarkets(sport, eventId, regions);
+    }
+
+    /**
+     * In-play prices for one match now (1 credit per market returned), saved under the point in the match.
+     * asSettings=true: exactly what the automatic fetch at a point asks for (the bookmaker and markets in Settings),
+     * for the match page's test button.
+     */
+    @PostMapping("/{sport}/events/{eventId}/live")
+    public Map<String, Object> refreshLive(@PathVariable String sport, @PathVariable String eventId,
+                                           @RequestParam(defaultValue = "skybet") String bookmaker,
+                                           @RequestParam String point,
+                                           @RequestParam(defaultValue = "false") boolean asSettings) {
+        if (!asSettings) {
+            return cache.refreshLive(sport, eventId, bookmaker, point);
+        }
+        List<String> markets = atPoints == null ? null : atPoints.marketsFromSettings();
+        if (markets != null && markets.isEmpty()) {
+            throw new IllegalArgumentException("Nothing is ticked under Odds in Settings, so a point fetches nothing.");
+        }
+        return cache.refreshLive(sport, eventId, cache.bookmaker(), point, markets);
+    }
+
+    /** The in-play prices saved for a match, by point in the match (no API call). */
+    @GetMapping("/events/{eventId}/live")
+    public Map<String, Object> live(@PathVariable String eventId, @RequestParam(defaultValue = "skybet") String bookmaker) {
+        return cache.live(eventId, bookmaker);
     }
 
     @GetMapping

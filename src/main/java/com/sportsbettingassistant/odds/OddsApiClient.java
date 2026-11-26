@@ -17,7 +17,7 @@ import com.sportsbettingassistant.json.Json;
 
 /**
  * Read-only client for The Odds API (https://the-odds-api.com/liveapi/guides/v4/).
- * The API key is read from ODDS_API_KEY (.env or environment) and never sent to the browser.
+ * The API key is the one saved on the Settings page; it is never sent to the browser.
  */
 @Component
 public class OddsApiClient {
@@ -29,16 +29,31 @@ public class OddsApiClient {
     private static final Pattern SAFE_ID = Pattern.compile("[A-Za-z0-9_]+");
 
     private final RestClient http;
-    private final String apiKey;
+    private final String apiKey;          // tests only: the app uses the Settings page's key
+    private com.sportsbettingassistant.settings.SettingsService settings;   // the Settings page's key, if saved
 
-    public OddsApiClient(@Value("${odds-api.key:}") String apiKey,
-                         @Value("${odds-api.base-url:https://api.the-odds-api.com/v4}") String baseUrl) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public OddsApiClient(@Value("${odds-api.base-url:https://api.the-odds-api.com/v4}") String baseUrl) {
+        this("", baseUrl);
+    }
+
+    public OddsApiClient(String apiKey, String baseUrl) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.http = RestClient.create(baseUrl);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSettings(com.sportsbettingassistant.settings.SettingsService settings) {
+        this.settings = settings;
+    }
+
+    /** The key in use now, from the Settings page (read on every call, so a new key works without a restart). */
+    private String key() {
+        return settings != null ? settings.apiKey("odds-api") : apiKey;
+    }
+
     public boolean hasKey() {
-        return !apiKey.isEmpty();
+        return !key().isEmpty();
     }
 
     /** Checks a sport key or event id before it goes into a URL path. */
@@ -52,8 +67,9 @@ public class OddsApiClient {
     /** GET a path on The Odds API and return its JSON body, status and quota headers. */
     public ResponseEntity<String> get(String path, Map<String, String> params) {
         if (!hasKey()) {
-            return Json.message(503, "No API key set. Add ODDS_API_KEY=... to the .env file in the project folder and restart the app.");
+            return Json.message(503, "No Odds API key: add it on the Settings page.");
         }
+        String apiKey = key();
         return http.get()
                 .uri(builder -> {
                     builder.path(path);

@@ -28,7 +28,7 @@ test('team names are compared without accents, punctuation or club words', () =>
   assert.equal(F.norm('FC Bayern München'), 'bayern munchen');
 });
 
-test('Odds API names find the football-data.org team', () => {
+test('Odds API names find the saved team', () => {
   const teams = [
     { name: 'Tottenham Hotspur FC', shortName: 'Tottenham', tla: 'TOT' },
     { name: 'Manchester City FC', shortName: 'Man City', tla: 'MCI' },
@@ -40,9 +40,49 @@ test('Odds API names find the football-data.org team', () => {
   assert.equal(F.findTeam(teams, 'Arsenal'), null);
 });
 
+test('every saved team (competition not on the free plan) is matched strictly', () => {
+  const teams = [
+    { name: 'Sparta Rotterdam', shortName: 'Sparta', tla: 'SPA' },
+    { name: 'Lille OSC', shortName: 'Lille', tla: 'LIL' },
+    { name: 'AZ', shortName: 'AZ', tla: 'AZ' },
+    { name: 'Sport Lisboa e Benfica', shortName: 'SL Benfica', tla: 'SLB' },
+    { name: 'TSG 1899 Hoffenheim', shortName: 'Hoffenheim', tla: 'TSG' }
+  ];
+  teams.strict = true;
+  assert.equal(F.findTeam(teams, 'Sparta Prague'), null);
+  assert.equal(F.findTeam(teams, 'Lillestrom'), null);
+  assert.equal(F.findTeam(teams, 'SK Sturm Graz'), null);
+  assert.equal(F.findTeam(teams, 'AZ Alkmaar').tla, 'AZ');
+  assert.equal(F.findTeam(teams, 'Benfica').tla, 'SLB');
+  assert.equal(F.findTeam(teams, 'TSG Hoffenheim').tla, 'TSG');
+});
+
 test('favourites match whatever name each site uses', () => {
   const favs = [{ name: 'FC Bayern München', shortName: 'Bayern', tla: 'FCB' }, { name: 'Wales', shortName: 'Wales' }];
   assert.ok(F.findTeam(favs, 'Bayern Munich'));
   assert.ok(F.findTeam(favs, 'Wales'));
   assert.equal(F.findTeam(favs, 'England'), null);
+});
+
+test('clockStatus: the minute, HT and FT from the time since kick-off', () => {
+  const ko = '2026-11-21T15:00:00Z', at = mins => new Date(ko).getTime() + mins * 60000;
+  assert.equal(F.clockStatus(ko, at(-5)), null);
+  assert.equal(F.clockStatus(ko, at(9.5)), "10'");
+  assert.equal(F.clockStatus(ko, at(50)), 'HT');
+  assert.equal(F.clockStatus(ko, at(78)), "61'");
+  assert.equal(F.clockStatus(ko, at(112)), "90'");
+  assert.equal(F.clockStatus(ko, at(130)), 'FT');
+});
+
+test('the bookmaker comes from the server, and picking one saves it there', async () => {
+  const { load, settle } = require('./load-scripts');
+  const w = load(['football-data.js'], { routes: { '/api/odds/cache/bookmaker': { bookmaker: 'betway' },
+    '/api/football/tournaments': [], 'POST /api/odds/cache/bookmaker?key=skybet': { bookmaker: 'skybet' } } });
+  await w.Football.loadAll();
+  assert.equal(w.Football.bookmaker(), 'betway', 'from the server');
+  w.Football.setBookmaker('skybet');
+  await settle();
+  const call = w.calls.find(c => c.method === 'POST');
+  assert.equal(call.url, '/api/odds/cache/bookmaker?key=skybet');
+  assert.equal(w.Football.bookmaker(), 'skybet');
 });

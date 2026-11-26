@@ -51,15 +51,15 @@ test('league match: form, one league row, goals profile from home/away games, ke
   }, event('epl', 'Premier League'), SPURS, IPSWICH);
   await settle();
 
-  const formRows = $('form').querySelectorAll('tbody tr').map(r => r.children[0].textContent);
-  assert.deepEqual(formRows, ['Form (last 5)', 'League'], 'no separate Premier League row for a league match');
-  assert.equal($('form').querySelectorAll('.form-tile').length, 10);
+  const formRows = $('form').querySelectorAll('tbody tr').map(r => r.children[1].textContent);
+  assert.deepEqual(formRows, ['Form', 'League'], 'no separate Premier League row for a league match');
+  assert.equal($('form').querySelectorAll('.form-tile').length, 12);   // 6 games each (up to 8 shown)
   assert.match($('form').textContent, /1st · 28 pts/);
   assert.match($('form').textContent, /18th · 9 pts/);
   assert.equal($('goalsNote').textContent, 'Last 6 home games for Tottenham, last 6 away games for Ipswich Town');
   const profile = box.querySelectorAll('tbody tr').map(r => r.textContent);
-  assert.ok(profile.includes('Avg scored2.01.0'));
-  assert.ok(profile.includes('Leading at half-time100%0%'));
+  assert.ok(profile.includes('2.0Avg scored1.0'));
+  assert.ok(profile.includes('100%Leading at half-time0%'));
   // Top Scorers: Goals and Assists columns, no competition codes or tooltips
   const rows = $('keyPlayers').querySelectorAll('tbody tr').map(r => r.children.map(c => c.textContent));
   assert.deepEqual(plain(rows), [['Kane', '9', '2'], ['Son', '4', '0'], ['Delap', '6', '0']]);
@@ -85,33 +85,50 @@ test('cup match with few home/away games: any-venue note, a cup row, and individ
   await settle();
 
   assert.match($('goalsNote').textContent, /games, any venue/);
-  assert.deepEqual($('form').querySelectorAll('tbody tr').map(r => r.children[0].textContent), ['Form (last 5)', 'League', 'Champions League']);
+  assert.deepEqual($('form').querySelectorAll('tbody tr').map(r => r.children[1].textContent), ['Form', 'League', 'Champions League']);
   assert.match($('form').textContent, /2nd · 7 pts \(Group B\)/);
   assert.match($('form').textContent, /n\/a|–/);   // Ipswich: no CL table row
   // Goals and assists are added up across the cup and the league
   assert.deepEqual(plain($('keyPlayers').querySelectorAll('tbody tr')[0].children.map(c => c.textContent)), ['Kane', '12', '2']);
   assert.equal($('h2h').querySelectorAll('tr').length, 2);
-  assert.match($('h2h').textContent, /3 – 1/);
+  assert.match($('h2h').textContent, /3–1/);
 });
 
 test('teams not covered by the free plan', () => {
   const { box, $ } = page({}, event('epl', 'Premier League'), SPURS, null);
-  assert.match(box.textContent, /isn't covered/);
-  assert.equal($('h2h').textContent, 'Not available for this match.');
+  assert.equal(box.textContent, 'No data available for this game.');
+  assert.equal($('h2h').textContent, 'No data available for this game.');
+});
+
+test('a team that is not in the saved teams (no id) makes no calls', () => {
+  const { box, $ } = page({}, event('england_league1', 'English League One'), SPURS, { name: 'Doncaster Rovers', crest: 'x' });
+  assert.equal(box.textContent, 'No data available for this game.');
+  assert.equal($('form').textContent, 'No data available for this game.');
 });
 
 test('nothing saved yet asks for Refresh Stats; other errors are shown', async () => {
   const notSaved = page({ '/api/football/data/teams/1/matches': { status: 404, body: { message: 'Not saved yet' } } },
     event('epl', 'Premier League'), SPURS, IPSWICH);
   await settle();
-  assert.match(notSaved.box.textContent, /Stats not saved yet/);
-  assert.equal(notSaved.$('form').textContent, '–');
+  assert.equal(notSaved.box.textContent, 'Refresh Stats');
+  assert.equal(notSaved.$('form').textContent, 'Refresh Stats');
 
   const broken = page({ '/api/football/data/teams/1/matches': { status: 500, body: {} },
                         '/api/football/data/teams/2/matches': { matches: [] } },
     event('epl', 'Premier League'), SPURS, IPSWICH);
   await settle();
   assert.match(broken.box.textContent, /Couldn't load stats: HTTP 500/);
+});
+
+test('form shows the last 8 games at most', async () => {
+  const { $ } = page({
+    '/api/football/data/teams/1/matches': { matches: homeGames(12) },
+    '/api/football/data/teams/2/matches': { matches: awayGames(3) }
+  }, event('epl', 'Premier League'), SPURS, IPSWICH);
+  await settle();
+  const rows = $('form').querySelectorAll('tbody tr');
+  assert.equal(rows[0].children[0].querySelectorAll('.form-tile').length, 8);   // home | label | away
+  assert.equal(rows[0].children[2].querySelectorAll('.form-tile').length, 3);
 });
 
 test('head to head: fixture not found, not saved, or no meetings; and no scorers', async () => {
@@ -131,7 +148,7 @@ test('head to head: fixture not found, not saved, or no meetings; and no scorers
   const notSaved = page(Object.assign({ '/api/football/data/competitions/PL/matches?status=SCHEDULED': { status: 404, body: {} } }, base),
     event('epl', 'Premier League'), SPURS, IPSWICH);
   await settle();
-  assert.match(notSaved.$('h2h').textContent, /Not saved yet/);
+  assert.equal(notSaved.$('h2h').textContent, 'Refresh Stats');
 
   const none = page(Object.assign({
     '/api/football/data/competitions/PL/matches?status=SCHEDULED': { matches: [{ id: 5, homeTeam: SPURS, awayTeam: IPSWICH }] },
@@ -140,7 +157,7 @@ test('head to head: fixture not found, not saved, or no meetings; and no scorers
   await settle();
   assert.equal(none.$('h2h').textContent, 'No previous meetings found.');
 
-  const otherComp = page(base, event('uefa_nations_league', 'Nations League'), SPURS, IPSWICH);
+  const otherComp = page(base, event('some_other_cup', 'Some Other Cup'), SPURS, IPSWICH);   // not one of our competitions
   await settle();
   assert.equal(otherComp.$('h2h').textContent, 'No head-to-head data found.');
 });

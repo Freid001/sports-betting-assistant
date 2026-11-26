@@ -36,11 +36,13 @@ public class Store implements AutoCloseable {
     /** All tables. Times are milliseconds since 1970 (UTC) unless the column says _iso. */
     /** Columns added after a table was first made: added to older databases (ignored if already there). */
     static final List<String> NEW_COLUMNS = List.of(
-            "ALTER TABLE scorers ADD COLUMN position TEXT");   // e.g. "Attacker", from football-data.org
+            "ALTER TABLE scorers ADD COLUMN position TEXT");   // e.g. "Forwards"
 
     static final String SCHEMA = """
         -- when something last finished: 'stats' (Refresh Stats), 'live', 'live-list', 'matches/PL/FINISHED'...
         CREATE TABLE IF NOT EXISTS refreshes (name TEXT PRIMARY KEY, finished_at INTEGER NOT NULL);
+        -- app choices kept on the server, e.g. the bookmaker picked in Refresh Odds (pages and live odds both use it)
+        CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT);
         -- tidy-up of earlier versions: the key -> JSON table and its import marker are no longer used
         DROP TABLE IF EXISTS saved;
         DELETE FROM refreshes WHERE name = 'old-files-imported';
@@ -49,13 +51,13 @@ public class Store implements AutoCloseable {
         CREATE TABLE IF NOT EXISTS favourites (position INTEGER NOT NULL, name TEXT PRIMARY KEY, short_name TEXT,
             tla TEXT, crest TEXT, type TEXT);
 
-        -- football-data.org
+        -- football stats from GOAL API (in the shapes football-data.org used, which the pages read)
         CREATE TABLE IF NOT EXISTS competitions (code TEXT PRIMARY KEY, name TEXT, type TEXT);
         CREATE TABLE IF NOT EXISTS teams (id INTEGER PRIMARY KEY, name TEXT NOT NULL, short_name TEXT, tla TEXT,
             crest TEXT, country TEXT);
         CREATE TABLE IF NOT EXISTS competition_teams (competition TEXT NOT NULL, team_id INTEGER NOT NULL,
             PRIMARY KEY (competition, team_id));
-        -- each team's squad: every player and his position (football-data.org /teams/{id}), for players who
+        -- each team's squad: every player and his position (GOAL API /teams/{id}/players), for players who
         -- aren't in the scorer tables yet
         CREATE TABLE IF NOT EXISTS squads (team_id INTEGER NOT NULL, player_id INTEGER NOT NULL, name TEXT NOT NULL,
             position TEXT, PRIMARY KEY (team_id, player_id));
@@ -87,6 +89,11 @@ public class Store implements AutoCloseable {
         DROP TABLE IF EXISTS odds_extras;
         CREATE TABLE IF NOT EXISTS odds_extra_fetches (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL,
             fetched_at_iso TEXT NOT NULL, markets TEXT, credits INTEGER, PRIMARY KEY (event_id, bookmaker));
+        -- in-play prices, one fetch per match, bookmaker and point in the match (10, 25, HT, 60, 80), markets is JSON
+        -- (replaces odds_live, which kept only the last fetch)
+        DROP TABLE IF EXISTS odds_live;
+        CREATE TABLE IF NOT EXISTS odds_live_points (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, point TEXT NOT NULL,
+            fetched_at_iso TEXT, credits INTEGER, markets TEXT NOT NULL, PRIMARY KEY (event_id, bookmaker, point));
         CREATE TABLE IF NOT EXISTS odds_prices (event_id TEXT NOT NULL, position INTEGER NOT NULL, bookmaker TEXT,
             bookmaker_title TEXT, market TEXT, outcome TEXT, description TEXT, point REAL, price REAL,
             last_update TEXT, PRIMARY KEY (event_id, position));
@@ -100,7 +107,38 @@ public class Store implements AutoCloseable {
         CREATE TABLE IF NOT EXISTS live_stat_rows (game_id TEXT NOT NULL, position INTEGER NOT NULL, label TEXT,
             home TEXT, away TEXT, PRIMARY KEY (game_id, position));
         CREATE TABLE IF NOT EXISTS live_players (game_id TEXT NOT NULL, side TEXT NOT NULL, position INTEGER NOT NULL,
-            name TEXT, shots INTEGER, on_target INTEGER, goals INTEGER, PRIMARY KEY (game_id, side, position))
+            name TEXT, shots INTEGER, on_target INTEGER, goals INTEGER, PRIMARY KEY (game_id, side, position));
+        -- a game's stats at a point in the match ('25', 'HT', '60', '80', 'FT'): stats is the JSON the page shows
+        CREATE TABLE IF NOT EXISTS live_snapshots (game_id TEXT NOT NULL, period TEXT NOT NULL, home_score TEXT,
+            away_score TEXT, stats TEXT NOT NULL, saved_at TEXT, PRIMARY KEY (game_id, period));
+        -- what happened in a followed game (goal, yellow, red, penalty, shot, kickoff, ht, second, ft), worked out
+        -- refresh by refresh: the match page's Timeline card
+        CREATE TABLE IF NOT EXISTS live_events (game_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
+            side TEXT, player TEXT, score TEXT, minute TEXT, half INTEGER, elapsed INTEGER, sort_order INTEGER, at TEXT,
+            PRIMARY KEY (game_id, seq));
+        -- games to follow live once GOAL API lists them (on match day), picked with the match page's play button
+        CREATE TABLE IF NOT EXISTS live_follow (tournament TEXT NOT NULL, kickoff TEXT NOT NULL, home TEXT NOT NULL,
+            away TEXT NOT NULL, PRIMARY KEY (tournament, kickoff, home));
+        DROP TABLE IF EXISTS goal_badges;
+        -- GOAL API's own id for each team (squads and head to head are asked for by it)
+        CREATE TABLE IF NOT EXISTS goal_teams (goal_id TEXT PRIMARY KEY, team_id INTEGER NOT NULL);
+        CREATE INDEX IF NOT EXISTS goal_teams_by_team ON goal_teams (team_id);
+        -- league tables as GOAL API gives them (every game this season, even ones missing from its results)
+        CREATE TABLE IF NOT EXISTS standings (competition TEXT NOT NULL, team_id INTEGER NOT NULL, team_name TEXT,
+            position INTEGER, played INTEGER, won INTEGER, draw INTEGER, lost INTEGER, goals_for INTEGER,
+            goals_against INTEGER, points INTEGER, grp TEXT, PRIMARY KEY (competition, team_id));
+        -- once, when stats moved from football-data.org to GOAL API: its saved stats go (team ids differ)
+        DELETE FROM competition_teams WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM squads WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM scorers WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM matches WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM head_to_head_matches WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM head_to_head WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM teams WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM competitions WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        DELETE FROM refreshes WHERE (name = 'stats' OR name LIKE 'teams/%' OR name LIKE 'matches/%' OR name LIKE 'scorers/%'
+            OR name LIKE 'squad/%') AND NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
+        INSERT OR IGNORE INTO settings (name, value) VALUES ('stats-source', 'goal-api');
         """;
 
     private final Path file;
@@ -118,7 +156,9 @@ public class Store implements AutoCloseable {
                 s.execute("PRAGMA journal_mode=WAL");     // readers don't block the writer
                 s.execute("PRAGMA busy_timeout=5000");
                 for (String sql : SCHEMA.split(";")) {
-                    if (!sql.isBlank()) {
+                    // skip pieces that are only comments (a ';' inside a comment would otherwise run as SQL)
+                    String code = sql.lines().filter(l -> !l.strip().startsWith("--")).reduce("", (a, b) -> a + b + "\n");
+                    if (!code.isBlank()) {
                         s.execute(sql);
                     }
                 }

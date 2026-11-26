@@ -1,10 +1,13 @@
-// Match stats card: form, league positions, goals profile and head to head from football-data.org
-// (via our cached /api/football/data endpoints). Needs football-data.js (window.Football).
+// Match stats card: form, league positions, goals profile and head to head (GOAL API, saved by Refresh Stats and
+// read through our /api/football/data endpoints). Needs football-data.js (window.Football).
 window.MatchStats = (function () {
   var F = window.Football, el = F.el;
 
-  // Our tournament names -> football-data.org competition codes.
-  var COMP_CODES = { epl: 'PL', uefa_champs_league: 'CL', fifa_world_cup: 'WC', uefa_european_championship: 'EC' };
+  // Our tournament names -> competition codes (as in Competitions.java).
+  var COMP_CODES = { epl: 'PL', england_league1: 'EL1', uefa_champs_league: 'CL', uefa_europa_league: 'EL',
+                     uefa_europa_conference_league: 'ECL', uefa_nations_league: 'UNL', fifa_world_cup: 'WC',
+                     uefa_european_championship: 'EC' };
+  var FORM_GAMES = 8;   // tiles in the Form row
 
   var getJson = F.getJson;
 
@@ -44,9 +47,10 @@ window.MatchStats = (function () {
     };
   }
 
-  function formTiles(views) {
-    var wrap = el('span', 'd-inline-flex gap-1');
-    views.slice(0, 5).reverse().forEach(function (v) {   // oldest -> newest, newest on the right
+  function formTiles(views, right) {
+    // up to 8 tiles as two lines of 4 (the away team's against the right edge)
+    var wrap = el('div', 'd-flex flex-wrap gap-1 form-tiles' + (right ? ' justify-content-end ms-auto' : ''));
+    views.slice(0, FORM_GAMES).reverse().forEach(function (v) {   // oldest -> newest, newest on the right
       var t = el('span', 'form-tile form-' + v.result, v.result);
       t.setAttribute('data-bs-toggle', 'tooltip');
       t.setAttribute('data-bs-title', (v.home ? 'H' : 'A') + ' v ' + (v.opponent.shortName || v.opponent.name) +
@@ -78,23 +82,32 @@ window.MatchStats = (function () {
     return m ? m.competition : null;
   }
 
+  /**
+   * One row of a team comparison, laid out like Live Match Stats and the Checklist: home value on the left, what it
+   * is in the middle (grey), away value on the right.
+   */
   function row(tbody, label, home, away, hint) {
     var tr = el('tr');
-    var th = el('td', 'text-muted', label);
+    var cell = function (v, cls) {
+      var td = el('td', cls);
+      if (v instanceof Node) td.appendChild(v); else td.textContent = v;
+      return td;
+    };
+    tr.appendChild(cell(home, 'text-start text-nowrap'));
+    var th = el('td', 'text-center text-muted text-nowrap', label);
     if (hint) { th.setAttribute('data-bs-toggle', 'tooltip'); th.setAttribute('data-bs-title', hint); th.style.cursor = 'help'; }
     tr.appendChild(th);
-    [home, away].forEach(function (v) {
-      var td = el('td', 'text-center');
-      if (v instanceof Node) td.appendChild(v); else td.textContent = v;
-      tr.appendChild(td);
-    });
+    tr.appendChild(cell(away, 'text-end text-nowrap'));
     tbody.appendChild(tr);
   }
 
+  /** A team comparison table: home team name on the left, away on the right (headers ['', home, away]). */
   function table(headers) {
     var t = el('table', 'table table-sm align-middle mb-0 stats-table');
     var tr = el('tr');
-    headers.forEach(function (h, i) { tr.appendChild(el('th', i ? 'text-center' : 'text-muted fw-normal', h)); });
+    tr.appendChild(el('th', 'text-start text-nowrap', headers[1]));
+    tr.appendChild(el('th', 'text-center', ''));
+    tr.appendChild(el('th', 'text-end text-nowrap', headers[2]));
     var thead = el('thead'); thead.appendChild(tr); t.appendChild(thead);
     var tb = el('tbody'); t.appendChild(tb);
     return { table: t, body: tb };
@@ -172,13 +185,17 @@ window.MatchStats = (function () {
     });
   }
 
+  var NO_DATA = 'No data available for this game.';   // a team with no saved results
+  var NOT_SAVED = 'Refresh Stats';                     // nothing saved yet: Refresh Stats on the Football page
+
   function render(box, ev, homeTeam, awayTeam) {
     box.replaceChildren();
-    if (!homeTeam || !awayTeam) {
+    // a team without an id isn't in the saved teams: there are no results for it
+    if (!homeTeam || !awayTeam || homeTeam.id == null || awayTeam.id == null) {
       ['form', 'h2h', 'keyPlayers', 'valueCheck'].forEach(function (id) {
-        document.getElementById(id).replaceChildren(el('span', 'text-muted', 'Not available for this match.'));
+        document.getElementById(id).replaceChildren(el('span', 'text-muted', NO_DATA));
       });
-      box.appendChild(el('p', 'text-muted mb-0', 'Stats aren\'t available for this match: one of the teams isn\'t covered by football-data.org\'s free plan.'));
+      box.appendChild(el('span', 'text-muted', NO_DATA));
       return;
     }
     box.appendChild(el('span', 'text-muted', 'Loading…'));
@@ -209,7 +226,7 @@ window.MatchStats = (function () {
 
       // Form and positions
       var t1 = table(names);
-      row(t1.body, 'Form (last 5)', formTiles(homeAll), formTiles(awayAll), 'All competitions, newest on the right. Hover a tile for the score.');
+      row(t1.body, 'Form', formTiles(homeAll), formTiles(awayAll, true), 'Last ' + FORM_GAMES + ' games in all competitions, newest on the right. Hover a tile for the score.');
       var posHome = el('span', 'text-muted', '…'), posAway = el('span', 'text-muted', '…');
       var posCl = el('span', 'text-muted', '…'), posClAway = el('span', 'text-muted', '…');
       row(t1.body, 'League', posHome, posAway);
@@ -264,7 +281,7 @@ window.MatchStats = (function () {
       keyPlayers(kpHome, homeTeam, comps(hl), 'home');
       keyPlayers(kpAway, awayTeam, comps(al), 'away');
 
-      // Head to head: find this fixture's football-data id, then its previous meetings.
+      // Head to head: find this fixture's saved id, then its previous meetings.
       (code ? getJson('/api/football/data/competitions/' + code + '/matches?status=SCHEDULED')
             : Promise.reject(new Error('no competition'))).then(function (up) {
         var fx = (up.matches || []).find(function (m) {
@@ -283,31 +300,31 @@ window.MatchStats = (function () {
             var tr = el('tr');
             tr.appendChild(el('td', 'text-muted text-nowrap', new Date(m.utcDate).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })));
             tr.appendChild(el('td', 'text-end', m.homeTeam.shortName || m.homeTeam.name));
-            tr.appendChild(el('td', 'text-center fw-semibold text-nowrap', m.score.fullTime.home + ' – ' + m.score.fullTime.away));
+            tr.appendChild(el('td', 'text-center fw-semibold text-nowrap', m.score.fullTime.home + '–' + m.score.fullTime.away));
             tr.appendChild(el('td', null, m.awayTeam.shortName || m.awayTeam.name));
             tr.appendChild(el('td', 'text-muted small', m.competition ? m.competition.name : ''));
             tb.appendChild(tr);
           });
           t.appendChild(tb); h2hBox.appendChild(t);
         } else if (agg && agg.numberOfMatches) {
-          // Free plan: only the totals, not the individual results.
+          // only the totals saved
           h2hBox.appendChild(el('p', 'mb-0', agg.numberOfMatches + ' previous meetings, ' + agg.totalGoals + ' goals (' +
             (agg.totalGoals / agg.numberOfMatches).toFixed(1) + ' per game).'));
-          h2hBox.appendChild(el('p', 'text-muted small mb-0', 'Individual results need a paid football-data.org plan.'));
         } else {
           h2hBox.appendChild(el('p', 'text-muted mb-0', 'No previous meetings found.'));
         }
       }).catch(function (e) {
         h2hBox.replaceChildren(el('p', 'text-muted mb-0', e.status === 404
-          ? 'Not saved yet. Click Refresh Stats on the Football page.' : 'No head-to-head data found.'));
+          ? NOT_SAVED : 'No head-to-head data found.'));
       });
     }).catch(function (e) {
+      var notSaved = e.status === 404 || e.status === 429;
       ['form', 'h2h', 'keyPlayers', 'valueCheck'].forEach(function (id) {
-        document.getElementById(id).replaceChildren(el('span', 'text-muted', '–'));
+        document.getElementById(id).replaceChildren(el('span', 'text-muted', notSaved ? NOT_SAVED : '–'));
       });
-      box.replaceChildren(el('p', 'text-muted mb-0', e.status === 404 || e.status === 429
-        ? 'Stats not saved yet. Click "Refresh Stats" on the Football page.'
-        : 'Couldn\'t load stats: ' + e.message));
+      box.replaceChildren(el('span', 'text-muted', notSaved ? NOT_SAVED : 'Couldn\'t load stats: ' + e.message));
+      // the page's other cards that wait for these stats (Top Scorers, Best Bets) stop waiting
+      if (typeof window.onNoStats === 'function') window.onNoStats(notSaved ? NOT_SAVED : '–');
     });
   }
 

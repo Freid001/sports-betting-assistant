@@ -25,16 +25,22 @@
             <span id="awayLogo"></span>
         </div>
         <div class="small text-muted" id="meta">Loading…</div>
+        <div class="d-flex align-items-baseline justify-content-center"><div class="h3 fw-bold mb-0 d-none" id="score"></div><span id="goalMute"></span></div>
         <div class="small" id="kickoff"></div>
+        <div class="mt-2" id="timeline"></div>
+        <!-- TEMP: re-run the automatic window odds fetch now (remove once checked) -->
+        <button type="button" class="btn btn-sm btn-outline-secondary mt-2 d-none" id="testOdds"></button>
     </div>
 
     <div class="row g-3">
         <!-- Left (wide): what to bet on, then every market -->
         <div class="col-lg-7 d-flex flex-column gap-3">
             <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold">Best Bets</div>
+                <div class="card-header py-2 fw-semibold" id="bestTitle">Best Bets</div>
                 <div class="card-body small" id="bestBets"><span class="text-muted">Loading…</span></div>
-                <div class="card-footer bg-transparent py-1 small text-muted" id="summary"></div>
+                <div class="card-footer bg-transparent py-1 small text-muted d-flex justify-content-between gap-2">
+                    <span class="ms-auto">Source: <a class="text-muted" href="https://the-odds-api.com/" target="_blank" rel="noopener noreferrer">the-odds-api.com</a></span>
+                </div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold" id="marketsTitle">Markets</div>
@@ -57,24 +63,36 @@
                 </div>
             </div>
             <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Checklist</div>
+                <div class="card-body small" id="checklist"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent py-1 small text-muted text-end">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
+            </div>
+            <div class="card shadow-sm">
+                <div class="card-header py-2 fw-semibold">Timeline</div>
+                <div class="card-body small" id="players"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent py-1 small text-muted text-end">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
+            </div>
+            <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Form &amp; League Position</div>
                 <div class="card-body small" id="form"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Goals Profile</div>
                 <div class="card-body small" id="stats"><span class="text-muted">Loading…</span></div>
-                <div class="card-footer bg-transparent py-1 small text-muted"><span id="goalsNote"></span></div>
+                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Head to Head</div>
                 <div class="card-body small" id="h2h"><span class="text-muted">Loading…</span></div>
+                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
             </div>
             <div class="card shadow-sm">
                 <div class="card-header py-2 fw-semibold">Top Scorers</div>
                 <div class="card-body small" id="topScorers"><span class="text-muted">Loading…</span></div>
                 <!-- The stats script draws its own two-column version here; this layout shows the table above instead -->
                 <div id="keyPlayers" class="d-none"></div>
-                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://www.football-data.org" target="_blank" rel="noopener noreferrer">football-data.org</a></div>
+                <div class="card-footer bg-transparent text-end py-1 small text-muted">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
             </div>
             <!-- The stats script draws its value check here; this layout shows it in Markets instead -->
             <div id="valueCheck" class="d-none"></div>
@@ -102,27 +120,102 @@
 <script src="/js/value-check.js"></script>
 <script src="/js/match-stats.js"></script>
 <script src="/js/live.js"></script>
+<script src="/js/in-play.js"></script>
+<script src="/js/goal-alert.js"></script>
 <script th:inline="none">
 (function () {
   var F = window.Football, el = F.el;
   var $ = function (id) { return document.getElementById(id); };
   var matchId = $('page').getAttribute('data-match-id');
   var ev = null, views = null;   // the match, and the home/away results the goals model uses (from the stats script)
+  var noStats = false;           // a team has no saved results: no chances to work out
+  var liveView = null, lastBest = null, teamsCache = null;   // teamsCache: badges for the GOAL! banner
+    // the point in the match picked in Live Match Stats
+  var shortNames = [];   // the teams' short names, as Form and Goals Profile show them (e.g. "Tottenham")
+  /** A team as the other cards name it ("Tottenham Hotspur FC" -> "Tottenham"); other teams' first word. */
+  function shortTeam(name) {
+    var n = F.norm(name);
+    var hit = shortNames.find(function (s) { var k = F.norm(s); return k && (n === k || n.indexOf(k) === 0); });
+    return hit || String(name).split(' ')[0];
+  }
+  var liveOdds = {};   // in-play prices saved for this match, by point in the match: {"HT": {fetchedAt, credits, markets}}
+  /** The point in the match a timeline view stands for (10, 25, HT, 60, 80, FT), and the prices saved for it. */
+  function pointOf(snap) { return snap.point || snap.period; }
+  function oddsAt(snap) { return liveOdds[pointOf(snap)] || null; }
+  // Live Stats found the game: its score under the competition, and FT / HT / 61' instead of "Started"
+  // The Checklist, Live Match Stats and Player cards: hidden before kick-off and on Pre-Match (nothing to show)
+  // Pre-Match shows the pre-match cards (form, goals profile, head to head, top scorers); a point in the match
+  // (10', HT, LIVE...) shows that point's live cards (checklist, live stats, player shots) instead
+  window.onLiveCards = function (show) {
+    ['checklist', 'liveStats', 'players'].forEach(function (id) { $(id).closest('.card').classList.toggle('d-none', !show); });
+    ['form', 'stats', 'h2h', 'topScorers'].forEach(function (id) { $(id).closest('.card').classList.toggle('d-none', show); });
+  };
+  // Each poll's live score: a goal since the last poll gets the GOAL! banner and sound (goal-alert.js)
+  window.onLiveFixture = function (fx) {
+    var moved = window.GoalAlert && ev ? GoalAlert.checkStatus(fx.status) : null;
+    if (!fx.status) return;
+    showScore(fx.score, fx.status);
+    if (moved && moved !== 'ft') GoalAlert.phaseBanner(moved, fx.score);   // KICK-OFF, HALF TIME, SECOND HALF
+    cardCheck(fx.cards);   // a penalty or a card, then the goal it led to
+    goalCheck(fx.score);
+    if (moved === 'ft') GoalAlert.phaseBanner('ft', fx.score);   // after a last-minute goal
+  };
+  function cardCheck(cards) {
+    if (!ev || !window.GoalAlert) return;
+    GoalAlert.checkCards(cards).forEach(function (c) {
+      var team = c.side === 'home' ? ev.home_team : ev.away_team;
+      GoalAlert.card(c.kind, team, teamsCache ? F.logo(teamsCache, team, 48) : null);
+    });
+  }
+  function goalCheck(score) {
+    if (!ev || !window.GoalAlert) return;
+    GoalAlert.check(score).forEach(function (side) {
+      var team = side === 'home' ? ev.home_team : ev.away_team;
+      GoalAlert.celebrate(team, teamsCache ? F.logo(teamsCache, team, 48) : null, $('score'));
+    });
+  }
+  // A point picked on the Live Match Stats timeline: the header shows the score and time at that point (HT 1–0),
+  // and Best Bets switch to it (Pre-Match: the pre-match bets, no score)
+  window.onLiveView = function (snap) {
+    liveView = snap.period === 'PRE' ? null : snap;
+    if (snap.period === 'PRE' && ev && new Date(ev.commence_time) > new Date()) showScore('', countdown(ev.commence_time));   // not started
+    else if (snap.period === 'PRE') showScore('0–0', 'Pre-Match');
+    else if (!snap.live && snap.period && snap.homeScore !== undefined && snap.homeScore !== null) {
+      showScore(snap.homeScore + '–' + snap.awayScore, periodName(snap.period));
+    }
+    draw();   // Markets and Best Bets switch to this point
+  };
+  function showScore(score, status) {
+    if (!ev) return;
+    $('score').textContent = score || '';
+    $('score').classList.toggle('d-none', !score);
+    if (score && window.GoalAlert && !$('goalMute').firstChild) $('goalMute').appendChild(GoalAlert.muteButton());   // once the game has a score
+    // FT / HT / 61' as the coloured status label (same as the Football list); anything else as text
+    var label = F.statusBadge(status);
+    $('kickoff').replaceChildren(document.createTextNode(F.day(ev.commence_time) + ', ' + F.time(ev.commence_time) + ' · '),
+      label || document.createTextNode(status));
+  }
 
   // The stats script hands its results to ValueCheck.render; here they feed the Markets card instead.
   // (drawn just after, so the Goals Profile table it adds a row to is there)
   ValueCheck.render = function (box, e, homeVenue, awayVenue) { views = { home: homeVenue, away: awayVenue }; setTimeout(draw, 0); };
   window.onTopScorers = function () { draw(); topScorers(); };   // goalscorer checks need the scorer tables
+  // the stats couldn't load (e.g. Refresh Stats not run yet): Top Scorers says why, Best Bets says No Bet
+  window.onNoStats = function (text) {
+    noStats = true;
+    $('topScorers').replaceChildren(el('span', 'text-muted', text));
+    draw();
+  };
 
   function countdown(iso) {
     var mins = Math.round((new Date(iso) - Date.now()) / 60000);
-    if (mins < 0) return 'Started';
+    if (mins < 0) return F.clockStatus(iso);   // from the clock (no live stats): 10', HT, FT
     if (mins < 60) return 'Kicks off in ' + mins + ' min';
     if (mins < 48 * 60) return 'Kicks off in ' + Math.round(mins / 60) + ' h';
     return 'Kicks off in ' + Math.round(mins / 1440) + ' days';
   }
 
-  var TAGS = [[0.75, 'Very Likely', 'chance-verylikely'], [0.5, 'Likely', 'chance-likely'], [0.35, 'Toss Up', 'chance-tossup'],
+  var TAGS = [[0.75, 'Very Likely', 'chance-verylikely'], [0.5, 'Likely', 'chance-likely'], [0.35, 'Coin Flip', 'chance-tossup'],
               [0.2, 'Outsider', 'chance-outsider'], [0.1, 'Long Shot', 'chance-longshot'], [0, 'Moonshot', 'chance-moonshot']];
   /** Chance label, with our calculated chance on hover, e.g. "21.4%". */
   function tagBadge(chance) {
@@ -135,8 +228,9 @@
   }
   /** e.g. 0.2142 -> "21.4%". */
   function pct(p) { return (p * 100).toFixed(1) + '%'; }
+  var confidenceName = null;   // the match's confidence (Low, Medium...), shown on hover over every verdict
   function verdictBadge(r) {
-    return r ? el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text) : el('span', 'text-muted', '–');
+    return r ? ValueCheck.verdictBadge(r.verdict, confidenceName) : el('span', 'text-muted', '–');
   }
 
   /** An outcome's label, the same way the Value check names its rows. */
@@ -169,7 +263,7 @@
       if (fair) list.forEach(function (x, i) { x.chance = fair.chances[i]; });
     });
     var show = rows.length;
-    // Every market: best verdict first, then the more likely chance label, then the bigger odds
+    // Every market: best verdict first, then the more likely (our chance), then the bigger odds
     rows.sort(byVerdict);
     var ou = rows.length && rows.every(function (x) { return x.o.name === 'Over' || x.o.name === 'Under'; });
     if (mk.key.indexOf('player_') === 0) {
@@ -189,13 +283,8 @@
     var i = x.r ? VERDICT_ORDER.indexOf(x.r.verdict.text) : -1;
     return i < 0 ? VERDICT_ORDER.length : i;
   }
-  /** The chance label's place, most likely first (Very Likely 0 ... Moonshot 5). */
-  function chanceRank(x) {
-    for (var i = 0; i < TAGS.length; i++) if (x.chance >= TAGS[i][0]) return i;
-    return TAGS.length;
-  }
-  /** Best verdict first, then the more likely chance label, then the bigger odds (the bigger return if it wins). */
-  function byVerdict(a, b) { return verdictRank(a) - verdictRank(b) || chanceRank(a) - chanceRank(b) || b.o.price - a.o.price; }
+  /** Best verdict first, then the more likely (our chance, e.g. 41% before 38%), then the bigger odds. */
+  function byVerdict(a, b) { return verdictRank(a) - verdictRank(b) || (b.chance || 0) - (a.chance || 0) || (b.o.price || 0) - (a.o.price || 0); }
 
   /**
    * Outcome | Odds | Chance | Verdict. Every table uses the same fixed column widths, so the columns line up from
@@ -219,7 +308,7 @@
     var heads = [title || ''].concat(typed ? ['Type'] : [], players ? ['Team', 'Pos'] : [], ['Odds', 'Chance', 'Verdict']);
     var badgeFrom = heads.indexOf('Odds');
     heads.forEach(function (h, i) {
-      head.appendChild(el('th', i === 0 ? 'fw-bold' : 'fw-semibold text-nowrap' + (i >= badgeFrom ? ' text-center' : ''), h));
+      head.appendChild(el('th', i === 0 ? null : 'text-nowrap' + (i >= badgeFrom ? ' text-center' : ''), h));
     });
     var thead = el('thead'); thead.appendChild(head); t.appendChild(thead);
     var tb = el('tbody');
@@ -229,7 +318,7 @@
         var info = scorerInfo(x.label) || {};
         tr.appendChild(el('td', null, info.name || x.label));
         if (typed) tr.appendChild(el('td', 'text-nowrap', x.type));   // First or Anytime
-        tr.appendChild(el('td', 'text-muted text-truncate', info.team ? info.team.split(' ')[0] : '–'));   // e.g. "Ipswich"
+        tr.appendChild(el('td', 'text-muted text-truncate', info.team ? shortTeam(info.team) : '–'));   // e.g. "Ipswich Town"
         var pos = el('td', 'text-muted', info.position ? POS_SHORT[info.position] || info.position : '–');
         if (info.position) pos.title = info.position;
         tr.appendChild(pos);
@@ -239,12 +328,22 @@
       }
       // Odds: coloured by the bookmaker's own chance (margin removed). On hover the price's raw chance and the same
       // without the bookmaker's margin, e.g. "10/3 · 23.1% (21.7% without margin)". Our chance is on the Chance label.
+      if (!x.o.price) {
+        // no odds for this point in the match: a dash, and no verdict
+        var ref = el('span', 'text-muted', '–');
+        if (x.hint) { ref.setAttribute('data-bs-toggle', 'tooltip'); ref.setAttribute('data-bs-title', x.hint); ref.style.cursor = 'help'; }
+        var none = el('td', 'text-center'); none.appendChild(ref); tr.appendChild(none);
+        var ch = el('td', 'text-center'); ch.appendChild(x.chance == null ? el('span', 'text-muted', '–') : tagBadge(x.chance)); tr.appendChild(ch);
+        var why = el('span', 'text-muted', '–');
+        why.setAttribute('data-bs-toggle', 'tooltip');
+        why.setAttribute('data-bs-title', 'No verdict without odds for this point in the match.');
+        why.style.cursor = 'help';
+        var vd = el('td', 'text-center'); vd.appendChild(why); tr.appendChild(vd);
+        tb.appendChild(tr);
+        return;
+      }
       var bookChance = x.r ? x.r.fair : x.chance;
-      var oddsBadge = F.oddsBadge(x.o.price, bookChance);
-      // e.g. "10/3 · 23.1% (21.7% no margin)": the price's chance, then the bookmaker's own with its margin taken out
-      var margin = bookChance > 0 ? (1 / x.o.price) / bookChance - 1 : 0;
-      oddsBadge.setAttribute('data-bs-title', F.fraction(x.o.price) + ' · ' + pct(1 / x.o.price) +
-        (margin >= 0.0005 ? ' (' + pct(bookChance) + ' no margin)' : ''));
+      var oddsBadge = F.oddsBadge(x.o.price, bookChance);   // hover: "10/3 · 23.1% (21.7% no margin)", as everywhere
       var odds = el('td'); odds.appendChild(oddsBadge); tr.appendChild(odds);
       var chance = el('td'); chance.appendChild(tagBadge(x.chance)); tr.appendChild(chance);
       var verdict = el('td'); verdict.appendChild(verdictBadge(x.r)); tr.appendChild(verdict);
@@ -296,14 +395,14 @@
     var t = el('table', 'table table-sm align-middle mb-0 stats-table');
     var head = el('tr');
     ['Player', 'Team', 'Pos', 'Goals', 'Assists'].forEach(function (h, i) {
-      head.appendChild(el('th', 'fw-semibold text-nowrap' + (i >= 3 ? ' text-center' : ''), h));
+      head.appendChild(el('th', 'text-nowrap' + (i >= 3 ? ' text-center' : ''), h));
     });
     var thead = el('thead'); thead.appendChild(head); t.appendChild(thead);
     var tb = el('tbody');
     rows.forEach(function (x) {
       var tr = el('tr');
       tr.appendChild(el('td', null, x.p.name));
-      tr.appendChild(el('td', 'text-muted text-nowrap', x.team.split(' ')[0]));
+      tr.appendChild(el('td', 'text-muted text-nowrap', shortTeam(x.team)));
       var pos = el('td', 'text-muted', x.p.position ? POS_SHORT[x.p.position] || x.p.position : '–');
       if (x.p.position) pos.title = x.p.position;
       tr.appendChild(pos);
@@ -320,7 +419,7 @@
   function draw() {
     if (!ev) return;
     var box = $('markets'), bk = F.pickBook(ev), name = F.bookmakerName();
-    $('marketsTitle').textContent = 'Markets · ' + name;
+    $('marketsTitle').textContent = 'Markets · ' + name + ' · Pre-Match';
     box.replaceChildren();
     if (!bk) {
       box.appendChild(el('p', 'text-muted mb-0', 'No ' + name + ' odds saved for this match yet. Refresh Odds with ' + name + ' picked.'));
@@ -328,6 +427,7 @@
       return;
     }
     var a = views ? ValueCheck.analyse(ev, views.home, views.away, F.stake() || ValueCheck.DEFAULT_STAKE) : null;
+    confidenceName = a ? a.level.name : null;
     var checked = {};
     if (a) {
       checked.h2h = a.rows;
@@ -341,10 +441,12 @@
       { title: 'Result', types: { h2h: 'FT', h2h_3_way_h1: 'HT', halftime_fulltime: 'HT & FT' } }
     ];
     var shown = {};
+    var inPlay = liveView && liveView.period;   // a point in the match: the card shows that point's odds instead
     bk.markets.forEach(function (mk) {
       var title = F.MARKET_NAMES[mk.key] || mk.key;
       var m = marketRows(mk, checked[mk.key]);
-      m.rows.forEach(function (x) { if (x.r) all.push({ market: title, x: x }); });
+      m.rows.forEach(function (x) { if (x.r) all.push({ market: title, key: mk.key, x: x }); });
+      if (inPlay) return;   // Best Bets still gets the pre-match outcomes (for Pre-Match)
       var merge = MERGED.find(function (g) { return g.types[mk.key]; });
       var parts = merge ? bk.markets.filter(function (x) { return merge.types[x.key]; }) : [];
       if (parts.length > 1) {
@@ -378,40 +480,142 @@
     });
     var h2h = bk.markets.find(function (mk) { return mk.key === 'h2h'; });
     var margin = h2h ? F.fairChances(h2h.outcomes.map(function (o) { return o.price; })) : null;
-    // (the bookmaker's margin is in the Best Bets summary)
-    $('marketsNote').textContent = !(ev.extras_fetched_at || {})[bk.key] ? 'Match result only: tick more markets in Refresh Odds.' : '';
+    $('marketsNote').textContent = '';
+    if (inPlay) inPlayMarkets(box, bk, liveView, name, a);
     bestBets(a, all, margin);
   }
 
   /**
    * Best Bets: value outcomes (Great / Good / Possible Value) across every market, best average return first.
-   * None: "No Bet", as the framework says. Footer: expected goals, confidence and the bookmaker's margin.
+   * None: "No Bet", as the framework says.
    */
   function bestBets(a, all, margin) {
+    lastBest = [a, all, margin];
     var box = $('bestBets');
     box.replaceChildren();
-    if (!a) { box.appendChild(el('span', 'text-muted', views ? 'Not enough results yet to estimate chances.' : 'Loading…')); return; }
-    var value = all.filter(function (b) { return b.x.r.ret >= 0.05; }).sort(function (p, q) { return q.x.r.ret - p.x.r.ret; });
-    // Optional small bets: fair price, 35%+ chance, and odds of at least 1/3 (shorter ones win too little to matter)
-    var MIN_ODDS = 4 / 3;
-    var fair = all.filter(function (b) { return b.x.r.ret > -0.05 && b.x.r.ret < 0.05 && b.x.r.ours >= 0.35 && b.x.o.price >= MIN_ODDS; })
-      .sort(function (p, q) { return q.x.r.ours - p.x.r.ours; });
-    if (!value.length) {
-      box.appendChild(el('p', 'mb-2', 'No Bet: nothing here is value at these prices.'));
+    $('bestTitle').textContent = 'Best Bets · Pre-Match';
+    if (!a) {
+      box.appendChild(el('span', 'text-muted', views ? 'Not enough results yet to estimate chances.'
+        : noStats ? 'No Bet' : 'Loading…'));
+      return;
+    }
+    var live = liveView && liveView.period ? liveView : null;   // a point in the match (FT says there's nothing left)
+    if (live) return inPlayBets(a, live);
+    // The same bets, in the same order, as this match on the Recommended Bets page (ValueCheck.recommend)
+    var picks = ValueCheck.recommend(all.map(function (b) {
+      return { key: b.key, ret: b.x.r.ret, chance: b.x.r.ours, price: b.x.o.price, verdict: b.x.r.verdict, b: b };
+    }));
+    if (!picks.length) {
+      box.appendChild(el('div', 'text-muted', 'No Bet'));
     } else {
-      var rows = value.slice(0, 5).map(function (b) { return Object.assign({}, b.x, { label: b.x.label + ' · ' + b.market }); });
+      var rows = picks.map(function (p) { return Object.assign({}, p.b.x, { label: p.b.x.label + ' · ' + p.b.market }); });
       box.appendChild(table(rows, 'Bet'));
     }
-    if (fair.length) {
-      box.appendChild(el('div', 'small text-muted mt-2', 'Fair Price and a decent chance (optional small bet): ' +
-        fair.slice(0, 3).map(function (b) { return b.x.label + ' (' + b.market + ')'; }).join(', ') + '.'));
-    }
     showPrediction(a);
-    var s = $('summary');
-    s.replaceChildren(el('span', null, 'Predicted goals ' + a.model.lh.toFixed(1) + '–' + a.model.la.toFixed(1) + ' · Confidence '));
-    s.appendChild(ValueCheck.confidenceBadge(a));
-    s.appendChild(el('span', null, (margin ? ' · Margin ' + (margin.margin * 100).toFixed(1) + '%' : '') +
-      ' · Verdicts judge the price, not the result. Not financial advice.'));
+  }
+
+  function periodName(p) { return p === 'PRE' ? 'Pre-Match' : /^\d+$/.test(p) ? p + '\'' : p; }
+
+  /**
+   * In-play Best Bets for the point picked in Live Match Stats: our chances from the score, the time left and the
+   * live stats, and the lowest price worth taking (no live odds yet: compare with the bookmaker's app).
+   */
+  /** Markets the bookmaker is asked for in-play (the rest close at kick-off). */
+  var IN_PLAY_KEYS = ['h2h', 'draw_no_bet', 'alternate_totals', 'totals', 'btts'];
+  /**
+   * The Markets card at a point in the match: our in-play chance for each outcome (score so far + goals still to
+   * come), with the prices saved for that point and their verdicts, or "–" for odds and verdict when none were saved.
+   * FT: the markets are closed.
+   */
+  function inPlayMarkets(box, bk, snap, name, a) {
+    var point = pointOf(snap), saved = oddsAt(snap);
+    var r = a && snap.period !== 'PRE' ? InPlay.rates(a.model, snap) : null, names = [ev.home_team, ev.away_team];
+    $('marketsTitle').textContent = 'Markets · ' + name + ' · ' + periodName(point);
+    if (point === 'FT') { box.appendChild(el('div', 'text-muted', 'Markets Closed')); $('marketsNote').textContent = ''; return; }
+    var markets = saved ? saved.markets : bk.markets.filter(function (mk) { return IN_PLAY_KEYS.indexOf(mk.key) >= 0; });
+    markets.forEach(function (mk) {
+      var title = F.MARKET_NAMES[mk.key] || mk.key;
+      var rows = saved ? marketRows(mk, null).rows : mk.outcomes.map(function (o) {
+        return { label: label(mk.key, o), o: { name: o.name, point: o.point, price: null }, chance: null, r: null,
+                 hint: 'No odds saved for this point in the match.' };
+      });
+      rows.forEach(function (x) {
+        var ours = r ? InPlay.chanceFor(r, names, mk.key, x.o) : null;
+        if (ours === null || isNaN(ours)) { if (!saved) x.chance = null; return; }
+        if (x.o.price) {   // the bookmaker's chance (margin removed) stays on the odds badge; ours on Chance + verdict
+          var ret = ours * x.o.price - 1;
+          x.r = { ours: ours, fair: x.chance, ret: ret, verdict: ValueCheck.label(ret, ours, a.level.name) };
+        }
+        x.chance = ours;
+      });
+      rows = rows.filter(function (x) { return x.chance === null || (x.chance > 0.005 && x.chance < 0.995); });   // settled ones
+      if (saved) rows.sort(byVerdict);   // best verdict first; without odds, the bookmaker's own order (by line)
+      var show = rows.length > 6 ? 5 : rows.length;
+      var t = table(rows.slice(0, show), title);
+      if (box.children.length) t.classList.add('mt-3');
+      box.appendChild(t);
+      if (rows.length > show) {
+        var more = el('a', 'small d-inline-block mt-1 link-secondary', 'Show all ' + rows.length);
+        more.href = '#';
+        more.addEventListener('click', function (e) {
+          e.preventDefault();
+          $('marketModalTitle').textContent = title + ' · ' + name + ' · ' + periodName(point);
+          $('marketModalBody').replaceChildren(table(rows, title));
+          bootstrap.Modal.getOrCreateInstance($('marketModal')).show();
+        });
+        box.appendChild(more);
+      }
+    });
+    $('marketsNote').textContent = saved ? 'Odds from ' + F.ago(saved.fetchedAt) + '.' : '';
+  }
+
+  function inPlayBets(a, snap) {
+    var box = $('bestBets');
+    $('bestTitle').textContent = 'Best Bets · ' + periodName(snap.period);
+    var check = Live.checklist(snap.rows);
+    var holder = el('div');
+    box.appendChild(holder);
+    var r = InPlay.render(holder, ev, a.model, snap, check, Live.setup(check, snap.homeScore, snap.awayScore), {
+      table: table, confidence: a.level.name,
+      markets: oddsAt(snap) ? oddsAt(snap).markets : null, fetchedAt: oddsAt(snap) ? oddsAt(snap).fetchedAt : null,
+      // a fetch is only for where the game is now, saved under that point (about 3 credits; clicking never fetches)
+      onRefresh: null   // no manual button: each point's odds are fetched automatically when it's saved (60', 80'...)
+    });
+    showPrediction(a);
+  }
+
+  // TEMP: the Test odds refresh button (remove once checked): does what the automatic fetch at a window does (the
+  // bookmaker and markets in Settings) for the latest window reached, replacing that window's saved odds
+  var testPoint = null;
+  function showTestOdds(saved) {
+    testPoint = saved.length ? saved[saved.length - 1] : null;
+    var b = $('testOdds');
+    b.classList.toggle('d-none', !testPoint);
+    if (testPoint) b.textContent = '🔄 Test odds refresh (' + (/^\d+$/.test(testPoint) ? testPoint + '\'' : testPoint) + ')';
+  }
+  $('testOdds').addEventListener('click', function () {
+    if (!testPoint || !ev) return;
+    var b = $('testOdds');
+    b.disabled = true;
+    F.sendJson('/api/odds/cache/' + ev.sport_key + '/events/' + encodeURIComponent(ev.id) + '/live?point=' +
+        encodeURIComponent(testPoint) + '&asSettings=true')
+      .then(function (o) {
+        liveOdds[testPoint] = o;
+        var back = (o.markets || []).map(function (m) { return m.key; });
+        notify('Asked ' + o.bookmaker + ' for: ' + (o.asked || []).join(', ') + '. Got back: ' + (back.join(', ') || 'nothing') +
+          ' (' + o.credits + ' credit' + (o.credits === 1 ? '' : 's') + ').', 'success');
+      })
+      .catch(function (e) { notify('Odds refresh failed: ' + e.message, 'danger'); })
+      .then(function () { b.disabled = false; draw(); });
+  });
+
+  /** Fetches the bookmaker's in-play prices now (about 3 credits), saved under this point, and redraws. */
+  function refreshLiveOdds(point) {
+    F.sendJson('/api/odds/cache/' + ev.sport_key + '/events/' + encodeURIComponent(ev.id) + '/live?bookmaker=' + F.bookmaker() +
+        '&point=' + encodeURIComponent(point))
+      .then(function (o) { liveOdds[point] = o; notify('Live odds updated (' + o.credits + ' credits).', 'success'); })
+      .catch(function (e) { notify('Couldn\'t fetch live odds: ' + e.message, 'danger'); })
+      .then(draw);
   }
 
   /**
@@ -428,33 +632,97 @@
     var short = function (n) { return n.split(' ')[0]; };
     var tr = el('tr', 'fw-bold');
     tr.id = 'predictedRow';
-    var label = el('td', null, 'Predicted Goals');
+    var label = el('td', 'text-center', 'Predicted Goals');
     label.setAttribute('data-bs-toggle', 'tooltip');
     label.setAttribute('data-bs-title', 'Goals each team is expected to score in this match, from goals scored and conceded in ' +
       'recent home games (' + short(ev.home_team) + ') and away games (' + short(ev.away_team) + '). Based on goals, not ' +
       'shot-based xG. Confidence: ' + a.level.name + ' (' + a.games + ' games each).');
     label.style.cursor = 'help';
+    // home | label | away, like the other rows
+    tr.appendChild(el('td', 'text-start', a.model.lh.toFixed(1)));
     tr.appendChild(label);
-    // same alignment as the other rows' numbers
-    var cells = body.querySelector('tr') ? body.querySelector('tr').children : [];
-    [a.model.lh, a.model.la].forEach(function (v, i) {
-      var cls = cells[i + 1] ? cells[i + 1].className : 'text-center';
-      tr.appendChild(el('td', cls, v.toFixed(1)));
-    });
+    tr.appendChild(el('td', 'text-end', a.model.la.toFixed(1)));
     body.appendChild(tr);
   }
 
   document.getElementById('navStake').appendChild(F.stakeInput(function () { draw(); }));
 
   var liveTimer = null;
+
+  /**
+   * A thin bar along the bottom of the top banner while a followed game is live: it fills from the server's last
+   * refresh to the next one (Live Stats Refresh), then starts again when the new data arrives.
+   */
+  var refreshBar = null, refreshTick = null, lastAt = 0, everyMs = 60000;
+  function showRefreshBar(state, on) {
+    if (!on || !state.lastRefresh) {
+      if (refreshBar) refreshBar.classList.add('d-none');
+      return;
+    }
+    if (!refreshBar) {
+      refreshBar = el('div', 'live-refresh-bar');
+      refreshBar.appendChild(el('div'));
+      document.querySelector('.site-bar').appendChild(refreshBar);
+    }
+    refreshBar.classList.remove('d-none');
+    lastAt = new Date(state.lastRefresh).getTime();
+    everyMs = (state.refreshMinutes || 1) * 60000;
+    if (!refreshTick) {
+      var waitingSince = 0;
+      refreshTick = setInterval(function () {
+        var left = Math.max(0, lastAt + everyMs - Date.now());
+        refreshBar.firstChild.style.width = (100 * (1 - left / everyMs)) + '%';
+        refreshBar.title = left > 0 ? 'Next refresh in ' + Math.ceil(left / 1000) + 's' : 'Refreshing…';
+        // full: the server is due to refresh, so look for the new data every 5 seconds instead of waiting for the
+        // next 30-second re-read (it starts again from empty once it's here)
+        if (left > 0) { waitingSince = 0; return; }
+        if (!waitingSince) waitingSince = Date.now();
+        if (Date.now() - waitingSince >= 5000) { waitingSince = Date.now(); showLive(); }
+      }, 500);
+    }
+  }
+  /** The saved in-play odds (no API call): redraws Best Bets and Markets when a new point's odds have arrived. */
+  var oddsRetry = null;
+  /**
+   * wanted: the points the timeline has (snapshots saved). A window's odds are fetched just after its snapshot, so
+   * while one is missing, look again every 4 seconds (up to a minute) rather than waiting for the next 30-second read.
+   */
+  function rereadLiveOdds(wanted, tries) {
+    F.getJson('/api/odds/cache/events/' + encodeURIComponent(ev.id) + '/live?bookmaker=' + F.bookmaker()).then(function (o) {
+      var points = o.points || {};
+      var missing = (wanted || []).some(function (k) { return !points[k]; });
+      clearTimeout(oddsRetry);
+      if (missing && (tries || 0) < 15) oddsRetry = setTimeout(function () { rereadLiveOdds(wanted, (tries || 0) + 1); }, 4000);
+      if (Object.keys(points).join() !== Object.keys(liveOdds || {}).join()) { liveOdds = points; draw(); }
+      // a bet window's odds just came in: a chime and a note (not for the ones there when the page opened)
+      if (window.GoalAlert) GoalAlert.checkPoints(Object.keys(points)).forEach(function (k) {
+        var name = /^\d+$/.test(k) ? k + '\'' : k;
+        GoalAlert.windowOpen('🔔 ' + name + ' bet window: new odds are in, Best Bets updated');
+      });
+    }).catch(function () { /* keep what we have */ });
+  }
   function showLive() {
+    Live.setTimelineHost($('timeline'));
+    Live.setHosts({ checklist: $('checklist'), players: $('players') });   // their own cards   // the match points sit under the score, as the page's navigation
     Live.getState().then(function (state) {
       return Live.renderCard($('liveStats'), $('liveNote'), state, ev).then(function (m) {
-        var on = m && m.fixture && !Live.finished(m.fixture);
-        if (on && !liveTimer) liveTimer = setInterval(showLive, 60000);
+        // Re-read often (no API calls: the server refreshes followed games at the Live Stats Refresh rate) while a followed
+        // game isn't finished, or a game waiting to be listed kicks off within 3 hours
+        var soon = new Date(ev.commence_time) - Date.now() < 3 * 3600000;
+        var on = m ? m.fixture && !Live.finished(m.fixture) : !!Live.followingFor(state, ev) && soon;
+        // every 30 seconds (half the fastest Live Stats Refresh), so the page is never far behind the server's last refresh
+        if (on && !liveTimer) liveTimer = setInterval(showLive, Math.min(30000, (state.refreshMinutes || 1) * 30000));
         if (!on && liveTimer) { clearInterval(liveTimer); liveTimer = null; }
+        // the in-play odds saved at each point (60', 80'...) without reloading; a window's odds a few seconds after it
+        var saved = ((m && m.snapshots) || []).map(function (x) { return String(x.period); })
+          .filter(function (k) { return ['10', '25', 'HT', '60', '80'].indexOf(k) >= 0; });
+        if (on) rereadLiveOdds(saved.slice(-1));
+        showTestOdds(saved);   // TEMP
+        showRefreshBar(state, on && m && m.fixture && Live.isLive(m.fixture));
       });
-    }).catch(function (e) { $('liveStats').textContent = 'Live Stats unavailable: ' + e.message; });
+    }).catch(function (e) {
+      ['liveStats', 'checklist', 'players'].forEach(function (id) { $(id).textContent = 'Live Stats unavailable: ' + e.message; });
+    });
   }
 
   F.loadAll().then(function (data) {
@@ -463,14 +731,30 @@
     document.title = ev.home_team + ' v ' + ev.away_team + ' · Sports Betting Assistant';
     $('meta').textContent = ev.comp;
     $('teams').textContent = ev.home_team + ' v ' + ev.away_team;
-    $('kickoff').textContent = F.day(ev.commence_time) + ', ' + F.time(ev.commence_time) + ' · ' + countdown(ev.commence_time);
+    showScore('', countdown(ev.commence_time));   // FT / HT / minute as the coloured label
+    if (window.GoalAlert && new Date(ev.commence_time) > new Date()) GoalAlert.checkStatus(null);   // open before kick-off: KICK-OFF will show
     F.loadTeams(ev.compKey).then(function (teams) {
+      teamsCache = teams;
       $('homeLogo').replaceChildren(F.logo(teams, ev.home_team, 56));
       $('awayLogo').replaceChildren(F.logo(teams, ev.away_team, 56));
-      MatchStats.render($('stats'), ev, F.findTeam(teams, ev.home_team), F.findTeam(teams, ev.away_team));
+      var ht = F.findTeam(teams, ev.home_team), at = F.findTeam(teams, ev.away_team);
+      noStats = !ht || !at || ht.id == null || at.id == null;
+      MatchStats.render($('stats'), ev, ht, at);
+      if (noStats) {
+        $('topScorers').replaceChildren(el('span', 'text-muted', 'No data available for this game.'));
+        draw();
+      }
+      // the live cards name the teams like Form and Goals Profile do (e.g. "Tottenham")
+      shortNames = [ht && (ht.shortName || ht.name), at && (at.shortName || at.name)].filter(Boolean);
+      Live.setTeamNames([ht && (ht.shortName || ht.name), at && (at.shortName || at.name)]);
+      topScorers();
+      showLive();
     });
     draw();
     showLive();
+    // in-play prices fetched earlier (no API call)
+    F.getJson('/api/odds/cache/events/' + encodeURIComponent(ev.id) + '/live?bookmaker=' + F.bookmaker())
+      .then(function (o) { liveOdds = o.points || {}; draw(); }).catch(function () {});
   }).catch(function (e) { $('meta').textContent = 'Could not load: ' + e.message; });
 })();
 </script>

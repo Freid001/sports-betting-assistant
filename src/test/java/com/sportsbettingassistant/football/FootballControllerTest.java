@@ -13,6 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.env.MockEnvironment;
 import org.springframework.ui.ExtendedModelMap;
 
+import com.sportsbettingassistant.football.live.GoalApiClient;
 import com.sportsbettingassistant.odds.OddsApiClient;
 import com.sportsbettingassistant.odds.OddsCacheService;
 import com.sportsbettingassistant.support.FakeServer;
@@ -38,7 +39,7 @@ class FootballControllerTest {
                 .withProperty("football.tournaments[1]", "fifa_world_cup");
         tables = new FootballTables(store);
         odds = new OddsCacheService(new OddsApiClient("k", api.url()), store, env);
-        controller = new FootballController(odds, new TeamLogoService("", api.url(), tables));
+        controller = new FootballController(odds, new TeamLogoService(new GoalStats(new GoalApiClient("", api.url()), tables, store), tables));
     }
 
     @AfterEach

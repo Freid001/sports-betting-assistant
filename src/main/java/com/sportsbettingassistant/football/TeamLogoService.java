@@ -1,60 +1,63 @@
 package com.sportsbettingassistant.football;
 
+import java.time.LocalDate;
+import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpHeaders;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestClient;
+
+import com.sportsbettingassistant.json.Json;
 
 /**
- * Team crests from football-data.org (free key, 10 calls/minute).
- * One call per competition returns every team with a crest URL and country; they are saved in the teams
- * tables (FootballTables) and reused, so logos normally cost no calls.
+ * Team badges from GOAL API. One call per competition returns every team with its badge and country; they are
+ * saved in the teams tables (FootballTables) and reused, so badges normally cost no calls.
  */
 @Service
 public class TeamLogoService {
 
-    private final RestClient http;
-    private final String apiKey;
-    private final FootballTables tables;
+    private static final Logger log = LoggerFactory.getLogger(TeamLogoService.class);
 
-    public TeamLogoService(@Value("${football-data.key:}") String apiKey,
-                           @Value("${football-data.base-url:https://api.football-data.org/v4}") String baseUrl,
-                           FootballTables tables) {
-        this.apiKey = apiKey == null ? "" : apiKey.trim();
-        this.http = RestClient.create(baseUrl);
+    private final GoalStats goal;
+    private final FootballTables tables;
+    private final Set<String> failedToday = ConcurrentHashMap.newKeySet();   // tried once today: not on every page load
+
+    public TeamLogoService(GoalStats goal, FootballTables tables) {
+        this.goal = goal;
         this.tables = tables;
     }
 
     public boolean hasKey() {
-        return !apiKey.isEmpty();
+        return goal.configured();
     }
 
     /**
-     * Teams JSON (football-data.org format: {"teams":[{"id","name","shortName","tla","crest","area"}...]})
-     * for a tournament. Uses the saved list unless {@code refresh} is true.
-     * Empty if the tournament isn't covered or no key is set and nothing is saved.
+     * Teams JSON ({"teams":[{"id","name","shortName","tla","crest","area"}...]}) for a tournament. Uses the saved
+     * list unless {@code refresh} is true. Empty if no key is set and nothing is saved. A tournament we have no
+     * competition for gets every saved team, marked "all" so pages match names strictly.
      */
     public Optional<String> teams(String tournament, boolean refresh) {
         String code = Competitions.CODES.get(tournament);
         if (code == null) {
-            return Optional.empty();
+            List<Map<String, Object>> teams = tables.allTeams();
+            return teams.isEmpty() ? Optional.empty() : Optional.of(Json.write(Map.of("teams", teams, "all", true)));
         }
         Optional<String> saved = tables.teamsJson(code);
-        if ((!refresh && saved.isPresent()) || !hasKey()) {
+        String today = code + "|" + LocalDate.now();
+        if ((!refresh && saved.isPresent()) || !hasKey() || (!refresh && failedToday.contains(today))) {
             return saved;
         }
-        String body = http.get()
-                .uri("/competitions/{code}/teams", code)
-                .header("X-Auth-Token", apiKey)
-                .header(HttpHeaders.ACCEPT, "application/json")
-                .retrieve()
-                .body(String.class);
-        if (body == null) {
+        try {
+            goal.saveTeams(code);
+        } catch (RuntimeException e) {
+            failedToday.add(today);
+            log.warn("GOAL API teams for {} failed: {}", code, e.getMessage());
             return saved;
         }
-        tables.saveTeams(code, body);
         return tables.teamsJson(code);
     }
 }

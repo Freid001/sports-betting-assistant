@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.springframework.mock.env.MockEnvironment;
 
+import com.sportsbettingassistant.football.live.GoalApiClient;
 import com.sportsbettingassistant.odds.OddsApiClient;
 import com.sportsbettingassistant.odds.OddsCacheService;
 import com.sportsbettingassistant.support.FakeServer;
@@ -28,11 +29,22 @@ class FootballStatsControllerTest {
     FootballTables tables;
     FootballStatsController controller;
 
-    /** A free-plan head-to-head answer: the totals and the last meetings. */
-    private static final String H2H = "{\"aggregates\":{\"numberOfMatches\":6,\"totalGoals\":29,\"homeTeam\":{\"id\":65}},"
-            + "\"matches\":[{\"utcDate\":\"2026-02-11T20:00:00Z\",\"status\":\"FINISHED\",\"competition\":{\"name\":\"Premier League\"},"
-            + "\"homeTeam\":{\"name\":\"Manchester City FC\",\"shortName\":\"Man City\"},\"awayTeam\":{\"name\":\"Fulham FC\"},"
-            + "\"score\":{\"fullTime\":{\"home\":3,\"away\":1}}}]}";
+    /** GOAL API's head to head for g65 v g63: two finished meetings and one not played yet. */
+    private static final String H2H = "{\"data\":{\"matches\":["
+            + "{\"match_date\":\"2026-02-11\",\"match_time\":\"20:00\",\"match_status\":\"Finished\",\"league_name\":\"Premier League\","
+            + "\"match_hometeam_name\":\"Manchester City\",\"match_awayteam_name\":\"Fulham\",\"match_hometeam_score\":\"3\",\"match_awayteam_score\":\"1\"},"
+            + "{\"match_date\":\"2025-10-02\",\"match_time\":\"15:00\",\"match_status\":\"Finished\",\"league_name\":\"Premier League\","
+            + "\"match_hometeam_name\":\"Fulham\",\"match_awayteam_name\":\"Manchester City\",\"match_hometeam_score\":\"2\",\"match_awayteam_score\":\"2\"},"
+            + "{\"match_date\":\"2026-12-01\",\"match_status\":\"\",\"match_hometeam_score\":\"\",\"match_awayteam_score\":\"\"}]}}";
+    private static final String H2H_PATH = "/h2h/g65/g63/direct";
+
+    /** A saved fixture (id) between Man City (65) and Fulham (63), whose GOAL API ids are known. */
+    private void fixture(long id) {
+        tables.saveMatches("PL", "SCHEDULED", "{\"matches\":[{\"id\":" + id + ",\"status\":\"SCHEDULED\",\"utcDate\":\"2026-12-01T20:00:00Z\","
+                + "\"homeTeam\":{\"id\":65,\"name\":\"Manchester City\"},\"awayTeam\":{\"id\":63,\"name\":\"Fulham\"}}]}");
+        tables.saveGoalId("g65", 65);
+        tables.saveGoalId("g63", 63);
+    }
 
     @BeforeEach
     void setUp() {
@@ -40,11 +52,10 @@ class FootballStatsControllerTest {
         store = TempStore.in(tmp);
         tables = new FootballTables(store);
         MockEnvironment env = new MockEnvironment();
-        FootballDataClient client = new FootballDataClient("k", api.url(), 10);
+        GoalStats goal = new GoalStats(new GoalApiClient("k", api.url()), tables, store);
         OddsCacheService odds = new OddsCacheService(new OddsApiClient("k", api.url()), store, env);
-        StatsRefreshService refresh = new StatsRefreshService(client, odds, new TeamLogoService("", api.url(), tables),
-                tables, store, true, env);
-        controller = new FootballStatsController(client, refresh, tables);
+        StatsRefreshService refresh = new StatsRefreshService(goal, odds, tables, store, true, env);
+        controller = new FootballStatsController(goal, refresh, tables);
     }
 
     @AfterEach
@@ -69,7 +80,7 @@ class FootballStatsControllerTest {
     void savedDataIsServedWithoutCalls() {
         String arsenal = "{\"id\":57,\"name\":\"Arsenal FC\",\"shortName\":\"Arsenal\"}";
         String spurs = "{\"id\":73,\"name\":\"Tottenham Hotspur FC\",\"shortName\":\"Tottenham\"}";
-        // football-data sends confirmed-time fixtures as TIMED; they still count as scheduled
+        // fixtures with a confirmed time (TIMED) still count as scheduled
         tables.saveMatches("PL", "SCHEDULED", "{\"competition\":{\"name\":\"Premier League\",\"type\":\"LEAGUE\"},"
                 + "\"matches\":[{\"id\":9,\"status\":\"TIMED\",\"utcDate\":\"2026-11-22T16:30:00Z\",\"homeTeam\":" + arsenal
                 + ",\"awayTeam\":" + spurs + ",\"score\":{\"fullTime\":{\"home\":null,\"away\":null}}}]}");
@@ -94,27 +105,35 @@ class FootballStatsControllerTest {
 
     @Test
     void headToHeadIsFetchedOnceThenKeptForAWeek() {
-        api.answer("/matches/123/head2head", 200, H2H);
+        fixture(123);
+        api.answer(H2H_PATH, 200, H2H);
         String first = controller.headToHead(123).getBody();
-        assertThat(first).contains("\"numberOfMatches\":6").contains("\"totalGoals\":29").contains("\"home\":3,\"away\":1");
+        assertThat(first).contains("\"numberOfMatches\":2").contains("\"totalGoals\":8").contains("\"home\":3,\"away\":1")
+                .contains("\"utcDate\":\"2026-02-11T20:00:00Z\"");
         assertThat(controller.headToHead(123).getBody()).isEqualTo(first);
-        assertThat(api.count("/matches/123/head2head")).isEqualTo(1);
+        assertThat(api.count(H2H_PATH)).isEqualTo(1);
 
         store.update("UPDATE head_to_head SET fetched_at = ?", java.time.Instant.now().minus(java.time.Duration.ofDays(8)));
         controller.headToHead(123);                                   // a week later: fetched again
-        assertThat(api.count("/matches/123/head2head")).isEqualTo(2);
+        assertThat(api.count(H2H_PATH)).isEqualTo(2);
     }
 
     @Test
     void anOldHeadToHeadIsUsedIfTheApiRefuses() {
-        api.answer("/matches/5/head2head", 200, H2H);
-        api.answer("/matches/5/head2head", 429, "{\"message\":\"slow down\"}", java.util.Map.of("X-RequestCounter-Reset", "1"));
+        fixture(5);
+        api.answer(H2H_PATH, 200, H2H);
+        api.answer(H2H_PATH, 429, "{\"message\":\"slow down\"}");
         controller.headToHead(5);
         store.update("UPDATE head_to_head SET fetched_at = ?", java.time.Instant.now().minus(java.time.Duration.ofDays(8)));
         assertThat(controller.headToHead(5).getStatusCode().value()).isEqualTo(200);
+        assertThat(controller.headToHead(5).getBody()).contains("\"numberOfMatches\":2");
 
-        api.answer("/matches/6/head2head", 404, "{\"message\":\"no such match\"}");
-        assertThat(controller.headToHead(6).getStatusCode().value()).isEqualTo(404);   // nothing saved: the API's answer
+        // nothing saved and the API refuses: an error; a fixture we don't know: no meetings, no call
+        store.update("DELETE FROM head_to_head");
+        assertThat(controller.headToHead(5).getStatusCode().value()).isEqualTo(503);
+        long calls = api.requests.size();
+        assertThat(controller.headToHead(6).getBody()).contains("\"numberOfMatches\":0");
+        assertThat(api.requests).hasSize((int) calls);
     }
 
     @Test

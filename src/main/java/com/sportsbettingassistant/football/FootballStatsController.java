@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 import com.sportsbettingassistant.json.Json;
 
 /**
- * Match-page stats from football-data.org. Everything except head to head is saved by
+ * Match-page stats (from GOAL API). Everything except head to head is saved by
  * "Refresh Stats" (StatsRefreshService) in the tables; these endpoints only read them.
  * Head to head is one call the first time a match page needs it.
  */
@@ -31,12 +31,12 @@ public class FootballStatsController {
     private static final Pattern CODE = Pattern.compile("[A-Z0-9]{2,5}");
     private static final Set<String> STATUSES = Set.of("FINISHED", "SCHEDULED");
 
-    private final FootballDataClient client;
+    private final GoalStats goal;
     private final StatsRefreshService refresh;
     private final FootballTables tables;
 
-    public FootballStatsController(FootballDataClient client, StatsRefreshService refresh, FootballTables tables) {
-        this.client = client;
+    public FootballStatsController(GoalStats goal, StatsRefreshService refresh, FootballTables tables) {
+        this.goal = goal;
         this.refresh = refresh;
         this.tables = tables;
     }
@@ -79,7 +79,7 @@ public class FootballStatsController {
         return tables.matchesJson(code, status).map(Json::ok).orElseGet(FootballStatsController::notSaved);
     }
 
-    /** League table, e.g. PL, BL1, CL: worked out from the saved season results (no call). */
+    /** League table, e.g. PL, BL1, CL: GOAL API's saved table, else worked out from the saved results (no call). */
     @GetMapping("/data/competitions/{code}/standings")
     public ResponseEntity<String> standings(@PathVariable String code) {
         checkCode(code);
@@ -94,7 +94,7 @@ public class FootballStatsController {
     }
 
     /**
-     * Previous meetings of the two teams in a football-data.org fixture: 1 call the first time,
+     * Previous meetings of the two teams in a saved fixture: 1 GOAL API call the first time,
      * then the saved copy for a week (an old copy is used if the API refuses).
      */
     @GetMapping("/data/matches/{id}/head2head")
@@ -103,18 +103,23 @@ public class FootballStatsController {
         if (saved.isPresent() && saved.get().isAfter(Instant.now().minus(H2H_KEEP))) {
             return Json.ok(tables.headToHeadJson(id).orElseThrow());
         }
-        ResponseEntity<String> res = client.fetch("/matches/" + id + "/head2head", StatsRefreshService.H2H);
-        if (res.getStatusCode().is2xxSuccessful() && res.getBody() != null) {
-            tables.saveHeadToHead(id, res.getBody());
-            return Json.ok(tables.headToHeadJson(id).orElseThrow());
+        try {
+            if (goal.configured() && goal.saveHeadToHead(id)) {
+                return Json.ok(tables.headToHeadJson(id).orElseThrow());
+            }
+        } catch (RuntimeException e) {
+            if (saved.isEmpty()) {
+                return Json.message(503, e.getMessage());
+            }
         }
-        return saved.isPresent() ? Json.ok(tables.headToHeadJson(id).orElseThrow()) : res;
+        return saved.isPresent() ? Json.ok(tables.headToHeadJson(id).orElseThrow())
+                : Json.ok("{\"aggregates\":{\"numberOfMatches\":0},\"matches\":[]}");
     }
 
     /** 404 telling the page to click Refresh Stats. */
     private static ResponseEntity<String> notSaved() {
         return Json.response(HttpStatus.NOT_FOUND,
-                "{\"message\":\"Not saved yet. Click Refresh Stats on the Football page.\",\"notSaved\":true}");
+                "{\"message\":\"Refresh Stats\",\"notSaved\":true}");
     }
 
     private static void checkCode(String code) {

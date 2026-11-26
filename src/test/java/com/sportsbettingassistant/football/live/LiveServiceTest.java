@@ -150,6 +150,83 @@ class LiveServiceTest {
     }
 
     @Test
+    void stoppageTimeIsCountedFromWhenAHalfFirstSatAt90() {
+        Instant t = Instant.parse("2026-11-26T21:48:00Z");
+        Map<String, Object> s = new java.util.HashMap<>(Map.of("id", "st1", "elapsed", "90", "period", "SECOND_HALF", "live", true));
+        LiveService.stoppage(s, t);
+        assertThat(s.get("extra")).isNull();                  // just got to 90
+        s.remove("extra");
+        LiveService.stoppage(s, t.plusSeconds(4 * 60 + 20));
+        assertThat(s.get("extra")).isEqualTo("4");            // 90+4'
+        Map<String, Object> sent = new java.util.HashMap<>(Map.of("id", "st1", "elapsed", "90", "period", "SECOND_HALF",
+                "live", true, "extra", "6"));
+        LiveService.stoppage(sent, t.plusSeconds(300));
+        assertThat(sent.get("extra")).isEqualTo("6");         // GOAL API's own added minutes win
+        Map<String, Object> first = new java.util.HashMap<>(Map.of("id", "st1", "elapsed", "44", "period", "FIRST_HALF", "live", true));
+        LiveService.stoppage(first, t);
+        assertThat(first.get("extra")).isNull();
+    }
+
+    private static Map<String, Object> game(String status, String period, String elapsed, String home, String away, boolean live) {
+        Map<String, Object> f = new java.util.HashMap<>();
+        f.put("status", status); f.put("period", period); f.put("elapsed", elapsed); f.put("minute", elapsed);
+        f.put("homeScore", home); f.put("awayScore", away); f.put("live", live);
+        return f;
+    }
+
+    private static Map<String, List<Map<String, Object>>> shooters(String side, Object... nameShotsOnTargetGoals) {
+        List<Map<String, Object>> list = new java.util.ArrayList<>();
+        for (int i = 0; i < nameShotsOnTargetGoals.length; i += 4) {
+            list.add(Map.of("name", nameShotsOnTargetGoals[i], "shots", nameShotsOnTargetGoals[i + 1],
+                    "onTarget", nameShotsOnTargetGoals[i + 2], "goals", nameShotsOnTargetGoals[i + 3]));
+        }
+        Map<String, List<Map<String, Object>>> m = new java.util.HashMap<>();
+        m.put(side, list);
+        m.put("home".equals(side) ? "away" : "home", List.of());
+        return m;
+    }
+
+    private static Map<String, Object> cards(int homeYellow, int awayYellow, int homeRed, int awayRed) {
+        return Map.of("rows", List.of(
+                Map.of("label", "Yellow cards", "home", String.valueOf(homeYellow), "away", String.valueOf(awayYellow)),
+                Map.of("label", "Red cards", "home", String.valueOf(homeRed), "away", String.valueOf(awayRed))));
+    }
+
+    @Test
+    void theTimelineFindsKickOffGoalsWithScorersCardsShotsAndFullTime() {
+        List<Map<String, Object>> sofar = new java.util.ArrayList<>();
+        var ko = LiveService.events(game("SCHEDULED", "NOT_STARTED", null, "0", "0", false),
+                game("LIVE", "FIRST_HALF", "1", "0", "0", true), null, cards(0, 0, 0, 0), null, shooters("home"), sofar);
+        assertThat(ko).extracting(e -> e.get("kind")).containsExactly("kickoff");
+
+        var goal = LiveService.events(game("LIVE", "FIRST_HALF", "22", "0", "0", true),
+                game("LIVE", "FIRST_HALF", "23", "1", "0", true), cards(0, 0, 0, 0), cards(0, 1, 0, 0),
+                shooters("home", "Kane", 2, 1, 0, "Son", 1, 0, 0), shooters("home", "Kane", 3, 2, 1, "Son", 2, 1, 0), sofar);
+        assertThat(goal).extracting(e -> e.get("kind")).containsExactly("goal", "yellow", "shot");
+        assertThat(goal.get(0)).containsEntry("player", "Kane").containsEntry("side", "home")
+                .containsEntry("score", "1–0").containsEntry("minute", "23'");
+        assertThat(goal.get(1)).containsEntry("side", "away");
+        assertThat(goal.get(2)).containsEntry("player", "Son");   // Kane's shot on target was his goal: not twice
+
+        sofar.addAll(goal);
+        var noScorer = LiveService.events(game("LIVE", "SECOND_HALF", "60", "1", "0", true),
+                game("LIVE", "SECOND_HALF", "61", "2", "0", true), cards(0, 1, 0, 0), cards(0, 1, 0, 0),
+                shooters("home", "Kane", 3, 2, 1), shooters("home", "Kane", 3, 2, 1), sofar);
+        assertThat(noScorer.get(0)).containsEntry("kind", "goal").containsEntry("player", null);
+        sofar.addAll(noScorer);
+        var late = LiveService.events(game("LIVE", "SECOND_HALF", "61", "2", "0", true),
+                game("LIVE", "SECOND_HALF", "62", "2", "0", true), cards(0, 1, 0, 0), cards(0, 1, 0, 0),
+                shooters("home", "Kane", 3, 2, 1), shooters("home", "Kane", 4, 3, 2), sofar);
+        assertThat(late).isEmpty();   // the goal at 61' gets Kane filled in, not a new event
+        assertThat(sofar.get(sofar.size() - 1)).containsEntry("player", "Kane");
+
+        var ft = LiveService.events(game("LIVE", "SECOND_HALF", "90", "2", "0", true),
+                game("FINISHED", "FINISHED", null, "2", "0", true), cards(0, 1, 0, 0), cards(0, 1, 0, 0), null, null, sofar);
+        assertThat(ft).extracting(e -> e.get("kind")).containsExactly("ft");
+        assertThat(ft.get(0)).containsEntry("minute", "FT").containsEntry("score", "2–0");
+    }
+
+    @Test
     void noXgWithoutShotSplit() {
         assertThat(LiveService.xg(Map.of("Shots Total", new String[] {"5", "3"}))).isNull();
     }
@@ -464,4 +541,234 @@ class LiveServiceTest {
         assertThat(live.state().get("watching")).isEqualTo(false);
     }
 
+
+    // ---------------------------------------------------------------- replay a game once (snapshots)
+
+    /** Spurs v Ipswich as GOAL API sent it after full time: 1-0 at half time, 2-0 at the end. */
+    private static Map<String, Object> finishedSpurs(String id, Instant kickoff) {
+        Map<String, Object> f = new LinkedHashMap<>(fixture(id, kickoff, "FINISHED", false));
+        f.put("homeTeamScore", "2");
+        f.put("awayTeamScore", "0");
+        f.put("homeTeamHalftimeScore", "1");
+        f.put("awayTeamHalftimeScore", "0");
+        f.put("matchMinute", "Finished");
+        f.put("matchPeriod", "FINISHED");
+        return f;
+    }
+
+    private static Map<String, Object> statsWithHalves() {
+        Map<String, Object> d = new LinkedHashMap<>();
+        d.put("match", Map.of(
+                "fullTime", List.of(row("Shots On Goal", "9", "3"), row("Shots Inside Box", "16", "5"),
+                        row("Shots Outside Box", "2", "6"), row("Dangerous Attacks", "59", "41"), row("Corners", "8", "6")),
+                "firstHalf", List.of(row("Shots On Goal", "7", "2"), row("Shots Inside Box", "11", "2"),
+                        row("Shots Outside Box", "2", "2"), row("Dangerous Attacks", "41", "16"), row("Corners", "5", "2")),
+                "secondHalf", List.of()));
+        d.put("players", Map.of("home", List.of(player("Solanke", "4", "2", "1")), "away", List.of()));
+        return Map.of("data", d);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void replayFindsAPastGameByLooseNamesAndSavesHalfTimeAndFullTimeSnapshots() {
+        FakeApi api = new FakeApi();
+        Instant ko = Instant.now().minus(Duration.ofDays(4));
+        String date = LocalDate.ofInstant(ko, ZoneOffset.UTC).toString();
+        Map<String, Object> other = new LinkedHashMap<>(finishedSpurs("other", ko));
+        other.put("homeTeamName", "Chelsea");
+        other.put("awayTeamName", "Leeds");
+        api.answers.put("/fixtures/date/" + date, data(other, finishedSpurs("g1", ko)));
+        api.answers.put("/fixtures/g1/statistics", statsWithHalves());
+        LiveService live = service(api, 20);
+
+        Map<String, Object> m = live.replay("epl", date, ko.toString(), "Tottenham Hotspur", "Ipswich Town");
+
+        assertThat(api.calls).containsExactly("/fixtures/date/" + date, "/fixtures/g1/statistics");
+        assertThat(((Map<String, Object>) m.get("fixture")).get("id")).isEqualTo("g1");
+        assertThat(m.get("tracked")).isEqualTo(true);
+        List<Map<String, Object>> snaps = (List<Map<String, Object>>) m.get("snapshots");
+        assertThat(snaps).extracting(x -> x.get("period")).containsExactly("HT", "FT");
+        assertThat(snaps.get(0).get("homeScore")).isEqualTo("1");
+        assertThat(snaps.get(1).get("homeScore")).isEqualTo("2");
+        List<Double> htXg = (List<Double>) snaps.get(0).get("xg");
+        assertThat(htXg.get(0)).isCloseTo(11 * 0.12 + 2 * 0.035, within(0.01));
+        assertThat(((Map<String, Object>) m.get("stats")).get("final")).isEqualTo(true);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void replayedGamesAreKeptAfterARestartAndNotForgottenAfterADay() {
+        FakeApi api = new FakeApi();
+        Instant ko = Instant.now().minus(Duration.ofDays(4));
+        String date = LocalDate.ofInstant(ko, ZoneOffset.UTC).toString();
+        api.answers.put("/fixtures/date/" + date, data(finishedSpurs("g1", ko)));
+        api.answers.put("/fixtures/g1/statistics", statsWithHalves());
+        service(api, 20).replay("epl", date, null, "Tottenham", "Ipswich");
+
+        LiveService restarted = service(new FakeApi(), 20);
+        List<Map<String, Object>> fixtures = (List<Map<String, Object>>) restarted.state().get("fixtures");
+        assertThat(fixtures).extracting(x -> x.get("id")).containsExactly("g1");
+        assertThat(fixtures.get(0).get("saved")).isEqualTo(true);
+        List<Map<String, Object>> snaps = (List<Map<String, Object>>) restarted.match("g1").get("snapshots");
+        assertThat(snaps).extracting(x -> x.get("period")).containsExactly("HT", "FT");
+        assertThat((List<Map<String, Object>>) snaps.get(1).get("rows")).isNotEmpty();
+    }
+
+    @Test
+    void replayOfAnUnknownGameSaysSo() {
+        FakeApi api = new FakeApi();
+        LiveService live = service(api, 20);
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> live.replay("epl", "2026-11-21", null, "Arsenal", "Chelsea"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("Couldn't find Arsenal v Chelsea");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> live.replay("nope", "2026-11-21", null, "A", "B"))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("No GOAL API league");
+    }
+
+    @Test
+    void teamNamesMatchLoosely() {
+        assertThat(LiveService.similar("Tottenham Hotspur", "Tottenham")).isEqualTo(2);
+        assertThat(LiveService.similar("AFC Bournemouth", "Bournemouth")).isEqualTo(3);
+        assertThat(LiveService.similar("Manchester United", "Manchester City")).isEqualTo(1);
+        assertThat(LiveService.similar("Ipswich", "Leeds")).isEqualTo(0);
+    }
+
+    @Test
+    void goalApiAndOddsApiNamesForTheSameTeamsMatch() {
+        // GOAL API name, Odds API name: both teams together must score more than 3
+        assertThat(LiveService.similar("Sporting CP", "Sporting Lisbon") + LiveService.similar("Manchester Utd", "Manchester United")).isGreaterThan(3);
+        assertThat(LiveService.similar("PSG", "Paris Saint Germain") + LiveService.similar("AS Roma", "AS Roma")).isGreaterThan(3);
+        assertThat(LiveService.similar("Atl. Madrid", "Atl\u00e9tico Madrid")).isEqualTo(3);
+        assertThat(LiveService.similar("Atl. Madrid", "Atlu00e9tico Madrid")).isEqualTo(3);     // a name saved before the fix
+        assertThat(LiveService.similar("Bodo/Glimt", "Bod\u00f8/Glimt")).isEqualTo(3);
+        assertThat(LiveService.similar("Bodo/Glimt", "Bodu00f8/Glimt")).isEqualTo(3);
+        assertThat(LiveService.similar("Viking", "Viking FK")).isEqualTo(3);
+        assertThat(LiveService.similar("Club Brugge KV", "Club Brugge")).isEqualTo(3);
+    }
+
+    // ---------------------------------------------------------------- following from the match page
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aGameFollowedDaysAheadIsTickedOnMatchDayWithOneCall() {
+        FakeApi api = new FakeApi();
+        Instant ko = Instant.now().plus(Duration.ofDays(3));
+        String ukDate = LocalDate.ofInstant(ko, java.time.ZoneId.of("Europe/London")).toString();
+        api.answers.put("/fixtures/date/" + ukDate, data(fixture("g1", ko, "NOT_STARTED", false)));
+        LiveService live = service(api, 20);
+
+        Map<String, Object> st = live.follow("epl", ko.toString(), "Tottenham Hotspur", "Ipswich Town");
+        assertThat(api.calls).isEmpty();                                  // not match day yet: no calls
+        assertThat((List<Object>) st.get("following")).hasSize(1);
+        assertThat((List<Object>) st.get("tracked")).isEmpty();
+        live.follow("epl", ko.toString(), "Tottenham Hotspur", "Ipswich Town");   // twice: still one
+        assertThat((List<Object>) live.state().get("following")).hasSize(1);
+
+        LiveService restarted = service(api, 20);                         // kept after a restart
+        restarted.resolveFollowing(ko.minus(Duration.ofHours(1)));        // match day
+        assertThat(api.calls).containsExactly("/fixtures/date/" + ukDate);
+        assertThat((List<Object>) restarted.state().get("tracked")).containsExactly("g1");
+        assertThat((List<Object>) restarted.state().get("following")).isEmpty();
+        restarted.resolveFollowing(ko.minus(Duration.ofMinutes(30)));
+        assertThat(api.calls).hasSize(1);
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void unfollowForgetsAWaitingGameAndUnticksAListedOne() {
+        FakeApi api = new FakeApi();
+        Instant ko = Instant.now().plus(Duration.ofDays(3));
+        LiveService live = service(api, 20);
+        live.follow("epl", ko.toString(), "Tottenham", "Ipswich");
+        live.unfollow("epl", ko.toString(), "Tottenham", "Ipswich");
+        assertThat((List<Object>) live.state().get("following")).isEmpty();
+
+        Instant soon = Instant.now().plus(Duration.ofHours(1));
+        api.answers.put("/leagues/" + LEAGUE + "/fixtures", data(fixture("g2", soon, "NOT_STARTED", false)));
+        live.loadFixtures(true);
+        live.follow("epl", soon.toString(), "Tottenham", "Ipswich");      // already listed: ticked straight away
+        assertThat((List<Object>) live.state().get("tracked")).containsExactly("g2");
+        live.unfollow("epl", soon.toString(), "Tottenham", "Ipswich");
+        assertThat((List<Object>) live.state().get("tracked")).isEmpty();
+    }
+
+    @Test
+    void timelinePointsFromTheMinute() {
+        Map<String, Object> f = new LinkedHashMap<>(Map.of("live", true, "status", "LIVE"));
+        f.put("elapsed", "5");
+        assertThat(LiveService.pointFor(f)).isNull();
+        f.put("elapsed", "12");
+        assertThat(LiveService.pointFor(f)).isEqualTo("10");
+        f.put("elapsed", "30");
+        assertThat(LiveService.pointFor(f)).isEqualTo("25");
+        f.put("elapsed", "50");
+        assertThat(LiveService.pointFor(f)).isNull();                     // HT comes from the first-half stats
+        f.put("elapsed", "65");
+        assertThat(LiveService.pointFor(f)).isEqualTo("60");
+        f.put("elapsed", "88");
+        assertThat(LiveService.pointFor(f)).isEqualTo("80");
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void aLiveGameSavesTheTimelinePointItHasReachedOnce() throws InterruptedException {
+        FakeApi api = new FakeApi();
+        Map<String, Object> f = fixture("g1", Instant.now().minus(Duration.ofMinutes(20)), "LIVE", true);   // 20'
+        api.answers.put("/leagues/" + LEAGUE + "/fixtures", data(f));
+        api.answers.put("/fixtures/date/" + f.get("matchDate"), data(f));
+        api.answers.put("/fixtures/g1/statistics", statsBody());
+        LiveService live = service(api, 20);
+        live.loadFixtures(true);
+        live.track(List.of("g1"));
+        waitFor(() -> api.callsTo("/statistics") == 1);
+        waitFor(() -> !((List<?>) live.match("g1").get("snapshots")).isEmpty());
+
+        List<Map<String, Object>> snaps = (List<Map<String, Object>>) live.match("g1").get("snapshots");
+        assertThat(snaps).extracting(x -> x.get("period")).containsExactly("10");
+        assertThat(snaps.get(0).get("homeScore")).isEqualTo("1");
+        assertThat((List<Object>) snaps.get(0).get("rows")).isNotEmpty();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void postMatchLoadsEveryFinishedGameWithOneListCallPerDayAndSkipsOnesAlreadyLoaded() {
+        FakeApi api = new FakeApi();
+        Instant ko = Instant.now().minus(Duration.ofDays(2));
+        String date = LocalDate.ofInstant(ko, java.time.ZoneId.of("Europe/London")).toString();
+        Map<String, Object> other = new LinkedHashMap<>(finishedSpurs("g2", ko));
+        other.put("homeTeamName", "Chelsea");
+        other.put("awayTeamName", "Leeds");
+        api.answers.put("/fixtures/date/" + date, data(finishedSpurs("g1", ko), other));
+        api.answers.put("/fixtures/g1/statistics", statsWithHalves());
+        api.answers.put("/fixtures/g2/statistics", statsWithHalves());
+        LiveService live = service(api, 20);
+        List<Map<String, Object>> games = List.of(
+                Map.of("tournament", "epl", "kickoff", ko.toString(), "home", "Tottenham Hotspur", "away", "Ipswich Town"),
+                Map.of("tournament", "epl", "kickoff", ko.toString(), "home", "Chelsea", "away", "Leeds United"),
+                Map.of("tournament", "epl", "kickoff", ko.toString(), "home", "Arsenal", "away", "Everton"),
+                Map.of("tournament", "nowhere", "kickoff", ko.toString(), "home", "A", "away", "B"));
+
+        Map<String, Object> out = live.postMatch(games);
+
+        assertThat(api.callsTo("/fixtures/date/")).isEqualTo(1);       // one list call for the day
+        assertThat(api.callsTo("/statistics")).isEqualTo(2);           // one stats call per game found
+        assertThat(out).containsEntry("loaded", 2).containsEntry("calls", 3);
+        assertThat((List<String>) out.get("missing")).containsExactly("Arsenal v Everton", "A v B");
+        assertThat((List<Map<String, Object>>) live.match("g1").get("snapshots")).extracting(x -> x.get("period"))
+                .containsExactly("HT", "FT");
+        assertThat((List<Object>) live.state().get("tracked")).isEmpty();   // loaded, not followed
+
+        Map<String, Object> again = live.postMatch(games.subList(0, 1));
+        assertThat(again).containsEntry("loaded", 0).containsEntry("skipped", 1);
+        assertThat(api.callsTo("/statistics")).isEqualTo(2);           // no second stats call
+    }
+
+    @org.junit.jupiter.api.Test
+    void aGameBeingPlayedIsLiveEvenIfMatchLiveStillSaysNo() {
+        java.util.Map<String, Object> kickedOff = new java.util.HashMap<>(java.util.Map.of(
+                "matchStatus", "LIVE", "matchLive", "0", "matchPeriod", "FIRST_HALF", "matchMinute", "1"));
+        assertThat(LiveService.summary(kickedOff, "england_league1").get("live")).isEqualTo(true);
+        assertThat(LiveService.playing(java.util.Map.of("matchStatus", "FINISHED", "matchPeriod", "FINISHED"))).isFalse();
+        assertThat(LiveService.playing(java.util.Map.of("matchStatus", "SCHEDULED", "matchPeriod", "null"))).isFalse();
+        assertThat(LiveService.playing(java.util.Map.of("matchStatus", "HALF_TIME", "matchPeriod", "HALF_TIME"))).isTrue();
+    }
 }

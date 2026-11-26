@@ -14,17 +14,26 @@
             <input class="form-check-input" type="checkbox" id="filterFav">
             <label class="form-check-label" for="filterFav">★ Favourites</label>
         </div>
+        <!-- Which matches to list: before kick-off, being played, finished (remembered in this browser) -->
         <div class="form-check mb-0">
-            <input class="form-check-input" type="checkbox" id="filterStarted" checked>
-            <label class="form-check-label" for="filterStarted">Hide started matches</label>
+            <input class="form-check-input" type="checkbox" id="filterPre" checked>
+            <label class="form-check-label" for="filterPre">Pre-Match</label>
+        </div>
+        <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="filterLive" checked>
+            <label class="form-check-label" for="filterLive">Live</label>
+        </div>
+        <div class="form-check mb-0">
+            <input class="form-check-input" type="checkbox" id="filterPost">
+            <label class="form-check-label" for="filterPost">Post-Match</label>
         </div>
         <!-- Buttons, right-aligned on the filter row -->
         <div class="d-flex flex-wrap gap-2 ms-auto">
-            <button type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:.8rem" data-bs-toggle="modal" data-bs-target="#guideModal">Guide</button>
-            <button id="favBtn" type="button" class="btn btn-outline-secondary btn-sm py-0 px-2" style="font-size:.8rem">Favourites</button>
-            <button id="refresh" class="btn btn-theme btn-sm py-0 px-2" style="font-size:.8rem">Refresh Odds</button>
-            <button id="refreshStats" class="btn btn-theme btn-sm py-0 px-2" style="font-size:.8rem">Refresh Stats</button>
-            <button id="liveBtn" class="btn btn-theme btn-sm py-0 px-2" style="font-size:.8rem">Live Stats</button>
+            <button type="button" class="btn btn-outline-theme btn-sm btn-bar" data-bs-toggle="modal" data-bs-target="#guideModal">Guide</button>
+            <button id="favBtn" type="button" class="btn btn-outline-theme btn-sm btn-bar">Favourites</button>
+            <button id="refresh" class="btn btn-theme btn-sm btn-bar">Refresh Odds</button>
+            <button id="refreshStats" class="btn btn-theme btn-sm btn-bar">Refresh Stats</button>
+            <button id="liveBtn" class="btn btn-theme btn-sm btn-bar">Live Stats</button>
         </div>
     </div>
 
@@ -54,13 +63,10 @@
     <div class="modal fade" id="favModal" tabindex="-1" aria-label="Favourites" aria-hidden="true"></div>
     <div class="modal fade" id="liveModal" tabindex="-1" aria-label="Live Stats" aria-hidden="true"></div>
     <div id="list"></div>
-    <p class="small text-muted mt-3">Prices are <span id="bookName">Sky Bet</span> odds from the last refresh (pick the bookmaker in Refresh Odds). Chance = the
-        bookmaker's implied chance with its margin removed (hover a badge to see it and its band). Viewing this page is free; only Refresh uses API credits.</p>
 </div>
 
 <script src="/js/football-data.js"></script>
-<script src="/js/value-check.js"></script>
-<script src="/js/match-stats.js"></script>
+
 <script src="/js/live.js"></script>
 <script src="/js/favourites.js"></script>
 <script th:inline="none">
@@ -71,48 +77,8 @@
   var lastOddsAt = null; // most recent odds refresh, for the Refresh Odds pop-up
   var lastStats = null;  // latest Refresh Stats status
   var teamsByComp = {};
-  var valueByMatch = {};   // match id -> analysis (or 'none'), filled in the background
   var favs = [];           // favourite teams (saved on the server)
   var liveState = null;    // Live Stats (GOAL API): ticked games, scores and minutes as of the last refresh
-
-  /**
-   * Our pick: one decision per match, only among reasonably likely outcomes (35%+: Toss Up, Likely or Very Likely):
-   * a value price first, otherwise a fair price (an optional small bet in the framework).
-   * Otherwise "No Value": poor prices, and long shots that lose too often even when the price looks generous.
-   */
-  var MIN_PICK_CHANCE = 0.35;
-  function pickCell(m) {
-    var a = valueByMatch[m.id];
-    if (a === undefined) return el('span', 'text-muted', '…');
-    if (a === 'none' || !a.rows.length) return el('span', 'text-muted', '–');
-    // 1st choice: value and likely. 2nd: fair price and likely (framework: optional small bet).
-    var likely = a.rows.filter(function (r) { return r.ours >= MIN_PICK_CHANCE; })
-      .sort(function (x, y) { return y.ret - x.ret; });
-    var pick = likely.find(function (r) { return r.ret >= 0.05; }) || likely.find(function (r) { return r.ret > -0.05; });
-    if (pick) {
-      var cell = ValueCheck.pair(pick, true);
-      if (pick.name !== 'Draw') cell.prepend(F.logo(teamsByComp[m.compKey] || [], pick.name, 18));   // club crest
-      return cell;
-    }
-    var none = el('span', 'badge rounded-pill border text-secondary fw-normal', 'No Value');
-    none.setAttribute('data-bs-toggle', 'tooltip');
-    none.setAttribute('data-bs-title', 'No outcome is both likely (35%+) and at least a fair price.');
-    none.style.cursor = 'help';
-    return none;
-  }
-
-  /** Works out the value check for every listed match that hasn't been done yet, then redraws. */
-  function loadValues() {
-    var todo = matches.filter(function (m) { return valueByMatch[m.id] === undefined && teamsByComp[m.compKey]; });
-    Promise.all(todo.map(function (m) {
-      var teams = teamsByComp[m.compKey];
-      var ht = F.findTeam(teams, m.home_team), at = F.findTeam(teams, m.away_team);
-      if (!ht || !at) { valueByMatch[m.id] = 'none'; return null; }
-      return MatchStats.loadViews(ht, at).then(function (v) {
-        valueByMatch[m.id] = ValueCheck.analyse(m, v.homeVenue, v.awayVenue, F.stake() || ValueCheck.DEFAULT_STAKE) || 'none';
-      }).catch(function () { valueByMatch[m.id] = 'none'; });
-    })).then(render);
-  }
 
   var el = F.el, ago = F.ago, title = F.title;   // shared helpers from football-data.js
   try { localStorage.removeItem('football-shortlist'); } catch (e) { /* old star shortlist, replaced by Favourites */ }
@@ -128,10 +94,10 @@
       ts.forEach(function (t) { var o = el('option', null, title(t.name)); o.value = title(t.name); sel.appendChild(o); });
       sel.value = keep;
       render();
-      // Crests (one saved football-data.org list per competition), then redraw with logos.
+      // Badges (one saved GOAL API list per competition), then redraw with logos.
       Promise.all(cached.map(function (t) {
         return F.loadTeams(t.name).then(function (teams) { teamsByComp[t.name] = teams; });
-      })).then(render).then(loadValues);
+      })).then(render);
     }).catch(function (e) { notify('Couldn\'t load matches: ' + e.message, 'danger'); });
   }
 
@@ -140,13 +106,12 @@
   function market(bk, key) { return bk && bk.markets.find(function (m) { return m.key === key; }); }
 
   function render() {
-    $('bookName').textContent = F.bookmakerName();
     var list = $('list');
     list.innerHTML = '';
-    var comp = $('filterComp').value, hideStarted = $('filterStarted').checked, onlyFavs = $('filterFav').checked;
+    var comp = $('filterComp').value, onlyFavs = $('filterFav').checked;
+    var phases = { pre: $('filterPre').checked, live: $('filterLive').checked, post: $('filterPost').checked };
     var shown = matches.filter(function (m) {
-      return (!comp || m.comp === comp) && (!onlyFavs || isFav(m)) &&
-             (!hideStarted || new Date(m.commence_time) > new Date() || followedNow(m));
+      return (!comp || m.comp === comp) && (!onlyFavs || isFav(m)) && phases[phaseOf(m)];
     });
     if (!shown.length) {
       list.appendChild(el('div', 'alert alert-light border', matches.length ? (onlyFavs && !favs.length ? 'No favourites yet: click Favourites to pick your teams.' : 'No matches match these filters.') : 'No matches cached yet. Click Refresh.'));
@@ -162,10 +127,16 @@
         var card = el('div', 'card shadow-sm mb-3');
         card.appendChild(el('div', 'card-header py-2 fw-semibold', d));
         var wrap = el('div', 'table-responsive');
-        var table = el('table', 'table table-sm table-hover align-middle mb-0 small');
+        // Same column widths in every day's card, so the columns line up from one day to the next
+        var table = el('table', 'table table-sm table-hover align-middle mb-0 small match-list');
+        var cols = el('colgroup');
+        ['1.5rem', '6.5rem', 'auto', '5.5rem', '5.5rem', '5.5rem'].forEach(function (w) {
+          var c = el('col'); if (w !== 'auto') c.style.width = w; cols.appendChild(c);
+        });
+        table.appendChild(cols);
         var head = el('tr', 'text-muted');
-        ['', 'Time', 'Competition', 'Match', 'Home', 'Draw', 'Away', ''].forEach(function (h, i) {
-          head.appendChild(el('th', i >= 4 && i <= 6 ? 'text-center' : i === 7 ? 'text-end' : null, h));
+        ['', 'Time', 'Match', 'Home', 'Draw', 'Away'].forEach(function (h, i) {
+          head.appendChild(el('th', i >= 3 ? 'text-center' : null, h));
         });
         var thead = el('thead'); thead.appendChild(head); table.appendChild(thead);
         tbody = el('tbody'); table.appendChild(tbody);
@@ -181,12 +152,12 @@
       td0.title = fav ? 'Favourite team playing' : 'No favourite team playing (set them in Favourites)';
       tr.appendChild(td0);
       var timeCell = el('td', 'text-nowrap', start.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
-      // Ticked in Live Stats: LIVE 10' 1–0 (minute as of the last refresh) or FT 2–1; otherwise just "Started"
+      // Ticked in Live Stats: LIVE 10' 1–0 (minute as of the last refresh) or FT 2–1; otherwise from the clock: 10', HT, FT
       var lb = Live.badge(Live.findFor(liveState, m));
+      var clock = F.clockStatus(m.commence_time);
       if (lb) timeCell.appendChild(lb);
-      else if (start < new Date()) timeCell.appendChild(el('span', 'badge text-bg-light border text-secondary fw-normal ms-1', 'Started'));
+      else if (clock) { var cb = F.statusBadge(clock); cb.classList.add('ms-1'); timeCell.appendChild(cb); }   // same colours as live ones
       tr.appendChild(timeCell);
-      tr.appendChild(el('td', null, m.comp));
       var teams = teamsByComp[m.compKey] || [];
       var matchCell = el('td', 'fw-semibold');
       var line = el('span', 'd-inline-flex align-items-center gap-1');
@@ -196,13 +167,14 @@
       line.appendChild(F.logo(teams, m.away_team, 20));
       line.appendChild(el('span', null, m.away_team));
       matchCell.appendChild(line);
+      // the competition under the match, as on the Bets page
+      matchCell.appendChild(el('div', 'text-muted fw-normal', m.comp));
       tr.appendChild(matchCell);
       var chances = (ph && pd && pa) ? F.fairChances([ph, pd, pa]).chances : [null, null, null];
       [ph, pd, pa].forEach(function (p, i) {
         var td = el('td', 'text-center'); td.appendChild(F.oddsBadge(p, chances[i])); tr.appendChild(td);
       });
       // Value check: best-value outcome + confidence, worked out from saved results (same as the match page)
-      var tdPick = el('td', 'text-nowrap text-end'); tdPick.appendChild(pickCell(m)); tr.appendChild(tdPick);
       // Click anywhere on the row to open the match page
       var href = '/football/match/' + encodeURIComponent(m.id);
       tr.style.cursor = 'pointer';
@@ -214,7 +186,22 @@
     });
   }
 
-  ['filterComp', 'filterStarted', 'filterFav'].forEach(function (id) { $(id).addEventListener('change', render); });
+  // Pre-Match / Live / Post-Match ticks are remembered in this browser
+  var PHASE_BOXES = ['filterPre', 'filterLive', 'filterPost'];
+  try {
+    var savedPhases = JSON.parse(localStorage.getItem('listPhases') || 'null');
+    if (savedPhases) PHASE_BOXES.forEach(function (id) { if (id in savedPhases) $(id).checked = !!savedPhases[id]; });
+  } catch (e) { /* defaults: Pre-Match and Live */ }
+  ['filterComp', 'filterFav'].concat(PHASE_BOXES).forEach(function (id) {
+    $(id).addEventListener('change', function () {
+      try {
+        var keep = {};
+        PHASE_BOXES.forEach(function (b) { keep[b] = $(b).checked; });
+        localStorage.setItem('listPhases', JSON.stringify(keep));
+      } catch (e) { /* not remembered */ }
+      render();
+    });
+  });
 
   /** Spinner on a button while it works: busy(btn, true) / busy(btn, false). */
   function busy(btn, on) {
@@ -245,7 +232,7 @@
     status().then(function (info) { F.infoBox(sb, info); }).catch(function () { sb.replaceChildren(el('span', 'text-muted', 'Couldn\'t check the current status.')); });
     var body = $('confirmBody');
     body.replaceChildren();
-    if (lead) body.appendChild(el('div', 'fw-semibold small text-center mb-1', lead));   // optional heading
+    if (lead) body.appendChild(el('div', 'section-label mb-1', lead));   // optional heading
     if (points.length) {
       var ul = el('ul', 'mb-0 text-muted small ps-3');
       points.forEach(function (p) { ul.appendChild(el('li', 'mb-1', p)); });
@@ -262,7 +249,7 @@
     var all = allMarketsOption();
     confirmRefresh('Refresh Odds',
       null, [],
-      function () { refreshOdds(btn, all.picked()); },
+      function () { if (all.picked()) refreshOdds(btn, all.picked()); },
       function () {
         return F.getJson('/api/odds/cache/quota').catch(function () { return {}; })
           .then(function (q) {
@@ -278,33 +265,16 @@
             };
           });
       });
-    var body = $('confirmBody');
-    body.append(all.bookBox, all.resultBox, all.box);   // Bookmaker, Match Result, Extra Markets
+    $('confirmBody').append(all.box);   // what Settings says to fetch, and its cost
+    $('confirmOk').disabled = !all.picked();   // until the settings have loaded
   });
 
-  /**
-   * Friendly names for the extra markets, in the order the tick boxes are listed. Which ones a bookmaker offers
-   * comes from odds-api.bookmakers in application.yaml; unknown keys are shown as they are, at the end.
-   */
-  var EXTRA_MARKET_NAMES = {
-    alternate_totals: 'Over/Under Goals (all lines)', btts: 'Both Teams to Score', double_chance: 'Double Chance',
-    draw_no_bet: 'Draw No Bet', alternate_team_totals: 'Team Goals', correct_score: 'Correct Score',
-    h2h_3_way_h1: 'First-Half Result', halftime_fulltime: 'Half-Time / Full-Time',
-    alternate_totals_corners: 'Over/Under Corners', alternate_totals_cards: 'Over/Under Cards',
-    player_shots_on_target_alternate: 'Player Shots on Target (all lines)', player_shots_on_target: 'Player Shots on Target',
-    player_goal_scorer_anytime: 'Anytime Goalscorer', player_first_goal_scorer: 'First Goalscorer',
-    player_to_score_or_assist: 'To Score or Assist'
-  };
+  var EXTRA_MARKET_NAMES = F.EXTRA_MARKET_NAMES;   // shared with Settings
 
   /**
-   * The choices in the Refresh Odds pop-up:
-   *  - bookBox: which bookmaker (Sky Bet, Betway, Paddy Power, William Hill: odds-api.bookmakers), for the match
-   *    result and the extra markets. Also the
-   *    bookmaker whose odds the pages show from then on.
-   *  - box: which matches get extra markets (Off / Favourites' matches / All matches), then one tick box per
-   *    market. Markets the picked bookmaker doesn't offer are greyed out. Each ticked market costs up to
-   *    1 credit per match chosen (nothing where the bookmaker doesn't offer it for that match).
-   * Choices are remembered in this browser.
+   * The Refresh Odds pop-up: what Settings says to fetch (bookmaker, match result, which extra markets for which
+   * matches) and the most it can cost, with a link to change it in Settings. Extra markets cost up to 1 credit per
+   * market per match (nothing where the bookmaker doesn't offer it); markets the bookmaker doesn't offer are skipped.
    */
   function allMarketsOption() {
     var soon = matches.filter(function (m) {
@@ -312,127 +282,45 @@
       return t > Date.now() && t < Date.now() + 30 * 86400000;
     });
     var scopes = { off: [], favs: soon.filter(isFav), all: soon };
-    var scope = 'off', saved = [], book = F.bookmaker(), offered = {};
-    try {
-      scope = localStorage.getItem('extraMarketsScope') || 'off';
-      saved = JSON.parse(localStorage.getItem('extraMarkets') || '[]');
-    } catch (e) { /* defaults */ }
-    if (!scopes[scope]) scope = 'off';
-
-    /** A row of burgundy toggle buttons; onPick(value) when one is clicked. */
-    function toggle(name, options, current, onPick) {
-      var group = el('div', 'btn-group btn-group-sm w-100 mb-2');
-      group.setAttribute('role', 'group');
-      options.forEach(function (o) {
-        var input = el('input', 'btn-check');
-        input.type = 'radio'; input.name = name; input.id = name + '-' + o[0]; input.value = o[0];
-        input.checked = o[0] === current;
-        input.addEventListener('change', function () { onPick(o[0]); });
-        var label = el('label', 'btn btn-outline-theme', o[1]);
-        label.htmlFor = input.id;
-        group.append(input, label);
-      });
-      return group;
-    }
-
-    var bookBox = el('div');
-    bookBox.appendChild(el('div', 'fw-semibold small text-center mb-1', 'Bookmaker'));
-    var bookGroup = el('div', 'small text-muted text-center', 'Checking…');
-    bookBox.appendChild(bookGroup);
-
-    // Match result for every match: one request per competition with fixtures, 1 credit per market asked for
-    // (h2h + totals = 2). Competitions with no fixtures are skipped for free.
+    // Match result: one request per competition with fixtures, 2 credits each (h2h + totals)
     var comps = soon.reduce(function (set, m) { if (set.indexOf(m.compKey) < 0) set.push(m.compKey); return set; }, []).length;
-    var resultCredits = 2 * comps, resultOn = true;
-    try { resultOn = localStorage.getItem('matchResult') !== 'off'; } catch (e) { /* default on */ }
-    var resultBox = el('div', 'mt-3');
-    resultBox.append(el('div', 'fw-semibold small text-center mb-1', 'Match Result (all matches)'));
-    var resultRow = el('div', 'd-flex align-items-center small');
-    var resultCb = el('input', 'form-check-input mt-0 me-2');
-    resultCb.type = 'checkbox'; resultCb.id = 'matchResult'; resultCb.checked = resultOn;
-    resultCb.addEventListener('change', function () { update(); });
-    var resultLabel = el('label', 'form-check-label', 'Home / Draw / Away');
-    resultLabel.htmlFor = 'matchResult';
-    resultRow.append(resultCb, resultLabel, el('span', 'text-muted ms-auto ps-3',
-      'up to ' + resultCredits + ' credits (' + comps + ' competition' + (comps === 1 ? '' : 's') + ')'));
-    resultBox.appendChild(resultRow);
+    var resultCredits = 2 * comps, book = F.bookmaker(), state = null;
+    var box = el('div', 'small');
+    box.appendChild(el('span', 'text-muted', 'Checking…'));
 
-    var box = el('div', 'mt-3');
-    box.append(el('div', 'fw-semibold small text-center mb-1', 'Extra Markets (next 30 days)'));
-    box.append(toggle('extraScope', [['off', 'Off'], ['favs', '★ Favourites\' matches (' + scopes.favs.length + ')'],
-      ['all', 'All matches (' + soon.length + ')']], scope, function (v) { scope = v; update(); }));
-    var list = el('div', 'small', 'Checking…');
-    // The total cost of what's ticked, at most (you only pay for markets the bookmaker returns)
-    var total = el('div', 'small fw-semibold mt-2');
-    box.append(list, total);
-    var rows = [];
-
-    function picked() {
-      return scope === 'off' ? [] : rows.filter(function (r) { return r.cb.checked && !r.cb.disabled; })
-        .map(function (r) { return r.cb.value; });
+    function line(label, text) {
+      var d = el('div', 'mb-2');
+      d.append(el('div', 'section-label mb-1', label), el('div', null, text));
+      return d;
     }
-    function update() {
-      var n = scopes[scope].length, has = offered[book] || [], name = F.bookmakerName(book);
-      rows.forEach(function (r) {
-        var ok = has.indexOf(r.cb.value) >= 0;
-        r.cb.disabled = scope === 'off' || !ok;
-        r.row.classList.toggle('opacity-50', scope === 'off' || !ok);
-        r.cost.textContent = !ok ? 'not at ' + name : scope === 'off' ? '' : 'up to ' + n + ' credits';
-      });
-      var k = picked().length, extraCredits = k * n, sum = (resultCb.checked ? resultCredits : 0) + extraCredits;
-      total.textContent = sum ? 'Up to ' + sum + ' credits in total.' : 'Nothing ticked.';
+
+    Promise.all([F.getJson('/api/odds/cache/extra-markets'), F.refreshOptions()]).then(function (r) {
+      var offered = r[0] || {}, opts = r[1];
+      if (!offered[book]) book = Object.keys(offered)[0] || book;
+      var name = F.bookmakerName(book), has = offered[book] || [];
+      var chosen = opts.scope === 'off' ? [] : (scopes[opts.scope] || []);
+      var markets = opts.scope === 'off' ? [] : F.sortMarkets((opts.markets || []).filter(function (m) { return has.indexOf(m) >= 0; }));
+      var n = chosen.length, extraCredits = markets.length * n;
+      var sum = (opts.matchResult ? resultCredits : 0) + extraCredits;
+      box.replaceChildren();
+      box.appendChild(line('Bookmaker', name));
+      box.appendChild(line('Match Result (all matches)', opts.matchResult
+        ? 'Home / Draw / Away · up to ' + resultCredits + ' credits (' + comps + ' competition' + (comps === 1 ? '' : 's') + ')' : 'Off'));
+      var scopeName = opts.scope === 'favs' ? '★ Favourites\' matches' : 'All matches';
+      box.appendChild(line('Extra Markets (next 30 days)', opts.scope === 'off' ? 'Off'
+        : !markets.length ? 'None ticked'
+        : scopeName + ' (' + n + '): ' + markets.map(function (m) { return EXTRA_MARKET_NAMES[m] || m; }).join(', ') +
+          ' · up to ' + extraCredits + ' credits'));
+      box.appendChild(el('div', 'fw-semibold mb-2', sum ? 'Up to ' + sum + ' credits in total.' : 'Nothing to fetch.'));
+      var link = el('a', 'text-muted', 'Change these in Settings');
+      link.href = '/settings';
+      box.appendChild(link);
+      state = { bookmaker: book, matchResult: !!opts.matchResult, markets: n ? markets : [],
+                ids: opts.scope === 'favs' ? chosen.map(function (m) { return m.id; }) : null };
       $('confirmOk').disabled = !sum;
-      try {
-        localStorage.setItem('matchResult', resultCb.checked ? 'on' : 'off');
-        localStorage.setItem('extraMarketsScope', scope);
-        localStorage.setItem('extraMarkets', JSON.stringify(rows.filter(function (r) { return r.cb.checked; })
-          .map(function (r) { return r.cb.value; })));
-      } catch (e) { /* not kept */ }
-    }
+    }).catch(function (e) { box.replaceChildren(el('span', 'text-muted', 'Couldn\'t load the Refresh Odds settings: ' + e.message)); });
 
-    F.getJson('/api/odds/cache/extra-markets').then(function (byBook) {
-      if (Array.isArray(byBook)) throw new Error('old server');   // the app hasn't been restarted since the update
-      offered = byBook;
-      if (!offered[book]) book = Object.keys(offered)[0];
-      bookGroup.replaceWith(toggle('bookmaker', Object.keys(offered).map(function (k) { return [k, F.bookmakerName(k)]; }),
-        book, function (v) { book = v; update(); }));
-      // Every market any bookmaker offers, in the order above
-      var order = Object.keys(EXTRA_MARKET_NAMES), all = [];
-      Object.keys(offered).forEach(function (k) {
-        offered[k].forEach(function (m) { if (all.indexOf(m) < 0) all.push(m); });
-      });
-      all.sort(function (a, b) {
-        var x = order.indexOf(a), y = order.indexOf(b);
-        return (x < 0 ? 99 : x) - (y < 0 ? 99 : y);
-      });
-      list.replaceChildren();
-      all.forEach(function (key) {
-        var row = el('div', 'd-flex align-items-center mb-1');
-        var cb = el('input', 'form-check-input mt-0 me-2');
-        cb.type = 'checkbox'; cb.id = 'market-' + key; cb.value = key; cb.checked = saved.indexOf(key) >= 0;
-        cb.addEventListener('change', update);
-        var label = el('label', 'form-check-label', EXTRA_MARKET_NAMES[key] || key);
-        label.htmlFor = cb.id;
-        var cost = el('span', 'text-muted ms-auto ps-3');
-        row.append(cb, label, cost);
-        list.appendChild(row);
-        rows.push({ row: row, cb: cb, cost: cost });
-      });
-      update();
-    }).catch(function () {
-      bookGroup.textContent = 'Needs the app to be restarted to load the bookmakers.';
-      list.textContent = '';
-    });
-    return {
-      bookBox: bookBox,
-      resultBox: resultBox,
-      box: box,
-      picked: function () {
-        var chosen = scopes[scope];
-        return { bookmaker: book, matchResult: resultCb.checked, markets: chosen.length ? picked() : [],
-                 ids: scope === 'favs' ? chosen.map(function (m) { return m.id; }) : null };
-      }
-    };
+    return { box: box, picked: function () { return state; } };
   }
 
   /** Refresh Odds: the match result for every match (if ticked), then the ticked extra markets for each match. */
@@ -483,7 +371,7 @@
     if (st.running) {
       var pct = st.total ? Math.round(100 * st.done / st.total) : 0;
       // Blue pop-up that stays (no ×, no time-out) until the refresh has finished
-      progress('stats', 'Refreshing stats from football-data.org: ' + st.done + ' of ~' + st.total + ' calls (' + pct + '%). ' +
+      progress('stats', 'Refreshing stats from GOAL API: ' + st.done + ' of ~' + st.total + ' calls (' + pct + '%). ' +
         (st.step ? st.step + '. ' : '') + 'You can keep using the app.');
       busy($('refreshStats'), true);
       if (!statsTimer) statsTimer = setInterval(pollStats, 2000);
@@ -503,8 +391,8 @@
   $('refreshStats').addEventListener('click', function () {
     confirmRefresh('Refresh Stats',
       'Results, Tables and Top Scorers',
-      ['Results, form, league tables and top scorers from football-data.org.',
-       'About 17 calls, sent at 10 a minute, so it takes under 2 minutes.',
+      ['Results, form, league tables, top scorers and squads from GOAL API.',
+       'About 6 calls per competition, a few more per league its clubs play in, and 1 per squad the first time.',
        'Runs in the background, so you can keep using the app.'],
       function () {
         var btn = $('refreshStats');
@@ -512,38 +400,60 @@
         F.sendJson('/api/football/stats/refresh').then(showStats)
           .catch(function (e) { busy(btn, false); showError('Refresh Stats failed: ' + e.message); });
       }, function () {
-        return F.getJson('/api/football/stats/refresh').catch(function () { return {}; })
-          .then(function (st) {
+        return Promise.all([F.getJson('/api/football/stats/refresh').catch(function () { return {}; }),
+                            F.getJson('/api/football/live').catch(function () { return {}; })])
+          .then(function (r) {
+            var st = r[0], usage = r[1].usage || {};
             return {
-              api: 'https://api.football-data.org/v4',
+              api: 'https://api.goal-api.com/v1',
               plan: 'Free',
-              left: 'No daily or monthly limit',
-              limit: '10 calls a minute',
-              reset: 'Every minute',
+              left: usage.remaining ? usage.remaining + ' calls today' : 'Not known yet',
+              limit: '1,000 calls a day',
+              reset: 'Every day',
               last: st.running ? 'running now' : st.finishedAt ? F.ago(st.finishedAt) : 'not yet'
             };
           });
       });
   });
-  // ---- Live Stats: pop-up to tick games; list badges come from the saved copy (no API calls) ----
-  /** A ticked game that is on or finished in the last 3 hours stays listed even with "Hide started matches". */
-  function followedNow(m) {
+  // ---- Live Stats: pop-up listing the games followed live (from their match pages) and the APIs' usage; list badges
+  //      come from the saved copy (no API calls) ----
+  /** pre (not kicked off), live (kicked off, not finished) or post (finished), for the list's tick boxes. */
+  function phaseOf(m) {
+    if (isOver(m)) return 'post';
+    return new Date(m.commence_time) <= new Date() ? 'live' : 'pre';
+  }
+  /** Finished: full time from Live Stats, or (without live data) about 2 hours after kick-off by the clock. */
+  function isOver(m) {
     var fx = Live.findFor(liveState, m);
-    return Live.isTracked(liveState, fx) && Date.now() - new Date(m.commence_time) < 3 * 3600000;
+    if (fx && Live.isLive(fx)) return false;   // still being played (e.g. a long stoppage)
+    if (fx && Live.finished(fx)) return true;
+    return F.clockStatus(m.commence_time) === 'FT';
   }
   var liveTimer = null;
   function loadLive() {
     return Live.getState().then(function (s) {
       liveState = s;
-      Live.setButton($('liveBtn'), s);
+      Live.setButton($('liveBtn'), s);   // red dot while games are followed live
       render();
       // While following games, re-read the saved scores every minute (the server refreshes them every few minutes)
       if (Live.monitoring(s) && !liveTimer) liveTimer = setInterval(loadLive, 60000);
       if (!Live.monitoring(s) && liveTimer) { clearInterval(liveTimer); liveTimer = null; }
     }).catch(function () { /* app not restarted yet, or no key: list works without it */ });
   }
+  /** Finished games in the list (last 14 days), and whether their stats are saved: Post-Match in the Live Stats pop-up. */
+  function finishedGames() {
+    var now = Date.now();
+    return matches.filter(function (m) {
+      var t = new Date(m.commence_time).getTime();
+      return t < now - 2 * 3600000 && t > now - 14 * 86400000;
+    }).map(function (m) {
+      var fx = Live.findFor(liveState, m);
+      return { tournament: String(m.sport_key || '').replace(/^soccer_/, ''), kickoff: m.commence_time, home: m.home_team,
+               away: m.away_team, saved: !!(fx && fx.saved === true), fx: fx };
+    });
+  }
   $('liveBtn').addEventListener('click', function () {
-    Live.openModal($('liveModal'), function () { loadLive(); });
+    Live.openModal($('liveModal'), { postMatch: finishedGames(), onDone: function () { loadLive(); } });
   });
 
   // ---- Favourites ----

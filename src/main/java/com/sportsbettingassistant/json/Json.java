@@ -84,10 +84,45 @@ public final class Json {
     /** Parses a JSON object; damaged or missing JSON gives an empty map instead of an error. */
     public static Map<String, Object> parse(String json) {
         try {
-            return json == null ? new LinkedHashMap<>() : new BasicJsonParser().parseMap(json);
+            return json == null ? new LinkedHashMap<>() : new BasicJsonParser().parseMap(unescapeUnicode(json));
         } catch (RuntimeException e) {
             return new LinkedHashMap<>();
         }
+    }
+
+    /**
+     * Turns JSON's \\uXXXX escapes into the characters they stand for ("Atl\\u00e9tico" -> "Atlético") before
+     * parsing: Spring's basic parser drops the backslash and keeps "u00e9". Quotes and backslashes stay escaped,
+     * and control characters are left as they are.
+     */
+    public static String unescapeUnicode(String json) {
+        if (json == null || json.indexOf("\\u") < 0) {
+            return json;
+        }
+        StringBuilder b = new StringBuilder(json.length());
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+            if (c != '\\' || i + 1 >= json.length()) {
+                b.append(c);
+                continue;
+            }
+            char n = json.charAt(i + 1);
+            if (n == 'u' && i + 5 < json.length() && json.substring(i + 2, i + 6).matches("[0-9a-fA-F]{4}")) {
+                char u = (char) Integer.parseInt(json.substring(i + 2, i + 6), 16);
+                if (u == '"' || u == '\\') {
+                    b.append('\\').append(u);
+                } else if (u < 0x20) {
+                    b.append(json, i, i + 6);
+                } else {
+                    b.append(u);
+                }
+                i += 5;
+            } else {
+                b.append(c).append(n);   // any other escape, as it is
+                i++;
+            }
+        }
+        return b.toString();
     }
 
     /** The value as a map, or an empty map. */

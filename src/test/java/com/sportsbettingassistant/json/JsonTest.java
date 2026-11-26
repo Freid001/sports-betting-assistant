@@ -84,4 +84,13 @@ class JsonTest {
         assertThat(res.getStatusCode().value()).isEqualTo(400);
         assertThat(res.getBody()).isEqualTo("{\"message\":\"Invalid id: ../x\"}");
     }
+
+    @Test
+    void unicodeEscapesBecomeTheirLetters() {
+        Map<String, Object> m = Json.parse("{\"home\":\"Atl\\u00e9tico Madrid\",\"away\":\"Bod\\u00f8/Glimt\",\"q\":\"say \\u0022hi\\u0022\"}");
+        assertThat(m.get("home")).isEqualTo("Atlético Madrid");
+        assertThat(m.get("away")).isEqualTo("Bodø/Glimt");
+        assertThat(m.get("q")).isEqualTo("say \"hi\"");
+        assertThat(Json.unescapeUnicode("{\"a\":\"no escapes\"}")).isEqualTo("{\"a\":\"no escapes\"}");
+    }
 }

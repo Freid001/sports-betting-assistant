@@ -68,13 +68,13 @@ window.ValueCheck = (function () {
   function chanceTag(chance) {
     if (chance >= 0.75) return 'Very Likely';   // 75%+
     if (chance >= 0.5) return 'Likely';      // 50-74%
-    if (chance >= 0.35) return 'Toss Up';    // 35-49%
+    if (chance >= 0.35) return 'Coin Flip';    // 35-49%
     if (chance >= 0.2) return 'Outsider';    // 20-34%
     if (chance >= 0.1) return 'Long Shot';   // 10-19%
     return 'Moonshot';                       // under 10%
   }
 
-  var TAG_RANGES = { 'Very Likely': '75%+', 'Likely': '50-74%', 'Toss Up': '35-49%', 'Outsider': '20-34%', 'Long Shot': '10-19%', 'Moonshot': 'under 10%' };
+  var TAG_RANGES = { 'Very Likely': '75%+', 'Likely': '50-74%', 'Coin Flip': '35-49%', 'Outsider': '20-34%', 'Long Shot': '10-19%', 'Moonshot': 'under 10%' };
 
   /** Chance tag badge, e.g. "Likely", with our calculated chance on hover, e.g. "58.3%" (the range if no chance given). */
   function tagBadge(tag, chance) {
@@ -85,6 +85,31 @@ window.ValueCheck = (function () {
     return b;
   }
 
+  // ---- Recommended bets: one rule for a match page's Best Bets and the Recommended Bets page ----
+  var RECOMMEND_MIN = -0.05;                                    // Fair Price or better
+  var AVOID = ['correct_score', 'player_first_goal_scorer'];   // Betting Framework §8: always avoid
+  var PER_MATCH = 5;
+  var MIN_ODDS = 4 / 3;   // 1/3 or bigger: shorter prices win too little to be worth a bet (e.g. 1/20 pays 5p per £1)
+  var VERDICT_ORDER = ['Great Value', 'Good Value', 'Possible Value', 'Fair Price', 'Small Cost', 'Poor Price'];
+  /** Best verdict first, then the more likely (our chance), then the bigger odds. */
+  function byRecommendation(x, y) {
+    return VERDICT_ORDER.indexOf(x.verdict.text) - VERDICT_ORDER.indexOf(y.verdict.text) ||
+           (y.chance || 0) - (x.chance || 0) || (y.price || 0) - (x.price || 0);
+  }
+  /**
+   * A match's recommended bets from its checked outcomes ({key, ret, chance, price, verdict, ...}): Fair Price or
+   * better, odds of 1/3 or bigger, not in a market the framework avoids, in recommendation order, at most 5.
+   */
+  function recommend(list) {
+    return list.filter(function (b) { return b.ret > RECOMMEND_MIN && b.price >= MIN_ODDS && AVOID.indexOf(b.key) < 0; })
+      .sort(byRecommendation).slice(0, PER_MATCH);
+  }
+
+  /** A price verdict badge, the same everywhere: just the label (Great Value, Fair Price...), no tooltip. */
+  function verdictBadge(verdict) {
+    return el('span', 'badge rounded-pill ' + verdict.cls, verdict.text);
+  }
+
   /** Tooltip on one element (shown on hover, above it). */
   function tip(node, text) {
     node.setAttribute('data-bs-toggle', 'tooltip');
@@ -93,7 +118,7 @@ window.ValueCheck = (function () {
   }
 
   function tagClass(tag) {
-    return { 'Very Likely': 'chance-verylikely', 'Likely': 'chance-likely', 'Toss Up': 'chance-tossup', 'Outsider': 'chance-outsider',
+    return { 'Very Likely': 'chance-verylikely', 'Likely': 'chance-likely', 'Coin Flip': 'chance-tossup', 'Outsider': 'chance-outsider',
              'Long Shot': 'chance-longshot', 'Moonshot': 'chance-moonshot' }[tag] || '';
   }
 
@@ -346,7 +371,7 @@ window.ValueCheck = (function () {
         var tag = tagBadge(r.tag, r.ours);
         tag.classList.add('me-1');
         verdict.appendChild(tag);
-        verdict.appendChild(el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text));
+        verdict.appendChild(verdictBadge(r.verdict, a.level.name));
         tr.appendChild(verdict);
         tb.appendChild(tr);
       });
@@ -400,7 +425,7 @@ window.ValueCheck = (function () {
             var r = find(mk, n), td = el('td');
             if (r) {
               var stack = el('div', 'd-inline-flex align-items-center gap-1 text-nowrap');   // chance tag, then price verdict
-              stack.append(tagBadge(r.tag, r.ours), el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text));
+              stack.append(tagBadge(r.tag, r.ours), verdictBadge(r.verdict, a.level.name));
               td.appendChild(stack);
             } else {
               td.appendChild(el('span', 'text-muted', '–'));
@@ -455,14 +480,14 @@ window.ValueCheck = (function () {
   }
 
   /**
-   * "Team  [Toss Up] [Fair Price]" for one outcome row from analyse(), with the same tooltips as the match page.
+   * "Team  [Coin Flip] [Fair Price]" for one outcome row from analyse(), with the same tooltips as the match page.
    * withName: include the team name in front.
    */
   function pair(r, withName) {
     var wrap = el('span', 'd-inline-flex align-items-center gap-1 text-nowrap');
     if (withName) wrap.appendChild(el('span', 'fw-semibold me-1', r.name));
     if (r.tag) wrap.appendChild(tagBadge(r.tag, r.ours));   // the Football page's pick column
-    var vb = el('span', 'badge rounded-pill ' + r.verdict.cls, r.verdict.text);
+    var vb = verdictBadge(r.verdict, r.confidence);
     wrap.appendChild(vb);
     return wrap;
   }
@@ -471,5 +496,7 @@ window.ValueCheck = (function () {
   function rerender() { if (last) render.apply(null, last); }
 
   return { render: render, rerender: rerender, model: model, analyse: analyse, confidenceBadge: confidenceBadge, pair: pair, goalRate: goalRate,
+           tagBadge: tagBadge, verdictBadge: verdictBadge, recommend: recommend, byRecommendation: byRecommendation,
+           label: label, money: money,
            DEFAULT_STAKE: DEFAULT_STAKE };
 })();

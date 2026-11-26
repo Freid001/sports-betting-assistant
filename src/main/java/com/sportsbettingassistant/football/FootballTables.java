@@ -15,11 +15,11 @@ import com.sportsbettingassistant.json.Json;
 import com.sportsbettingassistant.store.Store;
 
 /**
- * football-data.org data in proper tables: competitions, teams (with crests and country), which teams are in
- * which competition, matches (results and fixtures) and top scorers.
+ * Football stats in proper tables: competitions, teams (with badges and country), which teams are in which
+ * competition, matches (results and fixtures), league tables, top scorers, squads and head to head.
  * <p>
- * Refresh Stats and the crest lists save the API's JSON through here; the pages get the same JSON shapes back,
- * built from the tables (only the fields they use), so nothing in the pages had to change.
+ * GoalStats saves GOAL API's answers through here, in the JSON shapes football-data.org used (the app's first
+ * stats source); the pages get the same shapes back, built from the tables, so the pages didn't have to change.
  */
 @Component
 public class FootballTables {
@@ -173,6 +173,55 @@ public class FootballTables {
 
     // ---------------------------------------------------------------- reading, in the API's shapes
 
+    // ---------------------------------------------------------------- GOAL API ids, names, tables
+
+    /** Remembers a team's GOAL API id (e.g. "cmr7hvaw63yv...") for our id. */
+    public void saveGoalId(String goalId, long teamId) {
+        store.update("INSERT OR REPLACE INTO goal_teams (goal_id, team_id) VALUES (?, ?)", goalId, teamId);
+    }
+
+    /** Our team id for a GOAL API team id, if that team was saved. */
+    public Optional<Long> teamIdForGoal(String goalId) {
+        return goalId == null ? Optional.empty()
+                : store.first("SELECT team_id FROM goal_teams WHERE goal_id = ?", rs -> rs.getLong(1), goalId);
+    }
+
+    /** A team's GOAL API id, if known. */
+    public Optional<String> goalId(long teamId) {
+        return store.first("SELECT goal_id FROM goal_teams WHERE team_id = ? LIMIT 1", rs -> rs.getString(1), teamId);
+    }
+
+    /** A saved fixture's home and away team ids. */
+    public Optional<long[]> matchTeams(long matchId) {
+        return store.first("SELECT home_team_id, away_team_id FROM matches WHERE id = ? AND home_team_id IS NOT NULL "
+                + "AND away_team_id IS NOT NULL", rs -> new long[] {rs.getLong(1), rs.getLong(2)}, matchId);
+    }
+
+    /** A team by GOAL API's name for it ("Manchester City"), preferring the competition's own teams. */
+    public Optional<Map<String, Object>> teamByName(String code, String name) {
+        String same = "(LOWER(t.short_name) = LOWER(?) OR LOWER(t.name) = LOWER(?))";
+        Optional<Map<String, Object>> t = store.first("SELECT t.* FROM teams t JOIN competition_teams c ON c.team_id = t.id "
+                + "WHERE c.competition = ? AND " + same + " LIMIT 1", FootballTables::team, code, name, name);
+        return t.isPresent() ? t : store.first("SELECT t.* FROM teams t WHERE " + same + " LIMIT 1", FootballTables::team, name, name);
+    }
+
+    /**
+     * Saves a league table (replaces that competition's). Rows: teamId, teamName, position, played, won, draw,
+     * lost, goalsFor, goalsAgainst, points, group.
+     */
+    public void saveStandings(String code, List<Map<String, Object>> rows) {
+        store.transaction(() -> {
+            store.update("DELETE FROM standings WHERE competition = ?", code);
+            for (Map<String, Object> r : rows) {
+                store.update("INSERT OR REPLACE INTO standings (competition, team_id, team_name, position, played, won, draw, "
+                        + "lost, goals_for, goals_against, points, grp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        code, r.get("teamId"), r.get("teamName"), r.get("position"), r.get("played"), r.get("won"),
+                        r.get("draw"), r.get("lost"), r.get("goalsFor"), r.get("goalsAgainst"), r.get("points"), r.get("group"));
+            }
+            store.markRefreshed("standings/" + code, Instant.now());
+        });
+    }
+
     /** {"teams":[{id, name, shortName, tla, crest, area:{name}}]} for a competition, if its crests were saved. */
     public Optional<String> teamsJson(String code) {
         if (store.refreshedAt("teams/" + code).isEmpty()) {
@@ -187,6 +236,18 @@ public class FootballTables {
                     return t;
                 }, code);
         return Optional.of(Json.write(Map.of("teams", teams)));
+    }
+
+    /** Every saved team, from all competitions. */
+    public List<Map<String, Object>> allTeams() {
+        List<Map<String, Object>> teams = store.query("SELECT * FROM teams ORDER BY name", rs -> {
+            Map<String, Object> t = team(rs);
+            Map<String, Object> area = new LinkedHashMap<>();
+            area.put("name", rs.getString("country"));
+            t.put("area", area);
+            return t;
+        });
+        return teams;
     }
 
     /** Clubs (or countries) that have played in a competition, for the Favourites list. */
@@ -214,10 +275,14 @@ public class FootballTables {
     }
 
     /**
-     * A league table worked out from saved results (league / group games only, not knockouts), in
-     * football-data.org's standings format: points, then goal difference, then goals scored.
+     * A league table: GOAL API's own if saved, else worked out from saved results (league / group games only,
+     * not knockouts), in football-data.org's standings format: points, then goal difference, then goals scored.
      */
     public Optional<String> standingsJson(String code) {
+        Optional<String> saved = savedStandingsJson(code);
+        if (saved.isPresent()) {
+            return saved;
+        }
         if (store.refreshedAt(matchesName(code, "FINISHED")).isEmpty()) {
             return Optional.empty();
         }
@@ -265,6 +330,43 @@ public class FootballTables {
         return Optional.of(Json.write(out));
     }
 
+    /** GOAL API's own table for a competition (same shape as above), if one was saved. */
+    private Optional<String> savedStandingsJson(String code) {
+        List<Map<String, Object>> table = store.query("SELECT s.*, t.name, t.short_name FROM standings s "
+                + "LEFT JOIN teams t ON t.id = s.team_id WHERE s.competition = ? ORDER BY s.grp, s.position", rs -> {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    Map<String, Object> team = new LinkedHashMap<>();
+                    team.put("id", rs.getLong("team_id"));
+                    String name = rs.getString("name");
+                    team.put("name", name != null ? name : rs.getString("team_name"));
+                    team.put("shortName", rs.getString("short_name") != null ? rs.getString("short_name") : rs.getString("team_name"));
+                    row.put("position", rs.getInt("position"));
+                    row.put("team", team);
+                    row.put("playedGames", rs.getInt("played"));
+                    row.put("won", rs.getInt("won"));
+                    row.put("draw", rs.getInt("draw"));
+                    row.put("lost", rs.getInt("lost"));
+                    row.put("points", rs.getInt("points"));
+                    row.put("goalsFor", rs.getInt("goals_for"));
+                    row.put("goalsAgainst", rs.getInt("goals_against"));
+                    row.put("goalDifference", rs.getInt("goals_for") - rs.getInt("goals_against"));
+                    return row;
+                }, code);
+        if (table.isEmpty()) {
+            return Optional.empty();
+        }
+        Map<String, Object> total = new LinkedHashMap<>();
+        total.put("type", "TOTAL");
+        total.put("table", table);
+        Map<String, Object> comp = new LinkedHashMap<>();
+        comp.put("code", code);
+        comp.put("name", competitionName(code));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("competition", comp);
+        out.put("standings", List.of(total));
+        return Optional.of(Json.write(out));
+    }
+
     /** {"competition":{...},"scorers":[...]} most goals first, if saved. */
     public Optional<String> scorersJson(String code) {
         if (store.refreshedAt("scorers/" + code).isEmpty()) {
@@ -300,7 +402,7 @@ public class FootballTables {
 
     // ---------------------------------------------------------------- head to head
 
-    /** Saves a /matches/{id}/head2head answer for a fixture: the totals and the last few meetings. */
+    /** Saves head to head for a fixture ({"aggregates":{...},"matches":[...]}): the totals and the last few meetings. */
     public void saveHeadToHead(long fixtureId, String apiJson) {
         Map<String, Object> body = Json.parse(apiJson);
         Map<String, Object> agg = Json.map(body.get("aggregates"));

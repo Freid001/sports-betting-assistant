@@ -1,42 +1,32 @@
 package com.sportsbettingassistant.football;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
-import java.util.function.Consumer;
+import java.util.function.IntSupplier;
 
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 import com.sportsbettingassistant.odds.OddsCacheService;
 import com.sportsbettingassistant.store.Store;
 
 /**
- * "Refresh Stats" on the Football page: fetches season results, fixtures and top scorers from
- * football-data.org and saves them in the database tables (FootballTables). Runs in the background at the
- * plan's pace; match pages then read the tables and make no calls (except head to head the first time).
+ * "Refresh Stats" on the Football page: fetches teams, season results, fixtures, league tables, top scorers and
+ * squads from GOAL API (GoalStats) and saves them in the database tables (FootballTables). Runs in the
+ * background; match pages then read the tables and make no calls (except head to head the first time).
  */
 @Service
 public class StatsRefreshService {
 
-    static final Map<String, String> FINISHED = FootballDataClient.params("status", "FINISHED");
-    static final Map<String, String> SCHEDULED = FootballDataClient.params("status", "SCHEDULED");
-    static final Map<String, String> SCORERS = FootballDataClient.params("limit", "100");
-    static final int SQUAD_DAYS = 14;                                           // squads for teams playing within 2 weeks
-    static final java.time.Duration SQUAD_KEEP = java.time.Duration.ofDays(30); // ...fetched again after a month (transfers)
-    static final Map<String, String> H2H = FootballDataClient.params("limit", "6");
+    static final int SQUAD_DAYS = 14;                          // squads for teams playing within 2 weeks
+    static final Duration SQUAD_KEEP = Duration.ofDays(30);    // ...fetched again after a month (transfers)
+    static final List<String> DEFAULT_LEAGUES = List.of("PL", "ELC", "BL1", "SA", "PD", "FL1", "DED", "PPL");
 
-    /** Country of a team (football-data.org area name) -> its top league on the free plan. */
-    static final Map<String, String> COUNTRY_LEAGUES = Map.of(
-            "England", "PL", "Germany", "BL1", "Spain", "PD", "Italy", "SA",
-            "France", "FL1", "Netherlands", "DED", "Portugal", "PPL", "Brazil", "BSA");
-
-    private final FootballDataClient client;
+    private final GoalStats goal;
     private final OddsCacheService odds;
-    private final TeamLogoService logos;
     private final FootballTables tables;
     private final Store store;
     private final List<String> leagues;
@@ -44,19 +34,17 @@ public class StatsRefreshService {
 
     private volatile Status status = new Status();
 
-    public StatsRefreshService(FootballDataClient client, OddsCacheService odds, TeamLogoService logos,
-                               FootballTables tables, Store store,
-                               @Value("${football-data.league-scorers:true}") boolean leagueScorers,
+    public StatsRefreshService(GoalStats goal, OddsCacheService odds, FootballTables tables, Store store,
+                               @Value("${stats.league-scorers:true}") boolean leagueScorers,
                                org.springframework.core.env.Environment env) {
-        this.client = client;
+        this.goal = goal;
         this.odds = odds;
-        this.logos = logos;
         this.tables = tables;
         this.store = store;
         this.leagueScorers = leagueScorers;
         this.leagues = org.springframework.boot.context.properties.bind.Binder.get(env)
-                .bind("football-data.leagues", org.springframework.boot.context.properties.bind.Bindable.listOf(String.class))
-                .orElse(List.of("PL", "ELC", "BL1", "SA", "PD", "FL1", "DED", "PPL"));
+                .bind("stats.leagues", org.springframework.boot.context.properties.bind.Bindable.listOf(String.class))
+                .orElse(DEFAULT_LEAGUES);
     }
 
     /** Progress of the current or last refresh. */
@@ -99,48 +87,55 @@ public class StatsRefreshService {
         return true;
     }
 
+    /** Runs a refresh now, on this thread (tests). */
+    Status runNow() {
+        Status s = new Status();
+        s.running = true;
+        status = s;
+        run(s);
+        return s;
+    }
+
     /**
-     * Per tournament with fixtures: season results, top scorers, upcoming fixtures (3 calls).
-     * Per domestic league its teams play in: season results (+ top scorers) (1-2 calls).
-     * League tables are worked out from results (no calls).
+     * Per competition with fixtures: teams, results (1-3 calls), fixtures, league table and top scorers.
+     * Per domestic league its clubs play in (e.g. Bundesliga for Bayern in the Champions League): results,
+     * table (+ top scorers). Then squads of teams playing in the next 2 weeks (1 call each, kept for a month).
      */
     private void run(Status s) {
         try {
             List<String> active = new ArrayList<>();
             for (String sport : odds.tournaments()) {
-                String name = OddsCacheService.footballName(sport);
-                if (Competitions.CODES.containsKey(name) && odds.hasFixtures(sport)) {
-                    active.add(name);
+                String code = Competitions.CODES.get(OddsCacheService.footballName(sport));
+                if (code != null && odds.hasFixtures(sport) && !active.contains(code)) {
+                    active.add(code);
                 }
             }
+            s.total = active.size() * 5;
+            for (String code : active) {
+                call(s, "Teams in " + code, () -> { goal.saveTeams(code); return 1; });
+            }
             List<String> needed = new ArrayList<>();
-            for (String t : active) {
-                logos.teams(t, false);   // makes sure the crest list (with each team's country) is saved
-                for (String country : tables.countries(Competitions.CODES.get(t))) {
-                    String code = COUNTRY_LEAGUES.get(country);
-                    if (code != null && leagues.contains(code) && !needed.contains(code)
-                            && active.stream().noneMatch(a -> code.equals(Competitions.CODES.get(a)))) {
-                        needed.add(code);
+            for (String code : active) {
+                for (String country : tables.countries(code)) {
+                    String league = Competitions.COUNTRY_LEAGUES.get(country);
+                    if (league != null && leagues.contains(league) && !active.contains(league) && !needed.contains(league)) {
+                        needed.add(league);
                     }
                 }
             }
-            s.total = active.size() * 3 + needed.size() * (leagueScorers ? 2 : 1);
+            s.total += needed.size() * (leagueScorers ? 3 : 2);
 
-            for (String t : active) {
-                String code = Competitions.CODES.get(t);
-                s.step = "Results in " + code;
-                fetch("/competitions/" + code + "/matches", FINISHED, s, json -> tables.saveMatches(code, "FINISHED", json));
-                s.step = "Top scorers in " + code;
-                fetch("/competitions/" + code + "/scorers", SCORERS, s, json -> tables.saveScorers(code, json));
-                s.step = "Fixtures in " + code;
-                fetch("/competitions/" + code + "/matches", SCHEDULED, s, json -> tables.saveMatches(code, "SCHEDULED", json));
+            for (String code : active) {
+                call(s, "Results in " + code, () -> goal.saveResults(code));
+                call(s, "Fixtures in " + code, () -> { goal.saveFixtures(code); return 1; });
+                call(s, "Table for " + code, () -> { goal.saveStandings(code); return 1; });
+                call(s, "Top scorers in " + code, () -> { goal.saveScorers(code); return 1; });
             }
             for (String code : needed) {
-                s.step = "Results in " + code;
-                fetch("/competitions/" + code + "/matches", FINISHED, s, json -> tables.saveMatches(code, "FINISHED", json));
+                call(s, "Results in " + code, () -> goal.saveResults(code));
+                call(s, "Table for " + code, () -> { goal.saveStandings(code); return 1; });
                 if (leagueScorers) {
-                    s.step = "Top scorers in " + code;
-                    fetch("/competitions/" + code + "/scorers", SCORERS, s, json -> tables.saveScorers(code, json));
+                    call(s, "Top scorers in " + code, () -> { goal.saveScorers(code); return 1; });
                 }
             }
 
@@ -149,12 +144,13 @@ public class StatsRefreshService {
             Instant soon = Instant.now();
             List<Long> squads = tables.teamsPlayingWithin(SQUAD_DAYS).stream()
                     .filter(id -> tables.squadSavedAt(id).map(t -> t.isBefore(soon.minus(SQUAD_KEEP))).orElse(true))
+                    .filter(id -> tables.goalId(id).isPresent())
                     .toList();
             s.total += squads.size();
             int n = 0;
             for (long id : squads) {
-                s.step = "Squads (" + (++n) + " of " + squads.size() + ")";
-                fetch("/teams/" + id, Map.of(), s, json -> tables.saveSquad(id, json));
+                String step = "Squads (" + (++n) + " of " + squads.size() + ")";
+                call(s, step, () -> goal.saveSquad(id) ? 1 : 0);
             }
 
             Instant now = Instant.now();
@@ -169,14 +165,18 @@ public class StatsRefreshService {
         }
     }
 
-    /** One call (the client keeps the pace); a good answer is saved, errors are noted, not fatal. */
-    private void fetch(String path, Map<String, String> params, Status s, Consumer<String> save) {
-        ResponseEntity<String> res = client.fetch(path, params);
-        s.done++;
-        if (res.getStatusCode().is2xxSuccessful() && res.getBody() != null) {
-            save.accept(res.getBody());
-        } else {
-            s.errors.add(path + ": HTTP " + res.getStatusCode().value());
+    /** One step (it returns the calls it made); errors are noted, not fatal. */
+    private void call(Status s, String step, IntSupplier work) {
+        s.step = step;
+        try {
+            int calls = work.getAsInt();
+            s.done += Math.max(1, calls);
+            if (calls > 1) {
+                s.total += calls - 1;   // a season's results took more than one page
+            }
+        } catch (RuntimeException e) {
+            s.done++;
+            s.errors.add(step + ": " + e.getMessage());
         }
     }
 }

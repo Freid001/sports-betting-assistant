@@ -123,3 +123,25 @@ test('goal rates allow for position and how early in the season it is', () => {
   // unknown position: a middling rate
   assert.ok(Math.abs(VC.goalRate({ goals: 0, games: 0 }) - 0.12) < 1e-9);
 });
+
+test('verdict badges are just the label, with no tooltip', () => {
+  const { load } = require('./load-scripts');
+  const V = load(['football-data.js', 'value-check.js']).ValueCheck;
+  const b = V.verdictBadge({ text: 'Fair Price', cls: 'odds-ok' }, 'Low');
+  assert.equal(b.textContent, 'Fair Price');
+  assert.equal(b.getAttribute('data-bs-toggle'), null);
+});
+
+test('recommended bets: Fair Price or better, 1/3 or bigger, no avoided markets, best verdict then likeliest, at most 5', () => {
+  const { load } = require('./load-scripts');
+  const V = load(['football-data.js', 'value-check.js']).ValueCheck;
+  const v = t => ({ text: t });
+  const picks = V.recommend([
+    { key: 'h2h', name: 'Fair likely', ret: -0.02, chance: 0.6, price: 1.55, verdict: v('Fair Price') },
+    { key: 'h2h', name: 'Fair coin flip', ret: 0.01, chance: 0.4, price: 2.5, verdict: v('Fair Price') },
+    { key: 'totals', name: 'Too short', ret: 0.01, chance: 0.95, price: 1.05, verdict: v('Fair Price') },
+    { key: 'totals', name: 'Possible', ret: 0.1, chance: 0.1, price: 11, verdict: v('Possible Value') },
+    { key: 'h2h', name: 'Poor', ret: -0.3, chance: 0.3, price: 2.2, verdict: v('Poor Price') },
+    { key: 'correct_score', name: 'Avoided', ret: 0.2, chance: 0.1, price: 12, verdict: v('Great Value') }]);
+  assert.deepEqual(picks.map(p => p.name), ['Possible', 'Fair likely', 'Fair coin flip']);
+});

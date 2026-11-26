@@ -51,7 +51,7 @@ class GoalApiClientTest {
                 .isInstanceOf(IllegalArgumentException.class);
         GoalApiClient noKey = new GoalApiClient("", api.url());
         assertThat(noKey.configured()).isFalse();
-        assertThatThrownBy(() -> noKey.getJson("/fixtures/live", Map.of())).hasMessageContaining("GOAL_API_KEY");
+        assertThatThrownBy(() -> noKey.getJson("/fixtures/live", Map.of())).hasMessageContaining("Settings page");
         assertThat(api.requests).isEmpty();
     }
 
@@ -84,7 +84,7 @@ class GoalApiClientTest {
         assertThat(bad.getStatusCode().value()).isEqualTo(400);
         var noKey = new GoalApiClient("", api.url()).test("/leagues", new HashMap<>());
         assertThat(noKey.getStatusCode().value()).isEqualTo(503);
-        assertThat(noKey.getBody()).contains("GOAL_API_KEY");
+        assertThat(noKey.getBody()).contains("Settings page");
     }
 
     @Test

@@ -20,7 +20,7 @@ import com.sportsbettingassistant.json.Json;
 
 /**
  * GOAL API (https://api.goal-api.com/v1), free plan 1,000 calls a day. Read-only. The key comes from
- * GOAL_API_KEY in .env, is sent as a Bearer token and is never shown to the browser.
+ * the key saved on the Settings page, is sent as a Bearer token and is never shown to the browser.
  * Also keeps the calls-left numbers from the last response, for the Live Stats pop-up.
  * Test route: GET /api/football/goal-api?path=/fixtures/live
  */
@@ -33,17 +33,32 @@ public class GoalApiClient {
     private static final String[] RATE_HEADERS = {"X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset", "X-RateLimit-Type"};
 
     private final RestClient http;
-    private final String apiKey;
+    private final String apiKey;          // tests only: the app uses the Settings page's key
+    private com.sportsbettingassistant.settings.SettingsService settings;   // the Settings page's key, if saved
     private volatile Map<String, Object> usage = new LinkedHashMap<>();
 
-    public GoalApiClient(@Value("${goal-api.key:}") String apiKey,
-                         @Value("${goal-api.base-url:https://api.goal-api.com/v1}") String baseUrl) {
+    @org.springframework.beans.factory.annotation.Autowired
+    public GoalApiClient(@Value("${goal-api.base-url:https://api.goal-api.com/v1}") String baseUrl) {
+        this("", baseUrl);
+    }
+
+    public GoalApiClient(String apiKey, String baseUrl) {
         this.apiKey = apiKey == null ? "" : apiKey.trim();
         this.http = RestClient.create(baseUrl);
     }
 
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    public void setSettings(com.sportsbettingassistant.settings.SettingsService settings) {
+        this.settings = settings;
+    }
+
+    /** The key in use now, from the Settings page (read on every call, so a new key works without a restart). */
+    private String key() {
+        return settings != null ? settings.apiKey("goal-api") : apiKey;
+    }
+
     public boolean configured() {
-        return !apiKey.isEmpty();
+        return !key().isEmpty();
     }
 
     /** Calls left today etc. from the last response: limit, remaining, reset, checkedAt. */
@@ -75,7 +90,7 @@ public class GoalApiClient {
             String msg = raw.body.length() > 200 ? raw.body.substring(0, 200) : raw.body;
             throw new IllegalStateException("GOAL API " + raw.status + ": " + msg);
         }
-        return new BasicJsonParser().parseMap(raw.body);
+        return new BasicJsonParser().parseMap(com.sportsbettingassistant.json.Json.unescapeUnicode(raw.body));
     }
 
     private record Raw(int status, String body, HttpHeaders rate) {
@@ -86,7 +101,7 @@ public class GoalApiClient {
             throw new IllegalArgumentException("bad path");
         }
         if (!configured()) {
-            throw new IllegalStateException("No GOAL API key. Add GOAL_API_KEY to .env.");
+            throw new IllegalStateException("No GOAL API key: add it on the Settings page.");
         }
         return http.get()
                 .uri(b -> {
@@ -94,7 +109,7 @@ public class GoalApiClient {
                     params.forEach(b::queryParam);
                     return b.build();
                 })
-                .header(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey)
+                .header(HttpHeaders.AUTHORIZATION, "Bearer " + key())
                 .exchange((req, res) -> {
                     HttpHeaders h = new HttpHeaders();
                     for (String n : RATE_HEADERS) {

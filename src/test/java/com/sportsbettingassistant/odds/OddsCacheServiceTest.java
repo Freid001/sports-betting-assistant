@@ -352,4 +352,104 @@ class OddsCacheServiceTest {
         api.answer("/sports/soccer_epl/events/gone/markets", 404, "{\"message\":\"Event not found\"}");
         assertThatThrownBy(() -> cache.availableMarkets("soccer_epl", "gone", "uk")).hasMessageContaining("404: Event not found");
     }
+
+    // ---------------------------------------------------------------- in-play prices
+
+    private static final String LIVE = "{\"id\":\"e1\",\"bookmakers\":[{\"key\":\"skybet\",\"markets\":["
+            + "{\"key\":\"h2h\",\"outcomes\":[{\"name\":\"Tottenham Hotspur\",\"price\":1.36},{\"name\":\"Draw\",\"price\":4.5},{\"name\":\"Ipswich Town\",\"price\":11}]},"
+            + "{\"key\":\"alternate_totals\",\"outcomes\":[{\"name\":\"Over\",\"price\":1.5,\"point\":1.5}]}]}]}";
+
+    @Test
+    void livePricesAreFetchedForTheResultAndTheBookmakersGoalsMarketsAndKeptApartByPoint() {
+        api.answer("/sports/soccer_epl/events/e1/odds", 200, LIVE, Map.of("x-requests-last", "3"));
+
+        Map<String, Object> live = cache.refreshLive("soccer_epl", "e1", "skybet", "HT");
+
+        assertThat(api.last().query()).contains("markets=h2h,alternate_totals,btts").contains("bookmakers=skybet");
+        assertThat(live).containsEntry("credits", 3).containsEntry("eventId", "e1");
+        assertThat(String.valueOf(live.get("markets"))).contains("Ipswich Town").contains("point=1.5");
+        assertThat(live).containsEntry("point", "HT");
+        cache.refreshLive("soccer_epl", "e1", "skybet", "60");
+        @SuppressWarnings("unchecked")
+        Map<String, Map<String, Object>> points = (Map<String, Map<String, Object>>) cache.live("e1", "skybet").get("points");
+        assertThat(points).containsOnlyKeys("HT", "60");
+        assertThat(points.get("HT").get("fetchedAt")).isEqualTo(live.get("fetchedAt"));
+        assertThat(String.valueOf(points.get("HT").get("markets"))).contains("Tottenham Hotspur").contains("1.36");
+        assertThat((Map<?, ?>) cache.live("e2", "skybet").get("points")).isEmpty();
+        assertThat(store.first("SELECT COUNT(*) FROM odds_prices", rs -> rs.getInt(1)).orElse(0)).isZero();
+    }
+
+    @Test
+    void anEmptyLiveAnswerKeepsTheOddsAlreadySavedForThatPoint() {
+        api.answer("/sports/soccer_epl/events/e1/odds", 200, LIVE, Map.of("x-requests-last", "2"));
+        cache.refreshLive("soccer_epl", "e1", "skybet", "80");
+        api.answer("/sports/soccer_epl/events/e1/odds", 200, "{\"id\":\"e1\",\"bookmakers\":[]}", Map.of("x-requests-last", "0"));
+        assertThatThrownBy(() -> cache.refreshLive("soccer_epl", "e1", "skybet", "80"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("no in-play odds");
+        @SuppressWarnings("unchecked")
+        Map<String, Map<String, Object>> points = (Map<String, Map<String, Object>>) cache.live("e1", "skybet").get("points");
+        assertThat(String.valueOf(points.get("80").get("markets"))).contains("Tottenham Hotspur");
+    }
+
+    @Test
+    void aRefusedLiveFetchSaysWhy() {
+        api.answer("/sports/soccer_epl/events/e1/odds", 404, "{\"message\":\"Event not found\"}");
+        assertThatThrownBy(() -> cache.refreshLive("soccer_epl", "e1", "skybet", "HT"))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("404").hasMessageContaining("Event not found");
+        assertThatThrownBy(() -> cache.refreshLive("soccer_epl", "e1", "nobody", "HT")).isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> cache.refreshLive("soccer_epl", "e1", "skybet", "FT")).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void aGameFromGoalApiIsFoundInTheSavedOddsByKickOffAndLooseNames() {
+        cache.save("soccer_epl", "2026-11-20T12:00:00Z", 30, "h2h", "skybet", "1", "[{\"id\":\"e1\",\"commence_time\":"
+                + "\"2026-11-21T15:00:00Z\",\"home_team\":\"Tottenham Hotspur\",\"away_team\":\"Ipswich Town\",\"bookmakers\":[]}]");
+        assertThat(cache.findEvent("2026-11-21T15:00:00Z", "Tottenham", "Ipswich"))
+                .contains(Map.of("sport", "soccer_epl", "id", "e1"));
+        assertThat(cache.findEvent("2026-11-21T18:00:00Z", "Tottenham", "Ipswich")).isEmpty();   // different kick-off
+        assertThat(cache.findEvent("2026-11-21T15:00:00Z", "Chelsea", "Leeds")).isEmpty();
+    }
+
+    @Test
+    void aSavedTimelinePointFetchesThatPointsOdds() {
+        cache.save("soccer_epl", "2026-11-20T12:00:00Z", 30, "h2h", "skybet", "1", "[{\"id\":\"e1\",\"commence_time\":"
+                + "\"2026-11-21T15:00:00Z\",\"home_team\":\"Tottenham Hotspur\",\"away_team\":\"Ipswich Town\",\"bookmakers\":[]}]");
+        api.answer("/sports/soccer_epl/events/e1/odds", 200, LIVE, Map.of("x-requests-last", "3", "x-requests-remaining", "400"));
+        LiveOddsAtPoints atPoints = new LiveOddsAtPoints(cache);   // Sky Bet: nothing else picked
+        var p = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g1", "25", "2026-11-21T15:00:00Z", "Tottenham", "Ipswich");
+
+        assertThat(atPoints.fetch(p)).isTrue();
+        @SuppressWarnings("unchecked")
+        Map<String, Object> points = (Map<String, Object>) cache.live("e1", "skybet").get("points");
+        assertThat(points).containsOnlyKeys("25");
+
+        var unknown = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g2", "25", "2026-11-21T15:00:00Z", "Chelsea", "Leeds");
+        assertThat(atPoints.fetch(unknown)).isFalse();   // not in the saved odds: no call
+    }
+
+    @Test
+    void eachPointFetchesExactlyWhatIsTickedInSettings() {
+        var settings = new com.sportsbettingassistant.settings.SettingsService(store, null);
+        LiveOddsAtPoints atPoints = new LiveOddsAtPoints(cache);
+        assertThat(atPoints.marketsFor(null)).isNull();   // no Settings: the usual markets
+        atPoints.setSettings(settings);
+        var at60 = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g1", "60", "k", "A", "B", "1-2");
+        assertThat(atPoints.marketsFor(at60)).containsExactly("h2h");   // Home / Draw / Away ticked by default
+        settings.setRefreshOptions(true, "favs", java.util.List.of("btts", "player_goal_scorer_anytime"));
+        assertThat(atPoints.marketsFor(at60)).containsExactly("h2h", "btts", "player_goal_scorer_anytime");
+        settings.setRefreshOptions(false, "off", java.util.List.of());
+        assertThat(atPoints.marketsFor(at60)).isEmpty();
+        assertThat(atPoints.fetch(at60)).isFalse();   // nothing ticked: nothing fetched
+    }
+
+    @Test
+    void theBookmakerPickedInRefreshOddsIsKeptOnTheServerForTheWholeApp() {
+        OddsCacheService two = new OddsCacheService(new OddsApiClient("k", api.url()), store, new MockEnvironment()
+                .withProperty("odds-api.bookmakers.skybet", "btts").withProperty("odds-api.bookmakers.betway", "btts"));
+        assertThat(two.bookmaker()).isEqualTo("skybet");                   // nothing picked yet
+        assertThat(two.setBookmaker("betway")).isEqualTo("betway");
+        assertThat(two.bookmaker()).isEqualTo("betway");
+        assertThatThrownBy(() -> two.setBookmaker("nobody")).isInstanceOf(IllegalArgumentException.class);
+        assertThat(two.bookmaker()).isEqualTo("betway");
+    }
 }

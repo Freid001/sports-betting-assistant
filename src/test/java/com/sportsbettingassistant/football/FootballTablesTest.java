@@ -13,7 +13,7 @@ import org.junit.jupiter.api.io.TempDir;
 import com.sportsbettingassistant.store.Store;
 import com.sportsbettingassistant.support.TempStore;
 
-/** football-data.org answers saved into tables and read back in the shapes the pages use. */
+/** Answers saved into tables (in football-data.org's shapes, which GoalStats builds) and read back as the pages use them. */
 class FootballTablesTest {
 
     private static final String ARSENAL = "{\"id\":57,\"name\":\"Arsenal FC\",\"shortName\":\"Arsenal\",\"tla\":\"ARS\",\"crest\":\"a.png\"}";

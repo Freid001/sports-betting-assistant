@@ -62,7 +62,7 @@ window.Favourites = (function () {
         });
         if (!teams.length) return;
         any = true;
-        box.appendChild(el('div', 'section-label text-start mt-2 mb-1', g.label));
+        box.appendChild(el('div', 'section-label mt-2 mb-1', g.label));
         var grid = el('div', 'row row-cols-2 row-cols-md-3 g-1');
         teams.forEach(function (t, i) {
           var col = el('div', 'col');

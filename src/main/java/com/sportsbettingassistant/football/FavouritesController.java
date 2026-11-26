@@ -20,7 +20,7 @@ import com.sportsbettingassistant.store.Store;
  * Favourite teams, saved in the favourites table so they survive restarts.
  * GET /api/football/favourites           your favourites
  * PUT /api/football/favourites           {"teams":[{name, shortName, tla, crest, type}...]} save them
- * GET /api/football/favourites/options   teams to choose from: clubs from the saved football-data.org
+ * GET /api/football/favourites/options   teams to choose from: clubs from the saved
  *                                        results (no API calls) and national teams
  */
 @RestController
@@ -29,7 +29,7 @@ public class FavouritesController {
 
     /** Club competitions in the saved results, in the order shown in the pop-up. */
     private static final String[][] CLUB_COMPS = {
-        {"PL", "Premier League"}, {"ELC", "Championship"}, {"PD", "La Liga"}, {"BL1", "Bundesliga"},
+        {"PL", "Premier League"}, {"ELC", "Championship"}, {"EL1", "League One"}, {"PD", "La Liga"}, {"BL1", "Bundesliga"},
         {"SA", "Serie A"}, {"FL1", "Ligue 1"}, {"DED", "Eredivisie"}, {"PPL", "Primeira Liga"},
         {"CL", "Other Champions League clubs"}};
 

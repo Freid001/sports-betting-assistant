@@ -26,30 +26,60 @@
     <style>
       html { color-scheme: light; }
       /* ===== Base theme colour: change it here to restyle the banner, card and pop-up headers, and main buttons ===== */
-      :root { --theme:#6b1f2e; --theme-hover:#8c2a3d; --theme-text:#fff; }   /* Burgundy */
+      :root { --theme:#1f2326; --theme-hover:#3a3f45; --theme-rgb:31,35,38; --theme-text:#fff; --theme-text-rgb:255,255,255; }   /* Black (Settings can change it) */
       .theme-bg { background:var(--theme) !important; color:var(--theme-text); }
       .btn-theme { --bs-btn-color:var(--theme-text); --bs-btn-bg:var(--theme); --bs-btn-border-color:var(--theme);
                    --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
                    --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme-hover); --bs-btn-active-border-color:var(--theme-hover);
                    --bs-btn-disabled-color:var(--theme-text); --bs-btn-disabled-bg:var(--theme); --bs-btn-disabled-border-color:var(--theme); }
       /* Outline version (e.g. the Off / Favourites / All matches switch): burgundy border, fills when selected */
-      .btn-outline-theme { --bs-btn-color:var(--theme); --bs-btn-bg:transparent; --bs-btn-border-color:var(--theme);
+      .btn-outline-theme { --bs-btn-color:var(--theme-ink, var(--theme)); --bs-btn-bg:transparent; --bs-btn-border-color:var(--theme);
                    --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
                    --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme); --bs-btn-active-border-color:var(--theme); }
+      /* Live Match Stats timeline: 25' HT 60' 80' FT */
+      .live-timeline .btn { min-width:3rem; }
+      /* The top bar stays at the top when scrolling (above cards, below pop-ups), with a soft shadow to lift it */
+      .site-bar { z-index:1030; box-shadow:0 2px 6px rgba(0,0,0,.15); }
+      /* Match pages, while a followed game is live: fills up until the next refresh of its stats */
+      .live-refresh-bar { position:absolute; left:0; right:0; bottom:0; height:3px; background:rgba(var(--theme-text-rgb),.15); cursor:help; }
+      .live-refresh-bar > div { height:100%; width:0; background:var(--theme-accent, #fff); transition:width .5s linear; }   /* the theme's accent colour */
+      /* The Football page's button row (Guide, Favourites, Refresh Odds...): small and compact */
+      .btn-bar { font-size:.8rem; padding:0 .5rem; }
+      /* The Football list: one table per day, all with the same column widths */
+      .match-list { table-layout:fixed; min-width:640px; }
+      .momentum-bar { height:.6rem; }
+      /* Match status labels, the same on every page and in the app's colours: Pre-Match white, a minute red,
+         HT yellow, FT dark green (pills, like every other badge) */
+      .status-live { background-color:#e0533d; color:#fff; }
+      .status-ht   { background-color:#f2c12e; color:#212529; }
+      .status-ft   { background-color:#0b5d33; color:#fff; }
+      .status-pre  { background-color:#fff; color:#212529; border:1px solid #adb5bd; }
+      /* Green text in the app's green: the side that leads a Checklist item (tick and number) */
+      .text-good { color:#2fa05a !important; }
+      /* The LIVE timeline button: red outline in the app's red, filled when picked */
+      .btn-outline-live { --bs-btn-color:#e0533d; --bs-btn-bg:transparent; --bs-btn-border-color:#e0533d;
+                   --bs-btn-hover-color:#fff; --bs-btn-hover-bg:#e0533d; --bs-btn-hover-border-color:#e0533d;
+                   --bs-btn-active-color:#fff; --bs-btn-active-bg:#e0533d; --bs-btn-active-border-color:#e0533d; }
+      .momentum-home { background-color:var(--theme); }
+      .momentum-away { background-color:#adb5bd; }
       /* Ticked tick boxes and radio buttons in the theme colour */
       .form-check-input:checked { background-color:var(--theme); border-color:var(--theme); }
-      .form-check-input:focus { border-color:var(--theme-hover); box-shadow:0 0 0 .2rem rgba(107,31,46,.2); }
+      .form-check-input:focus { border-color:var(--theme-hover); box-shadow:0 0 0 .2rem rgba(var(--theme-rgb),.2); }
       body { margin:0; color:#212529; background:#f3f4f6; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
       /* Cards: white on the light grey page, with dark headers */
       .card { background:#fff; border-color:#e3e5e8; }
       .card-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
-      .card-header .text-muted { color:rgba(255,255,255,.65) !important; }
-      .card-header a { color:#fff; }
+      .card-header .text-muted { color:rgba(var(--theme-text-rgb),.65) !important; }
+      .card-header a { color:var(--theme-text); }
       /* Pop-ups (e.g. Refresh Odds) match the cards: dark header, white title and close button */
       .modal-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
+      /* Card and pop-up titles look the same: same size, weight and height of the burgundy bar */
+      .card-header { padding:.5rem 1rem; font-size:1rem; font-weight:600; }
+      .modal-header { padding:.5rem 1rem; }
+      .modal-header .modal-title { font-size:1rem; font-weight:600; line-height:1.5; }
       .modal-header .btn-close { filter:invert(1) grayscale(100%) brightness(200%); }
       /* Live Stats: red dot on the button while ticked games are monitored */
-      .live-dot { display:inline-block; width:.5rem; height:.5rem; border-radius:50%; background:#ff3b30; margin-right:.35rem; vertical-align:middle; box-shadow:0 0 0 2px rgba(255,255,255,.55); animation:livePulse 1.6s ease-in-out infinite; }
+      .live-dot { display:inline-block; width:.5rem; height:.5rem; border-radius:50%; background:#e0533d; margin-right:.35rem; vertical-align:middle; box-shadow:0 0 0 2px rgba(255,255,255,.55); animation:livePulse 1.6s ease-in-out infinite; }
       @keyframes livePulse { 50% { opacity:.35; } }
       .live-score { font-variant-numeric:tabular-nums; }
       /* Pop-up messages: slide in from the right, slide out and close the gap when they go */
@@ -75,14 +105,18 @@
       .verdict-small-cost { background:#f08a24; color:#fff; }   /* Value check: between Fair (yellow) and Poor (red) */
       .verdict-possible   { background:#8fd19e; color:#0b3d1f; }  /* Value check: solid light green, between Fair (yellow) and Good (green) */
       /* Top menu: sits next to the title; pills that light up on hover, active section underlined in green */
-      .site-nav .nav-link { color:rgba(255,255,255,.85); padding:.35rem .8rem; border-radius:.5rem; position:relative; }
-      .site-nav .nav-link:hover { color:#fff; background:rgba(255,255,255,.1); }
-      .site-nav .nav-link.active { color:#fff; background:rgba(255,255,255,.12); }
-      .site-nav .nav-link.active::after { content:""; position:absolute; left:.8rem; right:.8rem; bottom:-.55rem; height:3px; border-radius:2px; background:#2fa05a; }
+      .site-nav .nav-link { color:rgba(var(--theme-text-rgb),.85); padding:.35rem .8rem; border-radius:.5rem; position:relative; }
+      .site-nav .nav-link:hover { color:var(--theme-text); background:rgba(var(--theme-text-rgb),.1); }
+      .site-nav .nav-link.active { color:var(--theme-text); background:rgba(var(--theme-text-rgb),.12); }
+      .site-bar .navbar-brand, .site-bar .navbar-brand:hover { color:var(--theme-text); }
+      /* the current page: shaded only (the green line under the banner is the live refresh bar on match pages) */
       /* Form tiles on the match page: W / D / L */
+      .form-tiles { width: calc(4 * 1.4rem + 3 * .25rem); }   /* Form: 8 tiles as two lines of 4 */
       .form-tile { display:inline-block; width:1.4rem; height:1.4rem; line-height:1.4rem; text-align:center; border-radius:.25rem; font-size:.75rem; font-weight:600; cursor:help; }
       .form-W { background:#2fa05a; color:#fff; } .form-D { background:#adb5bd; color:#212529; } .form-L { background:#e0533d; color:#fff; }
       .stats-table td, .stats-table th { padding-top:.3rem; padding-bottom:.3rem; }
+      /* Column headings in every table: bold, the same weight everywhere */
+      .table th { font-weight:700; }
       /* Chance tags (Value check): solid, in the same colour scale as the odds badges */
       .chance-tag { }   /* same as every badge: bold (700), same size and padding */
       .chance-verylikely { background:#0b5d33; color:#fff; }
@@ -96,6 +130,26 @@
       .section-label:not(:first-child) { margin-top:1rem; }
       .tooltip-inner { white-space:pre-line; }
       .odds-tip .tooltip-inner { white-space:pre-line; text-align:left; max-width:260px; }
+    </style>
+    <!-- Stake Bar switched off in Settings: no stake is used (odds show as fractions) -->
+    <script th:inline="javascript">window.STAKE_BAR = /*[[${stakeBar != false}]]*/ true;</script>
+    <!-- Animations and Sounds (Settings): the match page's GOAL!, card and whistle alerts -->
+    <script th:inline="javascript">
+      var matchAnimations = /*[[${matchAlerts == null || matchAlerts.animations != false}]]*/ true;
+      var matchSounds = /*[[${matchAlerts == null || matchAlerts.sounds != false}]]*/ true;
+      window.MATCH_ALERTS = { animations: matchAnimations, sounds: matchSounds };
+    </script>
+    <!-- each theme's accent: a colour that stands out on its banner (the live refresh bar on match pages) -->
+    <script th:inline="javascript">
+      window.THEME_ACCENTS = { black: '#f2c12e', burgundy: '#ffffff', blue: '#ffd54f', green: '#e0b84c',
+                               yellow: '#1f2326', purple: '#ffd54f', orange: '#ffffff' };
+      var themeKey = /*[[${theme != null ? theme.key : 'black'}]]*/ 'black';
+      document.documentElement.style.setProperty('--theme-accent', window.THEME_ACCENTS[themeKey] || '#ffffff');
+    </script>
+    <!-- the theme picked in Settings (one of a fixed list, so safe to write out as is) -->
+    <style th:if="${theme != null}" th:inline="css">
+      :root { --theme:[(${theme.color})]; --theme-hover:[(${theme.hover})]; --theme-rgb:[(${theme.rgb})];
+              --theme-text:[(${theme.text})]; --theme-text-rgb:[(${theme.textRgb})]; --theme-ink:[(${theme.ink})]; }
     </style>
 </head>
 <body>
@@ -132,7 +186,7 @@
                     <tbody>
                     <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-verylikely">Very Likely</span></td><td>75%+. Expected to happen about 3 times in 4, or more.</td></tr>
                     <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-likely">Likely</span></td><td>50-74%. Expected to happen more often than not.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-tossup">Toss Up</span></td><td>35-49%. A real chance either way.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-tossup">Coin Flip</span></td><td>35-49%. A real chance either way.</td></tr>
                     <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-outsider">Outsider</span></td><td>20-34%. Happens, but usually doesn't.</td></tr>
                     <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-longshot">Long Shot</span></td><td>10-19%. Rarely happens.</td></tr>
                     <tr><td class="text-nowrap"><span class="badge rounded-pill chance-tag chance-moonshot">Moonshot</span></td><td>Under 10%. Very rarely happens.</td></tr>
@@ -143,13 +197,12 @@
                 <p class="mb-2">Whether the odds pay enough for that chance, over many bets like it.</p>
                 <table class="table table-sm align-middle mb-2 stats-table">
                     <tbody>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-good">Great Value</span></td><td>Pays clearly more than the risk deserves (+15% or better on average).</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-good">Good Value</span></td><td>Pays more than it should (+5% to +15%).</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-very-good">Great Value</span></td><td>Pays clearly more than the risk deserves.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-good">Good Value</span></td><td>Pays more than the risk deserves.</td></tr>
                     <tr><td class="text-nowrap"><span class="badge rounded-pill verdict-possible">Possible Value</span></td><td>Looks like value, but there's little data yet, so treat it with caution.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-ok">Fair Price</span></td><td>About right for the chance (within ±5%). An optional small bet at most.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-ok">Fair Price</span></td><td>About right for the chance. An optional small bet at most.</td></tr>
                     <tr><td class="text-nowrap"><span class="badge rounded-pill verdict-small-cost">Small Cost</span></td><td>Slightly short, but likely to win (35%+). Your framework allows a few of these, capped.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-poor">Poor Price</span></td><td>The odds are too short for the chance: costs you money over time, even if it usually wins.</td></tr>
-                    <tr><td class="text-nowrap"><span class="badge rounded-pill border text-secondary fw-normal">No Value</span></td><td>Football list: nothing in the match is both a Toss Up or better (35%+) and at least a fair price.</td></tr>
+                    <tr><td class="text-nowrap"><span class="badge rounded-pill odds-poor">Poor Price</span></td><td>The odds are too short for the chance: it doesn't pay enough, even if it usually wins.</td></tr>
                     </tbody>
                 </table>
                 <p class="text-muted mb-0">A value verdict doesn't mean a bet will win: long shots lose most of the time even at a good price.</p>
@@ -158,15 +211,20 @@
     </div>
 </div>
 
-<nav th:fragment="navbar" class="navbar navbar-dark theme-bg mb-4">
+<nav th:fragment="navbar" class="navbar navbar-dark theme-bg mb-4 sticky-top site-bar">
     <div class="container justify-content-start gap-4">
         <a class="navbar-brand fw-semibold me-2" href="/">Sports Betting Assistant</a>
         <div class="navbar-nav flex-row gap-1 site-nav">
-            <a class="nav-link" href="/football">Football</a>
-            <a class="nav-link" href="/horse-racing">Horse Racing</a>
+            <!-- a new user (no API keys yet) only gets Settings -->
+            <th:block th:if="${ready != false}">
+                <a class="nav-link" href="/bets">Bets</a>
+                <a class="nav-link" href="/football">Football</a>
+                <a class="nav-link" href="/horse-racing">Horse Racing</a>
+            </th:block>
+            <a class="nav-link" href="/settings">Settings</a>
         </div>
         <!-- Stake £ (right of the banner): pages that use it (Football list, match pages) put the input here -->
-        <div id="navStake" class="ms-auto"></div>
+        <div id="navStake" class="ms-auto" th:classappend="${stakeBar == false} ? 'd-none'"></div>
     </div>
     <!-- Pop-up messages (Bootstrap toasts), top-right, stacked. Every message uses notify(text, type):
            'success' green ✓  something finished (saved, refreshed)        fades after 5s

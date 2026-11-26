@@ -44,15 +44,9 @@ It follows the "Betting Framework Spec" (kept in the Claude project *Gambling*).
 Requires **Java 25+** and **Maven 3.8+**. Node.js 22+ is only needed to run the JavaScript tests.
 
 1. **Get free API keys** (see [Data sources](#data-sources-and-limits)):
-   [The Odds API](https://the-odds-api.com), [football-data.org](https://www.football-data.org/client/register)
-   and [GOAL API](https://goal-api.com).
-2. **Add them to a `.env` file** in the project folder (copy `.env.example`):
-   ```properties
-   ODDS_API_KEY=...
-   FOOTBALL_DATA_API_KEY=...
-   GOAL_API_KEY=...
-   ```
-   `.env` is git-ignored, so keys never go to GitHub. They are only used by the server and never sent to the browser.
+   [The Odds API](https://the-odds-api.com) and [GOAL API](https://goal-api.com).
+2. **Paste them on the Settings page** once the app is running (step 3). They're saved in the app's local database
+   (`data/`, git-ignored), so keys never go to GitHub. They are only used by the server and never sent back to the browser.
 3. **Run it**:
    ```bash
    mvn spring-boot:run
@@ -69,8 +63,7 @@ show the plan, calls left, limit and reset time before anything is spent.
 | Source | Used for | Free plan | What uses calls |
 |---|---|---|---|
 | [The Odds API](https://the-odds-api.com/liveapi/guides/v4/) | Sky Bet, Betway, Paddy Power or William Hill odds | 500 credits / month | **Refresh Odds**: about 2 credits per tournament with fixtures (match result for every match; others are skipped for free). **Extra markets** (a tick box per market, each showing its cost): one request per match, up to 1 credit per ticked market per match |
-| [football-data.org](https://www.football-data.org) | Results, tables, form, scorers, head to head, crests | 10 calls / minute, no monthly limit | **Refresh Stats**: about 17 calls (queued at 10 a minute); head to head: 1 call the first time a match is opened |
-| [GOAL API](https://goal-api.com) | Live scores and match stats | 1,000 calls / day | Opening **Live Stats**: 1 call per tournament (reused for 3 hours). While a ticked game is on: every 5 minutes, 1 call per tournament playing + 1 per live game |
+| [GOAL API](https://goal-api.com) | Results, tables, form, scorers, squads, head to head, badges; live scores and match stats | 1,000 calls / day | **Refresh Stats**: about 6 calls per tournament with fixtures, about 3 per domestic league its clubs play in, and 1 per squad (teams playing within 2 weeks, kept for a month); head to head: 1 call the first time a match is opened. Live: 1 call per tournament a day, then every 5 minutes 1 per followed game while it's on |
 
 Notes:
 - **Bookmaker**: Refresh Odds starts with a Bookmaker switch: Sky Bet, Betway, Paddy Power or William Hill. It picks whose match result and extra markets are
@@ -113,20 +106,20 @@ Notes:
 
 ## Configuration
 
-Settings live in `src/main/resources/application.yaml`; secrets only in `.env`.
+Settings live in `src/main/resources/application.yaml`; API keys only on the app's Settings page.
 
 | Setting | What it does |
 |---|---|
 | `football.tournaments` | Tournaments shown and refreshed (The Odds API keys without `soccer_`) |
-| `football-data.leagues` | Domestic leagues that may be fetched for form and tables |
-| `football-data.league-scorers` | `false` saves a call per league (Key players then shows tournament goals only) |
-| `football-data.calls-per-minute` | Pace for football-data.org (raise it if you upgrade) |
+| `stats.leagues` | Domestic leagues that may be fetched for form and tables |
+| `stats.league-scorers` | `false` saves a call per league (Key players then shows tournament goals only) |
 | `goal-api.refresh-minutes` / `max-games` / `reserve-calls` | Live Stats refresh rate, games you can tick, calls kept spare |
 | `goal-api.leagues` | GOAL API league id for each tournament |
 | `store.file` | The SQLite database (default `data/sports-betting-assistant.db`) |
 
-To add a tournament (e.g. the Championship): add its key to `football.tournaments`, its football-data.org code
-to `Competitions.java`, its display name in `football-data.js`, and its GOAL API league id to `goal-api.leagues`.
+To add a tournament (e.g. the Championship): add its key to `football.tournaments`, its code and GOAL API league
+id to `Competitions.java` (and the code to `COMP_CODES` in `match-stats.js`), its display name in `football-data.js`,
+and its GOAL API league id to `goal-api.leagues`.
 
 ## Local data
 
@@ -162,7 +155,7 @@ src/main/java/com/sportsbettingassistant/
   SportsBettingAssistantApplication.java   starts the app
   controller/   Home (redirects to Football), AppStatus (Restart needed check)
   odds/         The Odds API client, saved odds and Refresh Odds
-  football/     football-data.org client, Refresh Stats, tables, crests, Favourites, Competitions
+  football/     GOAL API stats (GoalStats), Refresh Stats, tables, badges, Favourites, Competitions
   football/live GOAL API client and Live Stats (refresh, xG estimate)
   json/         Shared JSON helpers and the bad-request handler
   store/        The SQLite database (Store.java)

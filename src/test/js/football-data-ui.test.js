@@ -9,9 +9,9 @@ test('odds badges are coloured by chance and show the fraction, with the chance 
   const b = F.oddsBadge(2.6, 0.38);
   assert.equal(b.textContent, '8/5');
   assert.ok(b.classList.contains('odds-ok'));
-  assert.equal(b.getAttribute('data-bs-title'), '8/5 (38%)');
+  assert.equal(b.getAttribute('data-bs-title'), '8/5 · 38.5% (38.0% no margin)', 'same as the match page');
   assert.equal(F.oddsBadge(null, 0.5).textContent, '–');
-  assert.equal(F.oddsBadge(3, null).getAttribute('data-bs-title'), '2/1');
+  assert.equal(F.oddsBadge(3, null).getAttribute('data-bs-title'), '2/1 · 33.3%');
 });
 
 test('with a stake set, badges show the total return instead', () => {
@@ -27,15 +27,15 @@ test('stake buttons set, toggle and clear the stake, and remember it', () => {
   let changes = 0;
   const box = F.stakeInput(() => changes++);
   const buttons = box.querySelectorAll('button');
-  assert.deepEqual(buttons.map(b => b.textContent), ['No bet', '£5', '£10', '£20', '£50']);
+  assert.deepEqual(buttons.map(b => b.textContent), ['No bet', '£1', '£2', '£5', '£10', '£20']);
 
-  buttons[2].click();
+  buttons[4].click();
   assert.equal(F.stake(), 10);
   assert.equal(w.store['football-stake'], '10');
-  assert.ok(buttons[2].classList.contains('active'));
+  assert.ok(buttons[4].classList.contains('active'));
   assert.equal(box.querySelector('input').value, 10);
 
-  buttons[2].click();                       // clicking the highlighted one again clears it
+  buttons[4].click();                       // clicking the highlighted one again clears it
   assert.equal(F.stake(), 0);
   assert.ok(buttons[0].classList.contains('active'));
 
@@ -101,7 +101,7 @@ test('loadAll merges every saved tournament, soonest first', async () => {
   assert.deepEqual(plain(all.matches.map(m => m.id)), ['a', 'b']);
   assert.equal(all.matches[0].comp, 'Premier League');
   assert.equal(all.matches[0].compKey, 'epl');
-  assert.ok(all.notes.some(n => n === 'World Cup: no data yet'));
+  assert.ok(all.notes.some(n => n === 'FIFA World Cup: no data yet'));
 });
 
 test('the blue info box always shows the same rows, plus a warning if there is one', () => {
