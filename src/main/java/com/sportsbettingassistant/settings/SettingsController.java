@@ -28,7 +28,7 @@ import com.sportsbettingassistant.odds.OddsApiClient;
  * POST /api/settings/animations?on=false  the match page's banners (GOAL!, cards, kick-off / HT / FT...) on or off
  * POST /api/settings/sounds?on=false      the match page's sounds (crowd, whistles, chime) on or off
  * POST /api/settings/refresh              {"matchResult":true,"scope":"favs","markets":["btts"]}: what Refresh Odds fetches
- * POST /api/settings/live-refresh?minutes=2   how often followed games are refreshed (1, 2, 5 or 10)
+ * POST /api/settings/live-refresh?minutes=2   how often followed games are refreshed (1, 2, 5 or 10; 0: off)
  * POST /api/settings/live-odds?on=false   in-play odds at each timeline point of a followed game, or not
  */
 @Controller

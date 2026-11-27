@@ -229,10 +229,10 @@ public class SettingsService {
         });
     }
 
-    // ---------------------------------------------------------------- Live Refresh
+    // ---------------------------------------------------------------- Refresh Data Live
 
-    /** How often followed games are refreshed while they're on, in minutes. */
-    public static final List<Integer> LIVE_REFRESH = List.of(1, 2, 5, 10);
+    /** How often followed games are refreshed while they're on, in minutes; 0: Off (not refreshed at all). */
+    public static final List<Integer> LIVE_REFRESH = List.of(1, 2, 5, 10, 0);
 
     public int liveRefreshMinutes() {
         try {
@@ -245,12 +245,12 @@ public class SettingsService {
 
     public void setLiveRefreshMinutes(int minutes) {
         if (!LIVE_REFRESH.contains(minutes)) {
-            throw new IllegalArgumentException("Live Refresh is 1, 2, 5 or 10 minutes");
+            throw new IllegalArgumentException("Refresh Data Live is 1, 2, 5 or 10 minutes, or 0 for Off");
         }
         store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "live-refresh", String.valueOf(minutes));
     }
 
-    /** Live Odds Refresh: the bookmaker's in-play odds at each timeline point of a followed game (on unless off). */
+    /** Refresh Odds Live: the bookmaker's in-play odds at each timeline point of a followed game (on unless off). */
     public boolean liveOdds() {
         return !"off".equals(saved("live-odds").orElse("on"));
     }

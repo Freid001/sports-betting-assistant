@@ -416,14 +416,14 @@ class OddsCacheServiceTest {
                 + "\"2026-11-21T15:00:00Z\",\"home_team\":\"Tottenham Hotspur\",\"away_team\":\"Ipswich Town\",\"bookmakers\":[]}]");
         api.answer("/sports/soccer_epl/events/e1/odds", 200, LIVE, Map.of("x-requests-last", "3", "x-requests-remaining", "400"));
         LiveOddsAtPoints atPoints = new LiveOddsAtPoints(cache);   // Sky Bet: nothing else picked
-        var p = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g1", "25", "2026-11-21T15:00:00Z", "Tottenham", "Ipswich");
+        var p = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g1", "30", "2026-11-21T15:00:00Z", "Tottenham", "Ipswich");
 
         assertThat(atPoints.fetch(p)).isTrue();
         @SuppressWarnings("unchecked")
         Map<String, Object> points = (Map<String, Object>) cache.live("e1", "skybet").get("points");
-        assertThat(points).containsOnlyKeys("25");
+        assertThat(points).containsOnlyKeys("30");
 
-        var unknown = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g2", "25", "2026-11-21T15:00:00Z", "Chelsea", "Leeds");
+        var unknown = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g2", "30", "2026-11-21T15:00:00Z", "Chelsea", "Leeds");
         assertThat(atPoints.fetch(unknown)).isFalse();   // not in the saved odds: no call
     }
 

@@ -298,8 +298,8 @@ window.Live = (function () {
     if (!fx || !isLive(fx)) return null;
     if (minute(fx) === 'HT') return 'HT';
     var e = parseInt(fx.elapsed, 10);
-    if (isNaN(e) || e < 10) return null;
-    return e < 25 ? '10' : e < 45 ? '25' : e < 60 ? 'HT' : e < 80 ? '60' : '80';
+    if (isNaN(e) || e < 30) return null;   // the first window is 30'
+    return e < 45 ? '30' : e < 60 ? 'HT' : e < 80 ? '60' : '80';
   }
   /** Is the checklist leader winning, drawing or losing? (null without a leader or a score) */
   function setup(check, homeScore, awayScore) {
@@ -482,7 +482,7 @@ window.Live = (function () {
   }
 
   /** Minute each timeline point is reached at (HT just after 45'). */
-  var POINT_MINUTE = { '10': 10, '25': 25, HT: 45.5, '60': 60, '80': 80, FT: Infinity };
+  var POINT_MINUTE = { '10': 10, '25': 25, '30': 30, HT: 45.5, '60': 60, '80': 80, FT: Infinity };
   /** Is this point still to come (it can still be saved)? Before kick-off they all are. */
   function ahead(p, fx) {
     if (!fx || finished(fx) || isOff(fx)) return false;
@@ -515,8 +515,8 @@ window.Live = (function () {
       buttons.push(btn);
       bar.appendChild(btn);
     }
-    // Only the points reached so far: each appears (10', 25', HT...) as the game gets there, with LIVE after them
-    ['PRE', '10', '25', 'HT', '60', '80', 'FT'].forEach(function (p) {
+    // Only the points reached so far: each appears (30', HT, 60'...) as the game gets there, with LIVE after them
+    ['PRE', '30', 'HT', '60', '80', 'FT'].forEach(function (p) {
       if (!by[p]) return;   // not reached yet, or missed (the API has no stats for past points in a game)
       var btn = el('button', 'btn btn-sm btn-outline-theme', periodLabel(p));
       btn.setAttribute('data-period', p);

@@ -39,7 +39,7 @@ const scorers = { competition: { name: 'Premier League' }, scorers: [
   { player: { id: 12, name: 'Delap' }, team: { id: 2 }, goals: 6 }] };
 
 test('league match: form, one league row, goals profile from home/away games, key players, head-to-head totals', async () => {
-  const { box, $ } = page({
+  const { box, $, w } = page({
     '/api/football/data/teams/1/matches': { matches: homeGames(6) },
     '/api/football/data/teams/2/matches': { matches: awayGames(6) },
     '/api/football/data/competitions/PL/standings': table([
@@ -67,6 +67,25 @@ test('league match: form, one league row, goals profile from home/away games, ke
   assert.equal($('keyPlayers').querySelectorAll('[data-bs-toggle]').length, 0);
   assert.match($('h2h').textContent, /4 previous meetings, 10 goals \(2\.5 per game\)/);
   assert.match($('valueCheck').textContent, /Match Result/);
+  // GOAL API's scorer lists have no games played: the team's games from the league table (12) stand in
+  const ts = w.TopScorers;
+  assert.deepEqual(plain(ts.home.scorers.map(p => [p.name, p.games])), [['Kane', 10], ['Son', 12]]);
+  assert.deepEqual(plain(ts.away.scorers.map(p => [p.name, p.games])), [['Delap', 12]]);
+});
+
+test('squad players outside the top-scorer list get their own goals and games, for goalscorer verdicts', async () => {
+  const { $, w } = page({
+    '/api/football/data/teams/1/matches': { matches: homeGames(6) },
+    '/api/football/data/teams/2/matches': { matches: awayGames(6) },
+    '/api/football/data/teams/1/squad': { squad: [{ name: 'Kane', position: 'Forwards', games: 9, goals: 9 },
+      { name: 'Richarlison', position: 'Forwards', games: 8, goals: 3 }, { name: 'Bench', position: 'Defenders', games: 0, goals: 0 }] },
+    '/api/football/data/competitions/PL/standings': table([{ position: 1, points: 28, playedGames: 12, goalDifference: 15, team: { id: 1 } }]),
+    '/api/football/data/competitions/PL/scorers': { scorers: [{ player: { id: 10, name: 'Kane' }, team: { id: 1 }, goals: 9 }] }
+  }, event('epl', 'Premier League'), SPURS, IPSWICH);
+  await settle();
+  const ts = w.TopScorers.home.scorers.map(p => [p.name, p.goals, p.games, p.position]);
+  assert.deepEqual(plain(ts), [['Kane', 9, 9, 'Forward'], ['Richarlison', 3, 8, 'Forward']]);   // not Bench: no games
+  assert.match($('keyPlayers').textContent, /Richarlison/);   // in Top Scorers now too
 });
 
 test('cup match with few home/away games: any-venue note, a cup row, and individual head-to-head results', async () => {

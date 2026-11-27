@@ -36,7 +36,14 @@ public class Store implements AutoCloseable {
     /** All tables. Times are milliseconds since 1970 (UTC) unless the column says _iso. */
     /** Columns added after a table was first made: added to older databases (ignored if already there). */
     static final List<String> NEW_COLUMNS = List.of(
-            "ALTER TABLE scorers ADD COLUMN position TEXT");   // e.g. "Forwards"
+            "ALTER TABLE scorers ADD COLUMN position TEXT",   // e.g. "Forwards"
+            // a squad player's season so far (GOAL API's squad list): goals per game for the goalscorer verdicts
+            "ALTER TABLE squads ADD COLUMN games INTEGER",
+            "ALTER TABLE squads ADD COLUMN goals INTEGER",
+            "ALTER TABLE squads ADD COLUMN shots INTEGER",
+            "ALTER TABLE squads ADD COLUMN stats TEXT",   // his season stats (JSON), for the player pop-up
+            // 1: found elsewhere in GOAL API (e.g. Cole Palmer, filed under England), kept when the squad is re-saved
+            "ALTER TABLE squads ADD COLUMN added INTEGER");
 
     static final String SCHEMA = """
         -- when something last finished: 'stats' (Refresh Stats), 'live', 'live-list', 'matches/PL/FINISHED'...
@@ -108,7 +115,7 @@ public class Store implements AutoCloseable {
             home TEXT, away TEXT, PRIMARY KEY (game_id, position));
         CREATE TABLE IF NOT EXISTS live_players (game_id TEXT NOT NULL, side TEXT NOT NULL, position INTEGER NOT NULL,
             name TEXT, shots INTEGER, on_target INTEGER, goals INTEGER, PRIMARY KEY (game_id, side, position));
-        -- a game's stats at a point in the match ('25', 'HT', '60', '80', 'FT'): stats is the JSON the page shows
+        -- a game's stats at a point in the match ('30', 'HT', '60', '80', 'FT'): stats is the JSON the page shows
         CREATE TABLE IF NOT EXISTS live_snapshots (game_id TEXT NOT NULL, period TEXT NOT NULL, home_score TEXT,
             away_score TEXT, stats TEXT NOT NULL, saved_at TEXT, PRIMARY KEY (game_id, period));
         -- what happened in a followed game (goal, yellow, red, penalty, shot, kickoff, ht, second, ft), worked out
@@ -120,6 +127,11 @@ public class Store implements AutoCloseable {
             sort_order INTEGER, source TEXT, at TEXT, PRIMARY KEY (game_id, seq));
         -- a finished game's highlights video (GOAL API /videos/match): url empty = none yet, checked_at for re-checking
         CREATE TABLE IF NOT EXISTS live_videos (game_id TEXT PRIMARY KEY, url TEXT, title TEXT, checked_at TEXT);
+        -- the prediction log: what the model said before a game (point PRE) and at each bet window (10, 25, HT, 60,
+        -- 80), scored against the result later. body: the prediction as the page sent it (JSON)
+        CREATE TABLE IF NOT EXISTS predictions (match_id TEXT NOT NULL, point TEXT NOT NULL, kickoff TEXT NOT NULL,
+            competition TEXT, home TEXT, away TEXT, home_team_id INTEGER, away_team_id INTEGER, saved_at TEXT,
+            version TEXT, body TEXT NOT NULL, PRIMARY KEY (match_id, point));
         -- games to follow live once GOAL API lists them (on match day), picked with the match page's play button
         CREATE TABLE IF NOT EXISTS live_follow (tournament TEXT NOT NULL, kickoff TEXT NOT NULL, home TEXT NOT NULL,
             away TEXT NOT NULL, PRIMARY KEY (tournament, kickoff, home));

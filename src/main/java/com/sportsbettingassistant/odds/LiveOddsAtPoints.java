@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 import com.sportsbettingassistant.football.live.LiveService;
 
 /**
- * When Live Stats saves a timeline point of a followed game (10', 25', HT, 60', 80'), fetch the picked bookmaker's in-play
+ * When Live Stats saves a timeline point of a followed game (30', HT, 60', 80'), fetch the picked bookmaker's in-play
  * prices once and save them under that point, so the match page shows that point's odds and verdicts later at no cost.
  * About 3 Odds API credits a point (15 a game).
  */
@@ -18,7 +18,7 @@ public class LiveOddsAtPoints {
     private static final Logger log = LoggerFactory.getLogger(LiveOddsAtPoints.class);
 
     private final OddsCacheService odds;
-    private com.sportsbettingassistant.settings.SettingsService settings;   // Live Odds Refresh: Off or Timeline Points
+    private com.sportsbettingassistant.settings.SettingsService settings;   // Refresh Odds Live: On (at each bet window) or Off
 
     public LiveOddsAtPoints(OddsCacheService odds) {
         this.odds = odds;

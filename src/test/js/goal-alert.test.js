@@ -65,7 +65,7 @@ test('a penalty count going up is spotted before cards', () => {
 
 test('a bet window is new only once its odds appear after the page opened', () => {
   G.reset();
-  assert.deepEqual(G.checkPoints(['10', 'HT']), []);
-  assert.deepEqual(G.checkPoints(['10', 'HT']), []);
-  assert.deepEqual(G.checkPoints(['10', 'HT', '60']), ['60']);
+  assert.deepEqual(G.checkPoints(['30', 'HT']), []);
+  assert.deepEqual(G.checkPoints(['30', 'HT']), []);
+  assert.deepEqual(G.checkPoints(['30', 'HT', '60']), ['60']);
 });

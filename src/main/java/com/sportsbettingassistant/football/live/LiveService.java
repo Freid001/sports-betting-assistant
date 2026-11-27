@@ -38,7 +38,7 @@ import com.sportsbettingassistant.store.Store;
  * xG: GOAL API has no xG, so we estimate it from shot counts: each shot inside the box (not a penalty)
  * 0.12, each shot outside the box 0.035, each penalty 0.76 (typical average values).
  * <p>
- * Snapshots: a game's stats at points in the match ('25', 'HT', '60', '80', 'FT') for the match page's timeline.
+ * Snapshots: a game's stats at points in the match ('30', 'HT', '60', '80', 'FT') for the match page's timeline.
  * {@link #replay} loads a past game once (2 calls) as HT and FT snapshots; games with snapshots are kept 14 days.
  */
 @Service
@@ -52,7 +52,7 @@ public class LiveService {
     /** A ticked game is watched from just before kick-off until it finishes (or 3 hours after kick-off at most). */
     private static final Duration BEFORE = Duration.ofMinutes(2), AFTER = Duration.ofHours(3);
     /** Timeline order of snapshots. */
-    static final List<String> PERIODS = List.of("10", "25", "HT", "60", "80", "FT");
+    static final List<String> PERIODS = List.of("30", "HT", "60", "80", "FT");
     /** How long games with snapshots are kept (other games: 1 day after kick-off). */
     private static final Duration KEEP_SNAPSHOTS = Duration.ofDays(14);
 
@@ -215,7 +215,7 @@ public class LiveService {
 
     /**
      * Follows a game live from the match page (its play button), even days ahead: on match day it's looked up in
-     * GOAL API (1 call per competition and day) and ticked, then refreshed and saved at 10', 25', HT, 60', 80' and FT.
+     * GOAL API (1 call per competition and day) and ticked, then refreshed and saved at 30', HT, 60', 80' and FT.
      * A game GOAL API already lists is ticked straight away.
      */
     public synchronized Map<String, Object> follow(String tournament, String kickoff, String home, String away) {
@@ -528,6 +528,9 @@ public class LiveService {
         if (on.isEmpty()) {
             return;
         }
+        if (refreshMinutes() <= 0) {   // Refresh Data Live: Off
+            return;
+        }
         if (lastRefresh != null && lastRefresh.plus(Duration.ofMinutes(refreshMinutes())).isAfter(now)) {
             return;
         }
@@ -590,7 +593,7 @@ public class LiveService {
     }
 
     /**
-     * Saves the timeline points a game has reached, once each: 10', 25', 60' and 80' from the stats so far,
+     * Saves the timeline points a game has reached, once each: 30', 60' and 80' from the stats so far,
      * HT from the first-half stats once it's past half-time, FT from the full-time stats when it's finished.
      */
     void saveTimelinePoints(String id, Map<String, Object> f, Map<String, Object> body, Map<String, Object> s) {
@@ -624,7 +627,7 @@ public class LiveService {
         }
     }
 
-    /** The minute point a live game is at: 10 (10-24'), 25 (25-44'), 60 (60-79'), 80 (80'+); else null. */
+    /** The minute point a live game is at: 30 (30-44'), 60 (60-79'), 80 (80'+); else null (no 10': little has changed). */
     static String pointFor(Map<String, Object> f) {
         if (!Json.yes(f.get("live")) || isFinished(f)) {
             return null;
@@ -635,7 +638,7 @@ public class LiveService {
         } catch (NumberFormatException ex) {
             return null;
         }
-        return e < 10 ? null : e < 25 ? "10" : e < 45 ? "25" : e < 60 ? null : e < 80 ? "60" : "80";
+        return e < 30 ? null : e < 45 ? "30" : e < 60 ? null : e < 80 ? "60" : "80";
     }
 
     /** Ticked games that are about to start or being played (and not finished with final stats). */

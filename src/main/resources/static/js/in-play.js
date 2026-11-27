@@ -14,7 +14,7 @@
  */
 window.InPlay = (function () {
   var F = window.Football, el = F.el;
-  var MINUTE = { WATCH: 15, '10': 10, '25': 25, HT: 45, '45': 50, '60': 60, '70': 70, '80': 80, FT: 90 };
+  var MINUTE = { WATCH: 15, '10': 10, '25': 25, '30': 30, HT: 45, '45': 50, '60': 60, '70': 70, '80': 80, FT: 90 };
   var W1 = 0.45 / 45, W2 = 0.55 / 45;              // goal weight per minute, first and second half
   var TOTAL = 47 * W1 + 49 * W2;                    // 45 + 2 and 45 + 4 minutes of stoppage
   var VALUE_BAR = 1.05;
@@ -68,7 +68,7 @@ window.InPlay = (function () {
     var none = Math.exp(-(lh + la));
     var want = {
       WATCH: [], '10': [], FT: [],
-      '25': ['next', 'team', 'over'],
+      '25': ['next', 'team', 'over'], '30': ['next', 'team', 'over'],
       HT: ['dnb', 'next', 'team', 'over'],
       '45': ['next', 'over'],
       '60': ['win', 'dnb', 'next', 'team', 'over'],

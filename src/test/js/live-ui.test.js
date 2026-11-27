@@ -305,8 +305,9 @@ test('pointFor: the last timeline point a live game has passed', () => {
   const { Live } = load(['football-data.js', 'live.js']);
   const at = (elapsed, extra) => Object.assign(fx('a', { live: true, status: 'LIVE', elapsed }), extra || {});
   assert.equal(Live.pointFor(at('5')), null);
-  assert.equal(Live.pointFor(at('12')), '10');
-  assert.equal(Live.pointFor(at('30')), '25');
+  assert.equal(Live.pointFor(at('12')), null);   // no 10' window
+  assert.equal(Live.pointFor(at('27')), null);
+  assert.equal(Live.pointFor(at('30')), '30');
   assert.equal(Live.pointFor(at(null, { minute: 'Half Time' })), 'HT');
   assert.equal(Live.pointFor(at('52')), 'HT');
   assert.equal(Live.pointFor(at('65')), '60');

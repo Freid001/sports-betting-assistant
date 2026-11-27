@@ -81,42 +81,135 @@ public class FootballTables {
         });
     }
 
-    /** Saves a /teams/{id} answer's squad: every player and his position (replaces that team's squad). */
+    /**
+     * Saves a /teams/{id} answer's squad: every player and his position (replaces that team's squad, but keeps the
+     * players we found elsewhere in GOAL API, see addToSquad, unless the squad now has them itself).
+     */
     public void saveSquad(long teamId, String apiJson) {
         Map<String, Object> body = Json.parse(apiJson);
         store.transaction(() -> {
-            store.update("DELETE FROM squads WHERE team_id = ?", teamId);
+            store.update("DELETE FROM squads WHERE team_id = ? AND COALESCE(added, 0) = 0", teamId);
             for (Map<String, Object> p : Json.maps(body.get("squad"))) {
                 long playerId = Json.number(p.get("id"));
                 String name = Json.text(p.get("name"));
                 if (playerId < 0 || name == null) {
                     continue;
                 }
-                store.update("INSERT OR REPLACE INTO squads (team_id, player_id, name, position) VALUES (?, ?, ?, ?)",
-                        teamId, playerId, name, position(p));
+                store.update("INSERT OR REPLACE INTO squads (team_id, player_id, name, position, games, goals, shots, stats) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", teamId, playerId, name, position(p),
+                        count(p.get("games")), count(p.get("goals")), count(p.get("shots")),
+                        p.get("stats") == null ? null : Json.write(p.get("stats")));
             }
+            // an added player the squad now lists itself (under another id): keep the squad's own entry
+            store.update("DELETE FROM squads WHERE team_id = ? AND added = 1 AND lower(name) IN "
+                    + "(SELECT lower(name) FROM squads WHERE team_id = ? AND COALESCE(added, 0) = 0)", teamId, teamId);
             store.markRefreshed("squad/" + teamId, Instant.now());
+            store.markRefreshed("squad-photos/" + teamId, Instant.now());
         });
     }
 
-    /** {"squad":[{"id","name","position"}]} by name, if saved. */
+    /** {"squad":[{"id","name","position","games","goals","shots"}]} by name, if saved. */
     public Optional<String> squadJson(long teamId) {
         if (store.refreshedAt("squad/" + teamId).isEmpty()) {
             return Optional.empty();
         }
-        List<Map<String, Object>> list = store.query("SELECT player_id, name, position FROM squads WHERE team_id = ? ORDER BY name", rs -> {
+        List<Map<String, Object>> list = store.query("SELECT player_id, name, position, games, goals, shots, stats FROM squads "
+                + "WHERE team_id = ? ORDER BY name", rs -> {
             Map<String, Object> p = new LinkedHashMap<>();
             p.put("id", rs.getLong(1));
             p.put("name", rs.getString(2));
             p.put("position", rs.getString(3));
+            p.put("games", Store.longOrNull(rs, "games"));   // null: saved before these were kept
+            p.put("goals", Store.longOrNull(rs, "goals"));
+            p.put("shots", Store.longOrNull(rs, "shots"));
+            String stats = rs.getString("stats");
+            p.put("stats", stats == null ? null : Json.parse(stats));   // his season stats, for the player pop-up
             return p;
         }, teamId);
         return Optional.of(Json.write(Map.of("squad", list)));
     }
 
-    /** When a team's squad was last saved. */
+    /**
+     * Top scorers (in the saved scorer lists) of these teams who aren't in their team's saved squad: GOAL API files
+     * some players (often internationals, e.g. Cole Palmer under England) under another team. [{teamId, teamName,
+     * name}], skipping ones looked up in the last 3 days (since the squad was last saved: a squad saved before
+     * looked-up players were kept could have dropped them).
+     */
+    public List<Map<String, Object>> scorersMissingFromSquads(List<Long> teamIds) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        Instant recently = Instant.now().minus(java.time.Duration.ofDays(3));
+        for (long teamId : teamIds) {
+            if (store.refreshedAt("squad/" + teamId).isEmpty()) {
+                continue;
+            }
+            // a player added by an older lookup (before LOOKUP's version) is looked up again: those could carry
+            // another team's numbers (his England games) as his club season
+            List<String> squad = new ArrayList<>();
+            for (Map.Entry<String, Boolean> row : store.query("SELECT name, COALESCE(added, 0) FROM squads WHERE team_id = ?",
+                    rs -> Map.entry(rs.getString(1), rs.getInt(2) == 1), teamId)) {
+                if (!row.getValue() || store.refreshedAt(lookupName(teamId, row.getKey())).isPresent()) {
+                    squad.add(plainName(row.getKey()));
+                }
+            }
+            String teamName = store.first("SELECT name FROM teams WHERE id = ?", rs -> rs.getString(1), teamId).orElse(null);
+            for (String name : store.query("SELECT DISTINCT player FROM scorers WHERE team_id = ? AND player IS NOT NULL",
+                    rs -> rs.getString(1), teamId)) {
+                Instant saved = store.refreshedAt("squad/" + teamId).orElse(Instant.EPOCH);
+                boolean looked = store.refreshedAt(lookupName(teamId, name))
+                        .map(t -> t.isAfter(recently) && !t.isBefore(saved)).orElse(false);
+                if (!squad.contains(plainName(name)) && !looked) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("teamId", teamId);
+                    m.put("teamName", teamName);
+                    m.put("name", name);
+                    out.add(m);
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * Adds a player found elsewhere in GOAL API to a team's saved squad (position, games, goals, shots), and notes
+     * that he was looked up (found or not) so he isn't looked up again for 3 days.
+     */
+    public void addToSquad(long teamId, String scorerName, Map<String, Object> player) {
+        store.transaction(() -> {
+            if (player != null) {
+                store.update("INSERT OR REPLACE INTO squads (team_id, player_id, name, position, games, goals, shots, stats, added) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)", teamId, Json.number(player.get("id")), Json.text(player.get("name")),
+                        Json.text(player.get("position")), count(player.get("games")), count(player.get("goals")),
+                        count(player.get("shots")), player.get("stats") == null ? null : Json.write(player.get("stats")));
+            }
+            store.markRefreshed(lookupName(teamId, scorerName), Instant.now());
+        });
+    }
+
+    /** Player lookups (see addToSquad); v2: another team's numbers are no longer kept as his club season. */
+    private static final String LOOKUP = "player-lookup-v2/";
+
+    private static String lookupName(long teamId, String name) {
+        return LOOKUP + teamId + "/" + plainName(name);
+    }
+
+    /** A name to compare: no accents, lower case, single spaces ("Pedro João" and "Pedro Joao" match). */
+    static String plainName(String name) {
+        if (name == null) {
+            return "";
+        }
+        return java.text.Normalizer.normalize(name, java.text.Normalizer.Form.NFD).replaceAll("\\p{M}", "")
+                .toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ").trim();
+    }
+
+    /** When a team's squad was last saved with its players' games and goals (older squads count as not saved). */
     public Optional<Instant> squadSavedAt(long teamId) {
-        return store.refreshedAt("squad/" + teamId);
+        return store.refreshedAt("squad-photos/" + teamId);
+    }
+
+    /** A count from the API (number or text), or null. */
+    private static Long count(Object o) {
+        long n = Json.number(o);
+        return n < 0 ? null : n;
     }
 
     /** Teams with a saved fixture (SCHEDULED or TIMED) kicking off between now and {@code days} from now. */

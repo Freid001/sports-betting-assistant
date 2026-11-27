@@ -4,6 +4,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.function.IntSupplier;
 
@@ -22,7 +23,7 @@ import com.sportsbettingassistant.store.Store;
 public class StatsRefreshService {
 
     static final int SQUAD_DAYS = 14;                          // squads for teams playing within 2 weeks
-    static final Duration SQUAD_KEEP = Duration.ofDays(30);    // ...fetched again after a month (transfers)
+    static final Duration SQUAD_KEEP = Duration.ofDays(3);     // ...fetched again after 3 days (goals so far)
     static final List<String> DEFAULT_LEAGUES = List.of("PL", "ELC", "BL1", "SA", "PD", "FL1", "DED", "PPL");
 
     private final GoalStats goal;
@@ -99,7 +100,7 @@ public class StatsRefreshService {
     /**
      * Per competition with fixtures: teams, results (1-3 calls), fixtures, league table and top scorers.
      * Per domestic league its clubs play in (e.g. Bundesliga for Bayern in the Champions League): results,
-     * table (+ top scorers). Then squads of teams playing in the next 2 weeks (1 call each, kept for a month).
+     * table (+ top scorers). Then squads of teams playing in the next 2 weeks (1 call each, kept for 3 days).
      */
     private void run(Status s) {
         try {
@@ -139,8 +140,8 @@ public class StatsRefreshService {
                 }
             }
 
-            // Squads (players and positions) of the teams playing in the next 2 weeks; kept for a month, since
-            // squads only change much in the transfer windows. 1 call per team, so the first refresh takes longer.
+            // Squads (players, positions and each player's games and goals so far) of the teams playing in the next
+            // 2 weeks; fetched again after 3 days so the goals stay current. 1 call per team.
             Instant soon = Instant.now();
             List<Long> squads = tables.teamsPlayingWithin(SQUAD_DAYS).stream()
                     .filter(id -> tables.squadSavedAt(id).map(t -> t.isBefore(soon.minus(SQUAD_KEEP))).orElse(true))
@@ -151,6 +152,16 @@ public class StatsRefreshService {
             for (long id : squads) {
                 String step = "Squads (" + (++n) + " of " + squads.size() + ")";
                 call(s, step, () -> goal.saveSquad(id) ? 1 : 0);
+            }
+
+            // Top scorers GOAL API files under another team (e.g. internationals under their country): found by
+            // name and added to their club's squad, so they get a position and games. 1 call each, every 3 days.
+            List<Map<String, Object>> missing = tables.scorersMissingFromSquads(tables.teamsPlayingWithin(SQUAD_DAYS));
+            s.total += missing.size();
+            int m = 0;
+            for (Map<String, Object> p : missing) {
+                String step = "Players (" + (++m) + " of " + missing.size() + ")";
+                call(s, step, () -> goal.findPlayer((long) p.get("teamId"), (String) p.get("teamName"), (String) p.get("name")) ? 1 : 0);
             }
 
             Instant now = Instant.now();

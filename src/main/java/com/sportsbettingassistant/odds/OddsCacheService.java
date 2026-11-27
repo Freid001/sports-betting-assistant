@@ -346,7 +346,7 @@ public class OddsCacheService {
     /** Markets fetched in-play: the match result plus whichever of these the bookmaker offers. */
     static final List<String> LIVE_MARKETS = List.of("alternate_totals", "totals", "btts", "draw_no_bet");
     /** The points in a match that in-play prices are saved for (the match page's timeline). */
-    static final List<String> LIVE_POINTS = List.of("10", "25", "HT", "60", "80");
+    static final List<String> LIVE_POINTS = List.of("30", "HT", "60", "80");
 
     /**
      * In-play prices for one match right now (The Odds API lists games while they're being played): the match

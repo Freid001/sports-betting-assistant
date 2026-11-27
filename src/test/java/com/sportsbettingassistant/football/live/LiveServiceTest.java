@@ -84,8 +84,8 @@ class LiveServiceTest {
         f.put("awayTeamScore", live ? "0" : "null");
         f.put("matchStatus", status);
         f.put("matchLive", live ? "1" : "0");
-        f.put("matchMinute", live ? "20" : "Not Started");
-        f.put("matchElapsed", live ? "20" : "null");
+        f.put("matchMinute", live ? "30" : "Not Started");
+        f.put("matchElapsed", live ? "30" : "null");
         return f;
     }
 
@@ -724,9 +724,11 @@ class LiveServiceTest {
         f.put("elapsed", "5");
         assertThat(LiveService.pointFor(f)).isNull();
         f.put("elapsed", "12");
-        assertThat(LiveService.pointFor(f)).isEqualTo("10");
+        assertThat(LiveService.pointFor(f)).isNull();                     // no 10' window
+        f.put("elapsed", "27");
+        assertThat(LiveService.pointFor(f)).isNull();                     // the first window is 30'
         f.put("elapsed", "30");
-        assertThat(LiveService.pointFor(f)).isEqualTo("25");
+        assertThat(LiveService.pointFor(f)).isEqualTo("30");
         f.put("elapsed", "50");
         assertThat(LiveService.pointFor(f)).isNull();                     // HT comes from the first-half stats
         f.put("elapsed", "65");
@@ -739,7 +741,7 @@ class LiveServiceTest {
     @SuppressWarnings("unchecked")
     void aLiveGameSavesTheTimelinePointItHasReachedOnce() throws InterruptedException {
         FakeApi api = new FakeApi();
-        Map<String, Object> f = fixture("g1", Instant.now().minus(Duration.ofMinutes(20)), "LIVE", true);   // 20'
+        Map<String, Object> f = fixture("g1", Instant.now().minus(Duration.ofMinutes(30)), "LIVE", true);   // 30'
         api.answers.put("/leagues/" + LEAGUE + "/fixtures", data(f));
         api.answers.put("/fixtures/date/" + f.get("matchDate"), data(f));
         api.answers.put("/fixtures/g1/statistics", statsBody());
@@ -750,7 +752,7 @@ class LiveServiceTest {
         waitFor(() -> !((List<?>) live.match("g1").get("snapshots")).isEmpty());
 
         List<Map<String, Object>> snaps = (List<Map<String, Object>>) live.match("g1").get("snapshots");
-        assertThat(snaps).extracting(x -> x.get("period")).containsExactly("10");
+        assertThat(snaps).extracting(x -> x.get("period")).containsExactly("30");
         assertThat(snaps.get(0).get("homeScore")).isEqualTo("1");
         assertThat((List<Object>) snaps.get(0).get("rows")).isNotEmpty();
     }

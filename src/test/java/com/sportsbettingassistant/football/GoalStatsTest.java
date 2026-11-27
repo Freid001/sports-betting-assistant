@@ -200,4 +200,14 @@ class GoalStatsTest {
         assertThat(GoalStats.whole("4")).isEqualTo(4L);
         assertThat(GoalStats.whole("")).isNull();
     }
+
+    @Test
+    void playerNamesMatchWithAnInitialOrWithoutAccents() {
+        assertThat(GoalStats.sameName("z. tripic", "zan tripic")).isTrue();
+        assertThat(GoalStats.sameName("zan tripic", "z tripic")).isTrue();
+        assertThat(GoalStats.sameName("cole palmer", "cole palmer")).isTrue();
+        assertThat(GoalStats.sameName("z. tripic", "a. tripic")).isFalse();
+        assertThat(GoalStats.sameName("cole palmer", "colin palmer")).isFalse();
+        assertThat(FootballTables.plainName("Z. Tripić")).isEqualTo("z. tripic");
+    }
 }

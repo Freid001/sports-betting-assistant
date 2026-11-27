@@ -43,22 +43,22 @@
                         <div class="text-muted small mt-1">The colour of the top bar, card headers and buttons.</div></td>
                 </tr>
                 <tr>
-                    <td class="text-nowrap fw-semibold pt-2">Stake Bar</td>
-                    <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="stakeBar"></div>
-                        <div class="text-muted small mt-1">The £ stake buttons in the top bar: with a stake picked, odds show what you'd get back.</div></td>
-                </tr>
-                <tr>
-                    <td class="text-nowrap fw-semibold pt-2">Live Stats Refresh</td>
+                    <td class="text-nowrap fw-semibold pt-2">Refresh Data Live</td>
                     <td class="w-100 pt-2">
                         <div class="btn-group btn-group-sm" role="group" id="liveRefresh"></div>
                         <div class="text-muted small mt-1" id="liveRefreshNote"></div>
                     </td>
                 </tr>
                 <tr>
-                    <td class="text-nowrap fw-semibold pt-2">Live Odds Refresh</td>
+                    <td class="text-nowrap fw-semibold pt-2">Refresh Odds Live</td>
                     <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="liveOdds"></div>
-                        <div class="text-muted small mt-1">The bookmaker's in-play odds at each timeline point (10', 25', HT, 60', 80')
-                            of a followed game: everything ticked under Odds · 1 credit per market per refresh.</div></td>
+                        <div class="text-muted small mt-1">Refreshes the bookmaker's in-play odds at each bet window (30' HT 60' 80')
+                            · 1 credit per market per refresh.</div></td>
+                </tr>
+                <tr>
+                    <td class="text-nowrap fw-semibold pt-2">Stake Bar</td>
+                    <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="stakeBar"></div>
+                        <div class="text-muted small mt-1">Shows £ stake buttons in the top bar (on wide screens). Pick one to see what each bet would return.</div></td>
                 </tr>
             </tbody></table>
         </div>
@@ -490,7 +490,7 @@
           has.length + ') × all ' + pl(soon.length, 'match', 'matches'));
         t.appendChild(tb2);
         costCell.replaceChildren(t, el('div', 'text-muted small mt-1', 'Next 30 days · "up to": you\'re only charged for markets ' +
-          name + ' returns. Live odds during games are separate (Live Odds Refresh).'));
+          name + ' returns. Live odds during games are separate (Refresh Odds Live).'));
       }
       var costCell = null;
 
@@ -552,33 +552,35 @@
   }
   loadRefresh();
 
-  /** Live Refresh: how often followed games are refreshed while on; ~2 GOAL calls each time for one game. */
+  /** Refresh Data Live: how often followed games are refreshed while on (or Off); ~2 GOAL calls each time for one game. */
   function liveRefresh(current) {
     var group = $('liveRefresh');
     group.replaceChildren();
-    [1, 2, 5, 10].forEach(function (m) {
+    [1, 2, 5, 10, 0].forEach(function (m) {
       var input = el('input', 'btn-check');
       input.type = 'radio'; input.name = 'liveRefresh'; input.id = 'live-' + m; input.checked = m === current;
       input.addEventListener('change', function () {
         F.sendJson('/api/settings/live-refresh?minutes=' + m).then(function () { note(m); })
           .catch(function (e) { notify(e.message, 'danger'); });
       });
-      var label = el('label', 'btn btn-outline-theme', m + '\'');
+      var label = el('label', 'btn btn-outline-theme', m ? m + '\'' : 'Off');
       label.htmlFor = input.id;
       group.append(input, label);
     });
     function note(m) {
       // a match with stoppage time is about 115 minutes; each refresh is about 2 calls with one game on
-      $('liveRefreshNote').textContent = 'Refresh live stats every ' + m + ' minute' + (m === 1 ? '' : 's') +
-        ' whilst following a live game · 2 GOAL API calls per refresh · about ' + Math.round(115 / m) * 2 + ' per match.';
+      $('liveRefreshNote').textContent = !m
+        ? 'Live games aren\'t refreshed: no live scores, stats, timeline or bet windows · no GOAL API calls.'
+        : 'Refreshes the live match score, stats and timeline every ' + (m === 1 ? 'minute' : m + ' minutes') +
+          ' whilst following a live game · 2 GOAL API calls per refresh · about ' + Math.round(115 / m) * 2 + ' per match.';
     }
     note(current);
   }
-  /** Live Odds Refresh: Off | Timeline Points buttons, like Stake Bar. */
+  /** Refresh Odds Live: On (at each bet window) | Off buttons, like Stake Bar. */
   function liveOdds(current) {
     var group = $('liveOdds');
     group.replaceChildren();
-    [[false, 'Off'], [true, 'Timeline Points']].forEach(function (o) {
+    [[true, 'On'], [false, 'Off']].forEach(function (o) {
       var input = el('input', 'btn-check');
       input.type = 'radio'; input.name = 'liveOdds'; input.id = 'live-odds-' + (o[0] ? 'on' : 'off'); input.checked = o[0] === current;
       input.addEventListener('change', function () {
@@ -590,7 +592,7 @@
     });
   }
   F.getJson('/api/settings').then(function (s) {
-    liveRefresh(s.liveRefresh || 5);
+    liveRefresh(s.liveRefresh != null ? s.liveRefresh : 5);
     liveOdds(s.liveOdds !== false);
   }).catch(function () { liveRefresh(5); liveOdds(true); });
 
@@ -642,7 +644,7 @@
     ].forEach(function (t) {
       var b = el('button', 'btn btn-sm btn-outline-theme', t[0]);
       b.type = 'button';
-      b.addEventListener('click', t[1]);
+      b.addEventListener('click', function () { GoalAlert.stop(); t[1](); });   // again: restart it, don't stack
       $('alertTests').appendChild(b);
     });
   })();
