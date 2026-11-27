@@ -356,6 +356,7 @@ public class GoalStats {
             score.put("halfTime", goals(whole(m.get("homeTeamHalftimeScore")), whole(m.get("awayTeamHalftimeScore"))));
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("id", id);
+            out.put("goalId", Json.text(m.get("id")));   // GOAL API's fixture id (its live calls use it)
             out.put("utcDate", utc);
             out.put("status", status);
             out.put("matchday", whole(m.get("matchRound")));

@@ -43,6 +43,7 @@ class PredictionLogTest {
         p.put("kickoff", KO.toString());
         p.put("home", "Forest");
         p.put("away", "Chelsea");
+        p.put("competition", "epl");
         p.put("homeTeamId", 1);
         p.put("awayTeamId", 2);
         p.put("chances", Map.of("home", home));
@@ -64,28 +65,28 @@ class PredictionLogTest {
     }
 
     @Test
-    void theResultComesFromTheSavedResultsOnceTheGameIsFinished() {
+    void theResultComesFromItsGameOnceTheGameIsFinished() {
+        // Refresh Stats saved the fixture first (GOAL API's kick-off format differs a little)
+        store.update("INSERT INTO games (id, competition, kickoff_at, home_team_id, away_team_id, status) "
+                + "VALUES (9, 'PL', '2026-11-28T15:00:00.000Z', 1, 2, 'SCHEDULED')");
         log.save(prediction("PRE", 0.40), KO.minusSeconds(60));
-        store.update("INSERT INTO matches (id, competition, utc_date, status, home_team_id, away_team_id, home_goals, away_goals, "
-                + "ht_home, ht_away) VALUES (9, 'PL', ?, 'FINISHED', 1, 2, 2, 1, 1, 0)", KO.toString());
+        assertThat(store.first("SELECT game_id FROM game_sources WHERE source = 'odds' AND source_id = 'e1'", rs -> rs.getLong(1)))
+                .contains(9L);                                                 // the same game: same teams, same kick-off
+        assertThat(log.all().get(0).get("result")).isNull();                  // not played yet
 
+        store.update("UPDATE games SET status = 'FINISHED', home_goals = 2, away_goals = 1, ht_home = 1, ht_away = 0 WHERE id = 9");
         Map<String, Object> p = log.all().get(0);
         assertThat(String.valueOf(p.get("result"))).contains("home=2").contains("away=1").contains("htHome=1");
     }
 
     @Test
-    void aGameFollowedLiveGivesItsResultBeforeRefreshStatsDoes() {
-        log.save(prediction("PRE", 0.40), KO.minusSeconds(60));
-        // GOAL API's names ("Nottingham") and kick-off format (.000Z) differ from The Odds API's
-        store.update("INSERT INTO live_games (id, kickoff, home, away, home_score, away_score, status) "
-                + "VALUES ('g1', '2026-11-28T15:00:00.000Z', 'Nottingham Forest', 'Chelsea', '3', '2', 'FINISHED')");
-        store.update("INSERT INTO live_snapshots (game_id, period, home_score, away_score, stats) VALUES ('g1', 'HT', '1', '0', '{}')");
-
-        Map<String, Object> p = log.all().get(0);
-        assertThat(String.valueOf(p.get("result"))).contains("home=3").contains("away=2").contains("htHome=1").contains("htAway=0");
-
-        store.update("UPDATE live_games SET status = 'LIVE'");   // not finished: no result yet
-        assertThat(log.all().get(0).get("result")).isNull();
+    void predictionsSavedBeforeGamesExistedAreLinkedOnce() {
+        store.update("INSERT INTO predictions (match_id, point, kickoff, competition, home_team_id, away_team_id, body) "
+                + "VALUES ('e7', 'PRE', ?, 'epl', 1, 2, '{}'), ('e7', 'HT', ?, 'epl', 1, 2, '{}')", KO.toString(), KO.toString());
+        assertThat(log.linkGames()).isEqualTo(1);                                // one game, both points
+        assertThat(log.linkGames()).isZero();                                    // done: nothing the next time
+        assertThat(store.query("SELECT competition || ' ' || home_team_id || ' ' || away_team_id FROM games", rs -> rs.getString(1)))
+                .containsExactly("PL 1 2");
     }
 
     @Test

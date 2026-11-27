@@ -400,20 +400,40 @@ class OddsCacheServiceTest {
         assertThatThrownBy(() -> cache.refreshLive("soccer_epl", "e1", "skybet", "FT")).isInstanceOf(IllegalArgumentException.class);
     }
 
+    /** Spurs and Ipswich as saved teams, so saved odds events are linked to their game. */
+    private void spursAndIpswich() {
+        store.update("INSERT INTO teams (id, name, short_name) VALUES (1, 'Tottenham Hotspur', 'Tottenham'), (2, 'Ipswich Town', 'Ipswich')");
+        store.update("INSERT INTO competition_teams (competition, team_id) VALUES ('PL', 1), ('PL', 2)");
+    }
+
+    /** GOAL API's game g1 seen as the same game as odds event e1 (as Live Stats links it). */
+    private void goalGameIsEventE1() {
+        var games = new com.sportsbettingassistant.football.Games(store);
+        games.alsoKnownAs(games.game(com.sportsbettingassistant.football.Games.ODDS, "e1").orElseThrow(),
+                com.sportsbettingassistant.football.Games.GOAL, "g1");
+    }
+
     @Test
-    void aGameFromGoalApiIsFoundInTheSavedOddsByKickOffAndLooseNames() {
+    void aSavedEventIsLinkedToItsGameAndAGoalApiGameFindsItById() {
+        spursAndIpswich();
         cache.save("soccer_epl", "2026-11-20T12:00:00Z", 30, "h2h", "skybet", "1", "[{\"id\":\"e1\",\"commence_time\":"
-                + "\"2026-11-21T15:00:00Z\",\"home_team\":\"Tottenham Hotspur\",\"away_team\":\"Ipswich Town\",\"bookmakers\":[]}]");
-        assertThat(cache.findEvent("2026-11-21T15:00:00Z", "Tottenham", "Ipswich"))
-                .contains(Map.of("sport", "soccer_epl", "id", "e1"));
-        assertThat(cache.findEvent("2026-11-21T18:00:00Z", "Tottenham", "Ipswich")).isEmpty();   // different kick-off
-        assertThat(cache.findEvent("2026-11-21T15:00:00Z", "Chelsea", "Leeds")).isEmpty();
+                + "\"2026-11-21T15:00:00Z\",\"home_team\":\"Tottenham Hotspur\",\"away_team\":\"Ipswich Town\",\"bookmakers\":[]},"
+                + "{\"id\":\"e2\",\"commence_time\":\"2026-11-21T15:00:00Z\",\"home_team\":\"Chelsea\",\"away_team\":\"Leeds\",\"bookmakers\":[]}]");
+        assertThat(cache.findEvent("g1")).isEmpty();                          // GOAL API's game not seen yet
+        goalGameIsEventE1();
+        assertThat(cache.findEvent("g1")).contains(Map.of("sport", "soccer_epl", "id", "e1"));
+        assertThat(cache.findEvent("g2")).isEmpty();
+        String saved = cache.read("soccer_epl").orElseThrow();                // for the pages: the teams' ids
+        assertThat(saved).contains("\"id\":\"e1\",\"game_id\":1,\"home_team_id\":1,\"away_team_id\":2")
+                .contains("\"id\":\"e2\",\"game_id\":null");                    // Chelsea, Leeds: not saved teams
     }
 
     @Test
     void aSavedTimelinePointFetchesThatPointsOdds() {
+        spursAndIpswich();
         cache.save("soccer_epl", "2026-11-20T12:00:00Z", 30, "h2h", "skybet", "1", "[{\"id\":\"e1\",\"commence_time\":"
                 + "\"2026-11-21T15:00:00Z\",\"home_team\":\"Tottenham Hotspur\",\"away_team\":\"Ipswich Town\",\"bookmakers\":[]}]");
+        goalGameIsEventE1();
         api.answer("/sports/soccer_epl/events/e1/odds", 200, LIVE, Map.of("x-requests-last", "3", "x-requests-remaining", "400"));
         LiveOddsAtPoints atPoints = new LiveOddsAtPoints(cache);   // Sky Bet: nothing else picked
         var p = new com.sportsbettingassistant.football.live.LiveService.PointSaved("g1", "30", "2026-11-21T15:00:00Z", "Tottenham", "Ipswich");

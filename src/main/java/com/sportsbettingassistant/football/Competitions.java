@@ -53,6 +53,11 @@ public final class Competitions {
             "England", "PL", "Germany", "BL1", "Spain", "PD", "Italy", "SA",
             "France", "FL1", "Netherlands", "DED", "Portugal", "PPL", "Brazil", "BSA");
 
+    /** Our tournament name for a competition code ("PL" -> "epl"), or null. */
+    public static String tournament(String code) {
+        return CODES.entrySet().stream().filter(e -> e.getValue().equals(code)).map(Map.Entry::getKey).findFirst().orElse(null);
+    }
+
     public static String type(String code) {
         return CUPS.contains(code) ? "CUP" : "LEAGUE";
     }

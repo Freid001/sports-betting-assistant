@@ -165,6 +165,54 @@ public class Store implements AutoCloseable {
         INSERT OR IGNORE INTO settings (name, value) VALUES ('stats-source', 'goal-api');
         """;
 
+    /**
+     * Schema changes from version 2 on, in order: MIGRATIONS.get(0) takes a database from version 1 (the tables
+     * above) to 2, the next to 3, and so on. Each runs once, in a transaction, and records its version in SQLite's
+     * user_version. A database file that has data gets a backup copy first (see backupBefore).
+     */
+    static final List<Migration> MIGRATIONS = List.of(
+            // 2: one identity per game. matches becomes games (same ids); each API's own id for a game is a row in
+            // game_sources ('goal' GOAL API's fixture id, 'goal-number' its numeric apiId, 'odds' The Odds API's
+            // event id), and each API's spelling of a team is a row in team_names. Followed games by game id.
+            () -> """
+                CREATE TABLE games (id INTEGER PRIMARY KEY, competition TEXT NOT NULL, kickoff_at TEXT NOT NULL,
+                    home_team_id INTEGER NOT NULL REFERENCES teams (id), away_team_id INTEGER NOT NULL REFERENCES teams (id),
+                    status TEXT, stage TEXT, grp TEXT, matchday INTEGER, home_goals INTEGER, away_goals INTEGER,
+                    ht_home INTEGER, ht_away INTEGER);
+                INSERT INTO games (id, competition, kickoff_at, home_team_id, away_team_id, status, stage, grp, matchday,
+                    home_goals, away_goals, ht_home, ht_away)
+                    SELECT id, competition, utc_date, home_team_id, away_team_id, status, stage, grp, matchday,
+                        home_goals, away_goals, ht_home, ht_away
+                    FROM matches WHERE utc_date IS NOT NULL AND home_team_id IS NOT NULL AND away_team_id IS NOT NULL;
+                CREATE INDEX games_by_home ON games (home_team_id, kickoff_at);
+                CREATE INDEX games_by_away ON games (away_team_id, kickoff_at);
+                CREATE INDEX games_by_competition ON games (competition, status);
+                CREATE TABLE game_sources (source TEXT NOT NULL, source_id TEXT NOT NULL,
+                    game_id INTEGER NOT NULL REFERENCES games (id), PRIMARY KEY (source, source_id));
+                CREATE INDEX game_sources_by_game ON game_sources (game_id, source);
+                INSERT INTO game_sources (source, source_id, game_id) SELECT 'goal-number', CAST(id AS TEXT), id FROM games;
+                DROP TABLE matches;
+                CREATE TABLE team_names (source TEXT NOT NULL, name TEXT NOT NULL,
+                    team_id INTEGER NOT NULL REFERENCES teams (id), PRIMARY KEY (source, name));
+                DROP TABLE live_follow;
+                CREATE TABLE live_follow (game_id INTEGER PRIMARY KEY REFERENCES games (id));
+                """);
+
+    /** One schema change: its SQL (statements separated by ';'), and Java for anything SQL can't do. */
+    public interface Migration {
+        String sql();
+
+        default void after(Statement s) throws SQLException {
+        }
+    }
+
+    /** The schema version the code expects. */
+    public static int currentVersion() {
+        return 1 + MIGRATIONS.size();
+    }
+
+    private final List<Migration> migrations;   // MIGRATIONS (tests can give others)
+
     private Path file;
     private Connection db;
     private int depth;   // nested transaction() calls
@@ -180,8 +228,14 @@ public class Store implements AutoCloseable {
 
     /** {@code file}: the database file, or null to keep everything in memory (until switchTo a file). */
     public Store(Path file) {
+        this(file, MIGRATIONS);
+    }
+
+    /** As above, with these migrations instead of MIGRATIONS (for tests). */
+    Store(Path file, List<Migration> migrations) {
+        this.migrations = migrations;
         this.file = file;
-        this.db = open(file);
+        this.db = open(file, migrations);
     }
 
     private static Path chosen() {
@@ -200,30 +254,111 @@ public class Store implements AutoCloseable {
         }
     }
 
-    private static Connection open(Path file) {
+    private static Connection open(Path file, List<Migration> migrations) {
         try {
             if (file != null && file.toAbsolutePath().getParent() != null) {
                 Files.createDirectories(file.toAbsolutePath().getParent());
             }
             Connection db = DriverManager.getConnection(file == null ? "jdbc:sqlite::memory:" : "jdbc:sqlite:" + file);
             try (Statement s = db.createStatement()) {
-                s.execute("PRAGMA journal_mode=WAL");     // readers don't block the writer
-                s.execute("PRAGMA busy_timeout=5000");
-                run(s, SCHEMA);
-                for (String sql : NEW_COLUMNS) {
-                    try {
-                        s.execute(sql);
-                    } catch (SQLException alreadyThere) {
-                        // a database made after the column was added already has it
-                    }
-                }
-                run(s, LEGACY_CLEANUP);
+                prepare(db, s, file, migrations);
+            } catch (SQLException | RuntimeException e) {
+                db.close();   // (not left open: the file stays free for another try)
+                throw e;
             }
             return db;
         } catch (SQLException | IOException e) {
             throw new IllegalStateException("Couldn't open the database " + (file == null ? "in memory" : file) + ": "
                     + e.getMessage(), e);
         }
+    }
+
+    /** Brings a just-opened database up to date: WAL, the version-1 tables, then the migrations. */
+    private static void prepare(Connection db, Statement s, Path file, List<Migration> migrations) throws SQLException {
+        s.execute("PRAGMA journal_mode=WAL");     // readers don't block the writer
+        s.execute("PRAGMA busy_timeout=5000");
+        int version = version(s);
+        // worth a backup before migrating: anything but a new file (databases from before schema versions are at 0)
+        boolean hadData = version >= 1 || hasTable(s, "settings");
+        if (version <= 1) {   // version 1: the tables above (made, or brought up to date: each step is harmless twice)
+            run(s, SCHEMA);
+            for (String sql : NEW_COLUMNS) {
+                try {
+                    s.execute(sql);
+                } catch (SQLException alreadyThere) {
+                    // a database made after the column was added already has it
+                }
+            }
+            run(s, LEGACY_CLEANUP);
+            if (version == 0) {
+                setVersion(s, 1);
+                version = 1;
+            }
+        }
+        migrate(db, s, hadData ? file : null, version, migrations);
+    }
+
+    private static boolean hasTable(Statement s, String name) throws SQLException {
+        try (ResultSet rs = s.executeQuery("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = '" + name + "'")) {
+            return rs.next();
+        }
+    }
+
+    private static int version(Statement s) throws SQLException {
+        try (ResultSet rs = s.executeQuery("PRAGMA user_version")) {
+            return rs.next() ? rs.getInt(1) : 0;
+        }
+    }
+
+    private static void setVersion(Statement s, int version) throws SQLException {
+        s.execute("PRAGMA user_version = " + version);
+    }
+
+    /** Runs the migrations this database hasn't had yet, after backing it up (file: null for none, e.g. a new file). */
+    private static void migrate(Connection db, Statement s, Path file, int version, List<Migration> migrations)
+            throws SQLException {
+        int latest = 1 + migrations.size();
+        if (version > latest) {
+            throw new SQLException("This database is from a newer version of the app (schema " + version + ").");
+        }
+        if (version == latest) {
+            return;
+        }
+        backupBefore(s, file, version + 1);
+        for (int v = version + 1; v <= latest; v++) {
+            Migration m = migrations.get(v - 2);
+            boolean auto = db.getAutoCommit();
+            db.setAutoCommit(false);
+            try {
+                run(s, m.sql());
+                m.after(s);
+                setVersion(s, v);
+                db.commit();
+            } catch (SQLException | RuntimeException e) {
+                db.rollback();
+                throw new SQLException("Couldn't update the database to schema " + v + ": " + e.getMessage(), e);
+            } finally {
+                db.setAutoCommit(auto);
+            }
+            log.info("Database updated to schema {}", v);
+        }
+    }
+
+    /**
+     * Before changing a database file's tables: a copy of it as it was, next to it ("…/sports-betting-assistant
+     * .before-schema-2.db"). Kept if there already is one (a first attempt's copy is the one worth keeping).
+     */
+    static Path backupBefore(Statement s, Path file, int toVersion) throws SQLException {
+        if (file == null) {
+            return null;
+        }
+        String name = file.getFileName().toString().replaceFirst("\\.db$", "");
+        Path copy = file.resolveSibling(name + ".before-schema-" + toVersion + ".db");
+        if (!Files.exists(copy)) {
+            s.execute("VACUUM INTO '" + copy.toString().replace("'", "''") + "'");
+            log.info("Backed up the database to {} before updating it", copy);
+        }
+        return copy;
     }
 
     /**
@@ -234,7 +369,7 @@ public class Store implements AutoCloseable {
         if (depth > 0) {
             throw new IllegalStateException("Can't switch database files in the middle of saving.");
         }
-        Connection next = open(newFile);
+        Connection next = open(newFile, migrations);
         Connection old = db;
         db = next;
         file = newFile;
@@ -267,10 +402,10 @@ public class Store implements AutoCloseable {
                 Files.deleteIfExists(Path.of(file + end));
             }
         } catch (IOException e) {
-            db = open(file);   // keep working with what's there
+            db = open(file, migrations);   // keep working with what's there
             throw new IllegalStateException("Couldn't delete " + file + ": " + e.getMessage(), e);
         }
-        db = open(file);
+        db = open(file, migrations);
         log.info("Deleted all data: {} is empty now", file.toAbsolutePath());
     }
 

@@ -378,8 +378,15 @@ window.Football = (function () {
     'lyon': 'olympique lyonnais'
   };
 
-  /** The saved team (id, name, crest...) for an Odds API team name, or null. */
-  function findTeam(teams, name) {
+  /**
+   * The saved team (id, name, crest...) for an Odds API team: by its id when the server matched the name to a team
+   * (the event's home_team_id / away_team_id), else by the name, or null.
+   */
+  function findTeam(teams, name, id) {
+    if (id != null) {
+      var byId = teams.find(function (t) { return t.id === id; });
+      if (byId) return byId;
+    }
     var n = norm(name);
     if (ALIASES[n]) n = ALIASES[n];
     if (!n) return null;
@@ -410,15 +417,15 @@ window.Football = (function () {
     return best;
   }
 
-  function findCrest(teams, name) {
-    var t = findTeam(teams, name);
+  function findCrest(teams, name, id) {
+    var t = findTeam(teams, name, id);
     return t && t.crest ? t.crest : null;
   }
 
   /** A logo element: crest if found, else a country flag for national teams, else initials. */
-  function logo(teams, name, size) {
+  function logo(teams, name, size, id) {
     size = size || 48;
-    var url = findCrest(teams, name);
+    var url = findCrest(teams, name, id);
     if (!url) {
       var code = FLAGS[name.toLowerCase()];
       if (code) url = 'https://flagcdn.com/w80/' + code + '.png';

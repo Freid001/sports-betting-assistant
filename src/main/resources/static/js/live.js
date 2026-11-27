@@ -40,26 +40,10 @@ window.Live = (function () {
 
   function getState() { return F.getJson('/api/football/live'); }
 
-  // ---- matching a GOAL API game to an Odds API match: same kick-off (±30 min) and similar team names ----
-  function sim(a, b) {
-    a = F.norm(a); b = F.norm(b);
-    if (!a || !b) return 0;
-    if (a === b) return 3;
-    if (a.indexOf(b) >= 0 || b.indexOf(a) >= 0) return 2;
-    var ta = a.split(' '), tb = b.split(' ');
-    if (ta[0] === tb[0] && ta[0].length >= 4) return 1;
-    if (a.slice(0, 4) === b.slice(0, 4)) return 1;
-    return 0;
-  }
+  // ---- a GOAL API game for an Odds API match: the server links both to one game (eventId on each listed game) ----
   function findFor(state, ev) {
-    if (!state || !state.fixtures) return null;
-    var t = new Date(ev.commence_time).getTime(), best = null, bestScore = 1;
-    state.fixtures.forEach(function (fx) {
-      if (Math.abs(new Date(fx.kickoff).getTime() - t) > 30 * 60000) return;
-      var s = sim(fx.home, ev.home_team) + sim(fx.away, ev.away_team);
-      if (s > bestScore) { best = fx; bestScore = s; }
-    });
-    return best;
+    if (!state || !state.fixtures || !ev) return null;
+    return state.fixtures.find(function (fx) { return fx.eventId != null && fx.eventId === ev.id; }) || null;
   }
   function isTracked(state, fx) { return !!(fx && state && state.tracked.indexOf(fx.id) >= 0); }
   /** Monitoring is on while a ticked game hasn't finished. */
@@ -182,7 +166,7 @@ window.Live = (function () {
     btn.onclick = function () {
       btn.disabled = true;
       F.sendJson('/api/football/live/post-match', { games: games.map(function (g) {
-        return { tournament: g.tournament, kickoff: g.kickoff, home: g.home, away: g.away };
+        return { eventId: g.eventId, home: g.home, away: g.away };
       }) }).then(function (r) {
         var msg = 'Post-Match: stats loaded for ' + r.loaded + ' game(s) (' + r.calls + ' GOAL API calls).';
         if (r.missing && r.missing.length) msg += ' Not found or not finished: ' + r.missing.join(', ') + '.';
@@ -346,11 +330,8 @@ window.Live = (function () {
   // ---- Live Match Stats card (match page) ----
   /** A game picked with the play button that GOAL API doesn't list yet (it's looked up on match day). */
   function followingFor(state, ev) {
-    if (!state || !state.following) return null;
-    var t = new Date(ev.commence_time).getTime();
-    return state.following.find(function (w) {
-      return Math.abs(new Date(w.kickoff).getTime() - t) <= 30 * 60000 && sim(w.home, ev.home_team) + sim(w.away, ev.away_team) > 1;
-    }) || null;
+    if (!state || !state.following || !ev) return null;
+    return state.following.find(function (w) { return w.eventId === ev.id; }) || null;
   }
   function tournamentOf(ev) { return String(ev.sport_key || '').replace(/^soccer_/, ''); }
 
@@ -368,9 +349,7 @@ window.Live = (function () {
 
   /** Follow (on) or stop following this game live, then redraw the card. */
   function follow(box, footLeft, ev, on) {
-    var q = 'tournament=' + encodeURIComponent(tournamentOf(ev)) + '&kickoff=' + encodeURIComponent(ev.commence_time) +
-      '&home=' + encodeURIComponent(ev.home_team) + '&away=' + encodeURIComponent(ev.away_team) + '&on=' + on;
-    return F.sendJson('/api/football/live/follow?' + q).then(function (state) {
+    return F.sendJson('/api/football/live/follow?eventId=' + encodeURIComponent(ev.id) + '&on=' + on).then(function (state) {
       notify(on ? 'Following ' + ev.home_team + ' v ' + ev.away_team + ' live: its stats are saved at 10\', 25\', HT, 60\', 80\' and FT.'
                 : 'Stopped following ' + ev.home_team + ' v ' + ev.away_team + '.', 'success');
       return renderCard(box, footLeft, state, ev);
@@ -428,7 +407,7 @@ window.Live = (function () {
       btn.title = 'Fetches this game\'s half-time and full-time stats once: 2 GOAL API calls';
       btn.onclick = function () {
         btn.disabled = true;
-        replay(ev, tournament).then(function (m) {
+        replay(ev).then(function (m) {
           drawCard(box, footLeft, m, m.fixture, ev);
           notify('Loaded the stats for ' + ev.home_team + ' v ' + ev.away_team + '.', 'success');
         }).catch(function (e) {
@@ -443,11 +422,8 @@ window.Live = (function () {
     return Promise.resolve(null);
   }
 
-  function replay(ev, tournament) {
-    var q = 'tournament=' + encodeURIComponent(tournament) + '&date=' + ukDate(ev.commence_time) +
-      '&kickoff=' + encodeURIComponent(ev.commence_time) + '&home=' + encodeURIComponent(ev.home_team) +
-      '&away=' + encodeURIComponent(ev.away_team);
-    return F.sendJson('/api/football/live/replay?' + q);
+  function replay(ev) {
+    return F.sendJson('/api/football/live/replay?eventId=' + encodeURIComponent(ev.id));
   }
 
   /**

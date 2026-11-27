@@ -24,9 +24,9 @@ class StoreTest {
     void allTablesAreCreatedInANewFile() {
         try (Store s = open()) {
             assertThat(s.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name", rs -> rs.getString(1)))
-                    .contains("teams", "matches", "scorers", "head_to_head", "odds_events", "odds_prices", "live_games",
-                            "favourites", "refreshes", "api_usage")
-                    .doesNotContain("saved");
+                    .contains("teams", "games", "game_sources", "team_names", "scorers", "head_to_head", "odds_events",
+                            "odds_prices", "live_games", "favourites", "refreshes", "api_usage")
+                    .doesNotContain("saved", "matches");
             assertThat(s.file()).isEqualTo(tmp.resolve("data/test.db"));
         }
         assertThat(tmp.resolve("data/test.db")).exists();
@@ -99,11 +99,111 @@ class StoreTest {
         }
     }
 
+    // ---------------------------------------------------------------- schema versions
+
+    private static Store.Migration sql(String script) {
+        return () -> script;
+    }
+
+    private static int version(Store s) {
+        return s.first("PRAGMA user_version", rs -> rs.getInt(1)).orElse(-1);
+    }
+
+    @Test
+    void aNewFileIsAtTheCurrentSchemaWithNoBackup() {
+        try (Store s = open()) {
+            assertThat(version(s)).isEqualTo(Store.currentVersion());
+        }
+        assertThat(tmp.resolve("data").toFile().list()).noneMatch(n -> n.contains("before-schema"));
+    }
+
+    @Test
+    void migrationsRunOnceInOrderAfterABackupOfTheOldFile() {
+        Path db = tmp.resolve("data/test.db");
+        try (Store s = new Store(db, java.util.List.of())) {   // schema 1, with some data
+            s.update("INSERT INTO settings (name, value) VALUES ('theme', 'black')");
+        }
+        var steps = java.util.List.of(
+                sql("CREATE TABLE games (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO games VALUES (1, 'a')"),
+                sql("ALTER TABLE games ADD COLUMN kickoff_at TEXT; UPDATE games SET kickoff_at = 'k'"));
+        try (Store s = new Store(db, steps)) {
+            assertThat(version(s)).isEqualTo(3);
+            assertThat(s.first("SELECT name || kickoff_at FROM games", rs -> rs.getString(1))).contains("ak");
+        }
+        try (Store s = new Store(db, steps)) {   // again: nothing re-runs (CREATE TABLE games would fail)
+            assertThat(version(s)).isEqualTo(3);
+        }
+        Path backup = tmp.resolve("data/test.before-schema-2.db");
+        assertThat(backup).exists();
+        try (Store old = new Store(backup, java.util.List.of())) {   // the copy as it was: schema 1, its data, no games
+            assertThat(version(old)).isEqualTo(1);
+            assertThat(old.first("SELECT value FROM settings WHERE name = 'theme'", rs -> rs.getString(1))).contains("black");
+            assertThat(old.query("SELECT name FROM sqlite_master WHERE name = 'games'", rs -> rs.getString(1))).isEmpty();
+        }
+    }
+
+    @Test
+    void aDatabaseFromBeforeSchemaVersionsIsBackedUpToo() throws Exception {
+        Path db = tmp.resolve("data/test.db");
+        try (Store s = new Store(db, java.util.List.of())) {
+            s.update("INSERT INTO settings (name, value) VALUES ('theme', 'black')");
+            s.update("PRAGMA user_version = 0");   // as every database made before versions were recorded
+        }
+        try (Store s = new Store(db, java.util.List.of(sql("CREATE TABLE games (id INTEGER)")))) {
+            assertThat(version(s)).isEqualTo(2);
+        }
+        assertThat(tmp.resolve("data/test.before-schema-2.db")).exists();
+    }
+
+    @Test
+    void aFailedMigrationChangesNothingAndSaysWhy() {
+        Path db = tmp.resolve("data/test.db");
+        new Store(db, java.util.List.of()).close();
+        var steps = java.util.List.of(sql("CREATE TABLE games (id INTEGER); INSERT INTO nowhere VALUES (1)"));
+        assertThatThrownBy(() -> new Store(db, steps)).hasMessageContaining("schema 2");
+        try (Store s = new Store(db, java.util.List.of())) {
+            assertThat(version(s)).isEqualTo(1);
+            assertThat(s.query("SELECT name FROM sqlite_master WHERE name = 'games'", rs -> rs.getString(1))).isEmpty();
+        }
+    }
+
+    @Test
+    void schema2MovesMatchesIntoGamesKeepingTheirIdsAndRemembersGoalApisNumbers() {
+        Path db = tmp.resolve("data/test.db");
+        try (Store s = new Store(db, java.util.List.of())) {   // schema 1
+            s.update("INSERT INTO matches (id, competition, utc_date, status, home_team_id, away_team_id, home_goals, away_goals) "
+                    + "VALUES (812812, 'PL', '2026-12-27T19:00:00Z', 'FINISHED', 3429, 141, 2, 1), "
+                    + "(7, 'PL', NULL, 'SCHEDULED', 1, 2, NULL, NULL)");   // no kick-off: not a game
+            s.update("INSERT INTO live_follow (tournament, kickoff, home, away) VALUES ('epl', 'k', 'A', 'B')");
+        }
+        try (Store s = new Store(db)) {
+            assertThat(version(s)).isEqualTo(2);
+            assertThat(s.query("SELECT id || ' ' || kickoff_at || ' ' || home_goals FROM games", rs -> rs.getString(1)))
+                    .containsExactly("812812 2026-12-27T19:00:00Z 2");
+            assertThat(s.query("SELECT source || ' ' || source_id || ' ' || game_id FROM game_sources", rs -> rs.getString(1)))
+                    .containsExactly("goal-number 812812 812812");
+            assertThat(s.query("SELECT name FROM sqlite_master WHERE name = 'matches'", rs -> rs.getString(1))).isEmpty();
+            assertThat(s.query("SELECT name FROM pragma_table_info('live_follow')", rs -> rs.getString(1))).containsExactly("game_id");
+        }
+        assertThat(tmp.resolve("data/test.before-schema-2.db")).exists();
+    }
+
+    @Test
+    void aDatabaseFromANewerVersionOfTheAppIsLeftAlone() {
+        Path db = tmp.resolve("data/test.db");
+        try (Store s = new Store(db)) {
+            s.update("PRAGMA user_version = 99");
+        }
+        assertThatThrownBy(() -> new Store(db)).hasMessageContaining("newer version");
+    }
+
     @Test
     void anOlderDatabaseLosesItsUnusedKeyValueTable() {
-        try (Store s = open()) {
+        Path db = tmp.resolve("data/test.db");
+        try (Store s = new Store(db, java.util.List.of())) {   // a database from before schema versions
             s.update("CREATE TABLE saved (key TEXT PRIMARY KEY, value TEXT, saved_at INTEGER)");
             s.markRefreshed("old-files-imported", Instant.now());
+            s.update("PRAGMA user_version = 0");
         }
         try (Store s = open()) {
             assertThat(s.query("SELECT name FROM sqlite_master WHERE name = 'saved'", rs -> rs.getString(1))).isEmpty();

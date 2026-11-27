@@ -24,6 +24,8 @@ import org.springframework.core.env.Environment;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
+import com.sportsbettingassistant.football.Competitions;
+import com.sportsbettingassistant.football.Games;
 import com.sportsbettingassistant.json.Json;
 import com.sportsbettingassistant.store.Store;
 
@@ -57,6 +59,7 @@ public class LiveService {
 
     private final GoalApiClient api;
     private final Store store;
+    private final Games games;
     private final Map<String, String> leagues;   // our tournament key -> GOAL API league id
     private final int refreshMinutes, maxGames, reserve;
 
@@ -73,8 +76,8 @@ public class LiveService {
     static final Duration OFFICIAL_EVERY = Duration.ofMinutes(5);
     /** Every player with a shot in the last refresh (side -> players), to see who scored or hit the target since. */
     private final Map<String, Map<String, List<Map<String, Object>>>> lastPlayers = new LinkedHashMap<>();
-    /** Games picked to follow before GOAL API lists them: {tournament, kickoff, home, away}. Ticked on match day. */
-    private final List<Map<String, Object>> following = new ArrayList<>();
+    /** Games (games.id) picked to follow before GOAL API lists them. Ticked on match day. */
+    private final Set<Long> following = new LinkedHashSet<>();
     /** Competition and day already looked up for followed games (so a game GOAL API doesn't list costs 1 call a day). */
     private final Set<String> lookedUp = new LinkedHashSet<>();
     private Instant lastRefresh, lastList;
@@ -112,6 +115,7 @@ public class LiveService {
                        @Value("${goal-api.reserve-calls:50}") int reserve) {
         this.api = api;
         this.store = store;
+        this.games = new Games(store);
         this.leagues = Binder.get(env).bind("goal-api.leagues", Bindable.mapOf(String.class, String.class))
                 .orElse(Map.of());
         this.refreshMinutes = Math.max(1, refreshMinutes);
@@ -135,11 +139,12 @@ public class LiveService {
         out.put("watching", !active(Instant.now()).isEmpty());
         out.put("warning", warning);
         out.put("tracked", new ArrayList<>(tracked));
-        out.put("following", new ArrayList<>(following));
+        out.put("following", following.stream().map(this::followed).flatMap(Optional::stream).toList());
         List<Map<String, Object>> list = new ArrayList<>();
         for (Map<String, Object> f : fixtures.values()) {
             Map<String, Object> copy = new LinkedHashMap<>(f);
             copy.put("saved", snapshots.containsKey(String.valueOf(f.get("id"))));
+            copy.put("eventId", eventId(String.valueOf(f.get("id"))));
             list.add(copy);
         }
         list.sort(Comparator.comparing(f -> String.valueOf(f.get("kickoff"))));
@@ -189,8 +194,7 @@ public class LiveService {
             for (Map.Entry<String, String> l : leagues.entrySet()) {
                 try {
                     for (Map<String, Object> f : GoalData.list(api.getJson("/leagues/" + l.getValue() + "/fixtures", params))) {
-                        Map<String, Object> s = GoalData.summary(f, l.getKey());
-                        fixtures.put(String.valueOf(s.get("id")), s);
+                        put(GoalData.summary(f, l.getKey()));
                     }
                 } catch (RuntimeException e) {
                     failed.add(l.getKey());
@@ -230,25 +234,14 @@ public class LiveService {
     /**
      * Follows a game live from the match page (its play button), even days ahead: on match day it's looked up in
      * GOAL API (1 call per competition and day) and ticked, then refreshed and saved at 30', HT, 60', 80' and FT.
-     * A game GOAL API already lists is ticked straight away.
+     * A game GOAL API already lists is ticked straight away. eventId: The Odds API's id for the game.
      */
-    public synchronized Map<String, Object> follow(String tournament, String kickoff, String home, String away) {
-        if (!leagues.containsKey(tournament)) {
-            throw new IllegalArgumentException("No GOAL API league for " + tournament);
-        }
-        if (GoalData.instant(kickoff) == null) {
-            throw new IllegalArgumentException("Bad kick-off time: " + kickoff);
-        }
-        String known = findFixture(tournament, kickoff, home, away);
+    public synchronized Map<String, Object> follow(String eventId) {
+        long game = gameOf(eventId);
+        String known = fixtureOf(game);
         if (known != null) {
             addTracked(known);
-        } else if (following.stream().noneMatch(w -> TeamNames.sameGame(w, tournament, kickoff, home, away))) {
-            Map<String, Object> w = new LinkedHashMap<>();
-            w.put("tournament", tournament);
-            w.put("kickoff", kickoff);
-            w.put("home", home);
-            w.put("away", away);
-            following.add(w);
+        } else if (following.add(game)) {
             resolveFollowing(Instant.now());
         }
         save();
@@ -256,12 +249,14 @@ public class LiveService {
     }
 
     /** Stops following a game (from the match page): unticks it, or forgets it if it isn't listed yet. */
-    public synchronized Map<String, Object> unfollow(String tournament, String kickoff, String home, String away) {
-        following.removeIf(w -> TeamNames.sameGame(w, tournament, kickoff, home, away));
-        String known = findFixture(tournament, kickoff, home, away);
-        if (known != null) {
-            tracked.remove(known);
-        }
+    public synchronized Map<String, Object> unfollow(String eventId) {
+        games.game(Games.ODDS, eventId).ifPresent(game -> {
+            following.remove(game);
+            String known = fixtureOf(game);
+            if (known != null) {
+                tracked.remove(known);
+            }
+        });
         save();
         return state();
     }
@@ -272,21 +267,84 @@ public class LiveService {
         }
     }
 
-    /** A listed game for this match (same competition, kick-off within 30 minutes, similar names), or null. */
-    private String findFixture(String tournament, String kickoff, String home, String away) {
-        String best = null;
-        int bestScore = 3;
-        for (Map<String, Object> f : fixtures.values()) {
-            if (!tournament.equals(f.get("tournament")) || !TeamNames.near(f.get("kickoff"), kickoff)) {
-                continue;
-            }
-            int score = TeamNames.similar(f.get("home"), home) + TeamNames.similar(f.get("away"), away);
-            if (score > bestScore) {
-                best = String.valueOf(f.get("id"));
-                bestScore = score;
-            }
+    /** The game (games.id) an odds event is, for a competition GOAL API has; else a message saying why not. */
+    private long gameOf(String eventId) {
+        long game = games.game(Games.ODDS, eventId).orElseThrow(() -> new IllegalArgumentException(
+                "This game isn't matched to GOAL API's teams yet (Refresh Odds, then try again)."));
+        String tournament = tournamentOf(game);
+        if (tournament == null || !leagues.containsKey(tournament)) {
+            throw new IllegalArgumentException("No GOAL API league for this game's competition.");
         }
-        return best;
+        return game;
+    }
+
+    /** Our tournament name ("epl") for a game's competition. */
+    private String tournamentOf(long game) {
+        return games.get(game).map(g -> Competitions.tournament(String.valueOf(g.get("competition")))).orElse(null);
+    }
+
+    /** GOAL API's listed game for one of our games, or null if it isn't listed (yet). */
+    private String fixtureOf(long game) {
+        return games.sourceId(game, Games.GOAL).filter(fixtures::containsKey).orElse(null);
+    }
+
+    /** The Odds API's id for a listed game (through the game both are), or null. */
+    private String eventId(String fixtureId) {
+        return games.game(Games.GOAL, fixtureId).flatMap(games::oddsEvent).orElse(null);
+    }
+
+    /** A followed game as the pop-up lists it: {gameId, eventId, tournament, kickoff, home, away}. */
+    private Optional<Map<String, Object>> followed(long game) {
+        return store.first("SELECT g.competition, g.kickoff_at, COALESCE(h.short_name, h.name), COALESCE(a.short_name, a.name) "
+                + "FROM games g JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id WHERE g.id = ?", rs -> {
+                    Map<String, Object> w = new LinkedHashMap<>();
+                    w.put("gameId", game);
+                    w.put("eventId", games.oddsEvent(game).orElse(null));
+                    w.put("tournament", Competitions.tournament(rs.getString(1)));
+                    w.put("kickoff", rs.getString(2));
+                    w.put("home", rs.getString(3));
+                    w.put("away", rs.getString(4));
+                    return w;
+                }, game);
+    }
+
+    /**
+     * Keeps a GOAL API game's summary and links it to its game (once: by its teams' GOAL API ids, else their names),
+     * so the odds and the match page find it by id.
+     */
+    private void put(Map<String, Object> f) {
+        String id = String.valueOf(f.get("id"));
+        fixtures.put(id, f);
+        link(f);
+    }
+
+    private void link(Map<String, Object> f) {
+        String id = String.valueOf(f.get("id")), code = Competitions.CODES.get(String.valueOf(f.get("tournament")));
+        try {
+            if (code == null || games.game(Games.GOAL, id).isPresent()) {
+                return;
+            }
+            Optional<Long> home = team(code, f, "home"), away = team(code, f, "away");
+            if (home.isPresent() && away.isPresent()) {
+                games.link(Games.GOAL, id, code, GoalData.text(f, "kickoff"), home.get(), away.get());
+            }
+        } catch (RuntimeException e) {
+            log.warn("Couldn't link GOAL API game {} to a game: {}", id, e.getMessage());
+        }
+    }
+
+    private Optional<Long> team(String code, Map<String, Object> f, String side) {
+        String goalId = GoalData.text(f, side + "TeamGoalId");
+        Optional<Long> byId = goalId == null ? Optional.empty()
+                : store.first("SELECT team_id FROM goal_teams WHERE goal_id = ?", rs -> rs.getLong(1), goalId);
+        return byId.isPresent() ? byId : games.team(Games.GOAL, code, GoalData.text(f, side));
+    }
+
+    /** That day's games in a competition (1 call), kept and linked. */
+    private void loadDay(String tournament, String league, String date) {
+        for (Map<String, Object> g : GoalData.list(api.getJson("/fixtures/date/" + date, Map.of("leagueId", league)))) {
+            put(GoalData.summary(g, tournament));
+        }
     }
 
     /**
@@ -294,34 +352,35 @@ public class LiveService {
      * (1 call each). Followed games more than a day past kick-off are dropped.
      */
     void resolveFollowing(Instant now) {
-        following.removeIf(w -> {
-            Instant ko = GoalData.instant(w.get("kickoff"));
+        following.removeIf(game -> {
+            Instant ko = games.get(game).map(g -> GoalData.instant(g.get("kickoffAt"))).orElse(null);
             return ko == null || ko.isBefore(now.minus(Duration.ofDays(1)));
         });
         LocalDate today = LocalDate.ofInstant(now, UK);
-        for (Map<String, Object> w : new ArrayList<>(following)) {
-            String tournament = String.valueOf(w.get("tournament")), kickoff = String.valueOf(w.get("kickoff"));
-            String date = LocalDate.ofInstant(GoalData.instant(kickoff), UK).toString();
+        for (Long game : new ArrayList<>(following)) {
+            Map<String, Object> g = games.get(game).orElse(null);
+            String tournament = tournamentOf(game);
+            if (g == null || tournament == null) {
+                continue;
+            }
+            String date = LocalDate.ofInstant(GoalData.instant(g.get("kickoffAt")), UK).toString();
             if (!date.equals(today.toString())) {
                 continue;
             }
             String league = leagues.get(tournament);
             if (league != null && lookedUp.add(league + "|" + date)) {
                 try {
-                    for (Map<String, Object> g : GoalData.list(api.getJson("/fixtures/date/" + date, Map.of("leagueId", league)))) {
-                        Map<String, Object> f = GoalData.summary(g, tournament);
-                        fixtures.put(String.valueOf(f.get("id")), f);
-                    }
+                    loadDay(tournament, league, date);
                 } catch (RuntimeException e) {
                     lookedUp.remove(league + "|" + date);   // try again at the next refresh
                     log.warn("GOAL API games for followed {} failed: {}", tournament, e.getMessage());
                     continue;
                 }
             }
-            String id = findFixture(tournament, kickoff, String.valueOf(w.get("home")), String.valueOf(w.get("away")));
+            String id = fixtureOf(game);
             if (id != null) {
                 addTracked(id);
-                following.remove(w);
+                following.remove(game);
             }
         }
     }
@@ -329,32 +388,18 @@ public class LiveService {
     /**
      * Loads one game once, even a finished one: that day's games in its competition (1 call) to find it and get the
      * scores, then its stats (1 call), saved as HT and FT snapshots and kept 14 days. The game is ticked.
-     * kickoff (ISO) is optional; home and away are matched loosely (e.g. "Tottenham Hotspur" finds "Tottenham").
+     * eventId: The Odds API's id for the game.
      */
-    public synchronized Map<String, Object> replay(String tournament, String date, String kickoff, String home, String away) {
-        String league = leagues.get(tournament);
-        if (league == null) {
-            throw new IllegalArgumentException("No GOAL API league for " + tournament);
+    public synchronized Map<String, Object> replay(String eventId) {
+        long game = gameOf(eventId);
+        String tournament = tournamentOf(game);
+        String date = LocalDate.ofInstant(GoalData.instant(games.get(game).orElseThrow().get("kickoffAt")), UK).toString();
+        loadDay(tournament, leagues.get(tournament), date);
+        String id = fixtureOf(game);
+        if (id == null) {
+            throw new IllegalArgumentException("Couldn't find this game on " + date + " in GOAL API.");
         }
-        Map<String, Object> best = null;
-        int bestScore = 3;   // both names must at least partly match
-        for (Map<String, Object> g : GoalData.list(api.getJson("/fixtures/date/" + date, Map.of("leagueId", league)))) {
-            Map<String, Object> f = GoalData.summary(g, tournament);
-            if (kickoff != null && !kickoff.isBlank() && !TeamNames.near(f.get("kickoff"), kickoff)) {
-                continue;
-            }
-            int score = TeamNames.similar(f.get("home"), home) + TeamNames.similar(f.get("away"), away);
-            if (score > bestScore) {
-                best = f;
-                bestScore = score;
-            }
-        }
-        if (best == null) {
-            throw new IllegalArgumentException("Couldn't find " + home + " v " + away + " on " + date + " in GOAL API.");
-        }
-        String id = String.valueOf(best.get("id"));
-        fixtures.put(id, best);
-        loadStats(id, best);
+        loadStats(id, fixtures.get(id));
         tracked.add(id);
         save();
         return match(id);
@@ -376,67 +421,70 @@ public class LiveService {
         }
         if (GoalData.isFinished(f)) {
             putSnapshot(id, "FT", f.get("homeScore"), f.get("awayScore"), GoalData.statsFromRows(Json.maps(match.get("fullTime"))));
+            saveResult(id, f);
+        }
+    }
+
+    /** A finished game's score in games (so the prediction log has it before Refresh Stats brings it). */
+    private void saveResult(String id, Map<String, Object> f) {
+        Long h = whole(f.get("homeScore")), a = whole(f.get("awayScore"));
+        if (h == null || a == null) {
+            return;
+        }
+        games.game(Games.GOAL, id).ifPresent(game -> store.update("UPDATE games SET status = 'FINISHED', home_goals = ?, "
+                + "away_goals = ?, ht_home = COALESCE(?, ht_home), ht_away = COALESCE(?, ht_away) WHERE id = ?",
+                h, a, whole(f.get("htHome")), whole(f.get("htAway")), game));
+    }
+
+    private static Long whole(Object o) {
+        try {
+            return o == null ? null : Long.valueOf(String.valueOf(o).trim());
+        } catch (NumberFormatException e) {
+            return null;
         }
     }
 
     /**
      * Post-Match for many games at once (Live Stats pop-up): for each competition and day, its games (1 call), then
      * each finished game's stats (1 call) saved as HT and FT points. Games that already have FT are skipped. No odds
-     * (finished games have none). games: [{tournament, kickoff, home, away}].
+     * (finished games have none). list: [{eventId, home, away}] (the names only for the message).
      * Returns {loaded, skipped, missing:[names], calls}.
      */
-    public synchronized Map<String, Object> postMatch(List<Map<String, Object>> games) {
+    public synchronized Map<String, Object> postMatch(List<Map<String, Object>> list) {
         int loaded = 0, skipped = 0, calls = 0;
         List<String> missing = new ArrayList<>();
-        Map<String, List<Map<String, Object>>> days = new LinkedHashMap<>();
-        for (Map<String, Object> g : games) {
-            String tournament = Json.text(g.get("tournament")), kickoff = Json.text(g.get("kickoff"));
-            String home = Json.text(g.get("home")), away = Json.text(g.get("away"));
-            String name = home + " v " + away;
+        Set<String> days = new LinkedHashSet<>();
+        for (Map<String, Object> g : list) {
+            String name = Json.text(g.get("home")) + " v " + Json.text(g.get("away"));
+            Optional<Long> game = games.game(Games.ODDS, Json.text(g.get("eventId")));
+            String tournament = game.map(this::tournamentOf).orElse(null);
             String league = tournament == null ? null : leagues.get(tournament);
-            Instant ko = GoalData.instant(kickoff);
-            if (league == null || ko == null || home == null || away == null) {
+            Instant ko = game.flatMap(games::get).map(x -> GoalData.instant(x.get("kickoffAt"))).orElse(null);
+            if (league == null || ko == null) {
                 missing.add(name);
                 continue;
             }
             String date = LocalDate.ofInstant(ko, UK).toString();
-            List<Map<String, Object>> day = days.get(league + "|" + date);
-            if (day == null) {
+            if (fixtureOf(game.get()) == null && days.add(league + "|" + date)) {
                 try {
                     calls++;
-                    day = new ArrayList<>();
-                    for (Map<String, Object> x : GoalData.list(api.getJson("/fixtures/date/" + date, Map.of("leagueId", league)))) {
-                        Map<String, Object> f = GoalData.summary(x, tournament);
-                        fixtures.put(String.valueOf(f.get("id")), f);
-                        day.add(f);
-                    }
+                    loadDay(tournament, league, date);
                 } catch (RuntimeException e) {
                     log.warn("GOAL API games for {} on {} failed: {}", tournament, date, e.getMessage());
-                    day = List.of();
-                }
-                days.put(league + "|" + date, day);
-            }
-            Map<String, Object> best = null;
-            int bestScore = 3;
-            for (Map<String, Object> f : day) {
-                int score = TeamNames.near(f.get("kickoff"), kickoff) ? TeamNames.similar(f.get("home"), home) + TeamNames.similar(f.get("away"), away) : 0;
-                if (score > bestScore) {
-                    best = f;
-                    bestScore = score;
                 }
             }
-            if (best == null || !GoalData.isFinished(best)) {
+            String id = fixtureOf(game.get());
+            if (id == null || !GoalData.isFinished(fixtures.get(id))) {
                 missing.add(name);
                 continue;
             }
-            String id = String.valueOf(best.get("id"));
             if (snapshots.getOrDefault(id, Map.of()).containsKey("FT")) {
                 skipped++;
                 continue;
             }
             try {
                 calls++;
-                loadStats(id, best);
+                loadStats(id, fixtures.get(id));
                 loaded++;
             } catch (RuntimeException e) {
                 log.warn("GOAL API stats for {} failed: {}", name, e.getMessage());
@@ -517,10 +565,7 @@ public class LiveService {
             if (done.add(league + "|" + date)) {
                 try {
                     String tournament = String.valueOf(f.get("tournament"));
-                    for (Map<String, Object> g : GoalData.list(api.getJson("/fixtures/date/" + date, Map.of("leagueId", league)))) {
-                        Map<String, Object> s = GoalData.summary(g, tournament);
-                        fixtures.put(String.valueOf(s.get("id")), s);
-                    }
+                    loadDay(tournament, league, date);
                 } catch (RuntimeException e) {
                     warning = "Last refresh had errors: " + e.getMessage();
                     log.warn("GOAL API scores failed: {}", e.getMessage());
@@ -591,6 +636,7 @@ public class LiveService {
         }
         if (finished && !have.containsKey("FT")) {
             putSnapshot(id, "FT", f.get("homeScore"), f.get("awayScore"), GoalData.statsFromRows(Json.maps(match.get("fullTime"))));
+            saveResult(id, f);
         }
         String point = MatchTimeline.pointFor(f);
         if (point != null && !snapshots.getOrDefault(id, Map.of()).containsKey(point)) {
@@ -844,9 +890,8 @@ public class LiveService {
                     }
                 });
                 store.update("DELETE FROM live_follow");
-                for (Map<String, Object> w : following) {
-                    store.update("INSERT OR REPLACE INTO live_follow (tournament, kickoff, home, away) VALUES (?, ?, ?, ?)",
-                            GoalData.text(w, "tournament"), GoalData.text(w, "kickoff"), GoalData.text(w, "home"), GoalData.text(w, "away"));
+                for (Long game : following) {
+                    store.update("INSERT OR REPLACE INTO live_follow (game_id) VALUES (?)", game);
                 }
                 remember("live", lastRefresh);
                 remember("live-list", lastList);
@@ -889,7 +934,7 @@ public class LiveService {
             g.put("updatedAt", rs.getString("updated_at"));
             return g;
         })) {
-            fixtures.put(String.valueOf(f.get("id")), f);
+            put(f);   // (linked here too: games saved before games had ids)
         }
         tracked.addAll(store.query("SELECT id FROM live_games WHERE ticked IS NOT NULL ORDER BY ticked", rs -> rs.getString(1)));
         for (Map<String, Object> st : store.query("SELECT * FROM live_stats", rs -> {
@@ -954,14 +999,8 @@ public class LiveService {
         })) {
             timeline.computeIfAbsent(String.valueOf(e.remove("id")), k -> new ArrayList<>()).add(e);
         }
-        following.addAll(store.query("SELECT * FROM live_follow ORDER BY kickoff", rs -> {
-            Map<String, Object> w = new LinkedHashMap<>();
-            w.put("tournament", rs.getString("tournament"));
-            w.put("kickoff", rs.getString("kickoff"));
-            w.put("home", rs.getString("home"));
-            w.put("away", rs.getString("away"));
-            return w;
-        }));
+        following.addAll(store.query("SELECT f.game_id FROM live_follow f JOIN games g ON g.id = f.game_id ORDER BY g.kickoff_at",
+                rs -> rs.getLong(1)));
         lastRefresh = store.refreshedAt("live").orElse(null);
         lastList = store.refreshedAt("live-list").orElse(null);
         store.usage("goal-api").ifPresent(api::restoreUsage);

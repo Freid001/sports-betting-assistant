@@ -142,7 +142,7 @@
     var todo = matches.filter(function (m) { return results[m.id] === undefined && teamsByComp[m.compKey]; });
     return Promise.all(todo.map(function (m) {
       var teams = teamsByComp[m.compKey];
-      var ht = F.findTeam(teams, m.home_team), at = F.findTeam(teams, m.away_team);
+      var ht = F.findTeam(teams, m.home_team, m.home_team_id), at = F.findTeam(teams, m.away_team, m.away_team_id);
       if (!ht || !at || ht.id == null || at.id == null) { results[m.id] = 'none'; return null; }   // badge only: no results
       return MatchStats.loadViews(ht, at).then(function (v) {
         results[m.id] = ValueCheck.analyse(m, v.homeVenue, v.awayVenue, F.stake() || ValueCheck.DEFAULT_STAKE) || 'none';

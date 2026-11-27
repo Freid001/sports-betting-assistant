@@ -1661,9 +1661,9 @@
     if (window.GoalAlert && new Date(ev.commence_time) > new Date()) GoalAlert.checkStatus(null);   // open before kick-off: KICK-OFF will show
     F.loadTeams(ev.compKey).then(function (teams) {
       teamsCache = teams;
-      $('homeLogo').replaceChildren(F.logo(teams, ev.home_team, 56));
-      $('awayLogo').replaceChildren(F.logo(teams, ev.away_team, 56));
-      var ht = F.findTeam(teams, ev.home_team), at = F.findTeam(teams, ev.away_team);
+      $('homeLogo').replaceChildren(F.logo(teams, ev.home_team, 56, ev.home_team_id));
+      $('awayLogo').replaceChildren(F.logo(teams, ev.away_team, 56, ev.away_team_id));
+      var ht = F.findTeam(teams, ev.home_team, ev.home_team_id), at = F.findTeam(teams, ev.away_team, ev.away_team_id);
       teamIds = [ht && ht.id, at && at.id];   // for the prediction log
       noStats = !ht || !at || ht.id == null || at.id == null;
       MatchStats.render($('stats'), ev, ht, at);

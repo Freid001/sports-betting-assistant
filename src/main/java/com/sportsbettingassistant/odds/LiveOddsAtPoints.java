@@ -94,7 +94,7 @@ public class LiveOddsAtPoints {
             log.info("Live odds at {} skipped: nothing ticked in Settings.", p.point());
             return false;
         }
-        var event = odds.findEvent(p.kickoff(), p.home(), p.away());
+        var event = odds.findEvent(p.gameId());
         if (event.isEmpty()) {
             log.info("Live odds at {} skipped: {} v {} isn't in the saved odds.", p.point(), p.home(), p.away());
             return false;

@@ -9,7 +9,8 @@ import java.util.Set;
 
 import org.springframework.stereotype.Service;
 
-import com.sportsbettingassistant.football.live.TeamNames;
+import com.sportsbettingassistant.football.Competitions;
+import com.sportsbettingassistant.football.Games;
 import com.sportsbettingassistant.json.Json;
 import com.sportsbettingassistant.store.Store;
 
@@ -26,9 +27,11 @@ public class PredictionLog {
     static final Set<String> POINTS = Set.of("PRE", "10", "25", "30", "HT", "60", "80");   // 10, 25: older logs (the windows are 30', HT, 60', 80' now)
 
     private final Store store;
+    private final Games games;
 
     public PredictionLog(Store store) {
         this.store = store;
+        this.games = new Games(store);
     }
 
     /**
@@ -63,17 +66,46 @@ public class PredictionLog {
                 + "away_team_id, saved_at, version, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 matchId, point, ko.toString(), Json.text(p.get("competition")), Json.text(p.get("home")), Json.text(p.get("away")),
                 id(p.get("homeTeamId")), id(p.get("awayTeamId")), now.toString(), Json.text(p.get("version")), Json.write(p));
+        link(matchId, Json.text(p.get("competition")), ko.toString(), id(p.get("homeTeamId")), id(p.get("awayTeamId")));
         return true;
     }
 
+    /** The prediction's game (matchId is The Odds API's event id), linked now so its result is found by id later. */
+    private void link(String eventId, String competition, String kickoff, Long homeTeamId, Long awayTeamId) {
+        String code = competition == null ? null : Competitions.CODES.get(competition);
+        games.link(Games.ODDS, eventId, code, kickoff, homeTeamId, awayTeamId);
+    }
+
+    @org.springframework.context.event.EventListener(org.springframework.boot.context.event.ApplicationReadyEvent.class)
+    public void linkAtStart() {
+        try {
+            linkGames();
+        } catch (RuntimeException e) {
+            org.slf4j.LoggerFactory.getLogger(PredictionLog.class).warn("Couldn't link predictions to games: {}", e.getMessage());
+        }
+    }
+
+    /** Links predictions saved before games existed (at start-up; does nothing once they all are). */
+    public int linkGames() {
+        int n = 0;
+        for (Object[] p : store.query("SELECT match_id, competition, kickoff, home_team_id, away_team_id FROM predictions p "
+                + "WHERE NOT EXISTS (SELECT 1 FROM game_sources s WHERE s.source = 'odds' AND s.source_id = p.match_id) "
+                + "GROUP BY match_id", rs -> new Object[] {rs.getString(1), rs.getString(2), rs.getString(3),
+                        Store.longOrNull(rs, "home_team_id"), Store.longOrNull(rs, "away_team_id")})) {
+            link((String) p[0], (String) p[1], (String) p[2], (Long) p[3], (Long) p[4]);
+            n++;
+        }
+        return n;
+    }
+
     /**
-     * Every prediction with its game's result once it's finished (from the saved results: Refresh Stats or Live
-     * Stats): [{...the prediction, savedAt, result: {home, away, htHome, htAway} or null}], newest first.
+     * Every prediction with its game's result once it's finished (from Refresh Stats, or the final score of a game
+     * followed live): [{...the prediction, savedAt, result: {home, away, htHome, htAway} or null}], newest first.
      */
     public List<Map<String, Object>> all() {
-        List<Map<String, Object>> all = store.query("SELECT p.*, m.home_goals, m.away_goals, m.ht_home, m.ht_away FROM predictions p "
-                + "LEFT JOIN matches m ON m.status = 'FINISHED' AND m.home_team_id = p.home_team_id "
-                + "AND m.away_team_id = p.away_team_id AND ABS(julianday(m.utc_date) - julianday(p.kickoff)) < 1 "
+        return store.query("SELECT p.*, g.home_goals, g.away_goals, g.ht_home, g.ht_away FROM predictions p "
+                + "LEFT JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id "
+                + "LEFT JOIN games g ON g.id = s.game_id AND g.status = 'FINISHED' "
                 + "ORDER BY p.kickoff DESC, p.match_id, p.point", rs -> {
                     Map<String, Object> out = new LinkedHashMap<>(Json.parse(rs.getString("body")));
                     out.put("savedAt", rs.getString("saved_at"));
@@ -90,70 +122,6 @@ public class PredictionLog {
                     }
                     return out;
                 });
-        // not in the saved results yet (they come with Refresh Stats): a game followed live has its final score already
-        List<Map<String, Object>> live = null;
-        for (Map<String, Object> p : all) {
-            if (p.get("result") == null) {
-                if (live == null) {
-                    live = finishedLiveGames();
-                }
-                p.put("result", liveResult(live, p));
-            }
-        }
-        return all;
-    }
-
-    /** Followed games that have finished: {kickoff, home, away, homeGoals, awayGoals, htHome, htAway} (HT if saved). */
-    private List<Map<String, Object>> finishedLiveGames() {
-        return store.query("SELECT g.kickoff, g.home, g.away, g.home_score, g.away_score, h.home_score AS ht_home, "
-                + "h.away_score AS ht_away FROM live_games g LEFT JOIN live_snapshots h ON h.game_id = g.id AND h.period = 'HT' "
-                + "WHERE g.status LIKE 'FINISH%' OR g.status IN ('FT', 'AET')", rs -> {
-                    Map<String, Object> g = new LinkedHashMap<>();
-                    g.put("kickoff", rs.getString("kickoff"));
-                    g.put("home", rs.getString("home"));
-                    g.put("away", rs.getString("away"));
-                    Map<String, Object> r = new LinkedHashMap<>();
-                    r.put("home", score(rs.getString("home_score")));
-                    r.put("away", score(rs.getString("away_score")));
-                    r.put("htHome", rs.getString("ht_home") == null ? null : score(rs.getString("ht_home")));
-                    r.put("htAway", rs.getString("ht_away") == null ? null : score(rs.getString("ht_away")));
-                    g.put("result", r);
-                    return g;
-                });
-    }
-
-    /** The finished live game that is this prediction's (kick-off within 30 minutes, team names alike), or null. */
-    static Map<String, Object> liveResult(List<Map<String, Object>> games, Map<String, Object> p) {
-        Instant ko = instant(Json.text(p.get("kickoff")));
-        if (ko == null) {
-            return null;
-        }
-        for (Map<String, Object> g : games) {
-            Instant gk = instant(Json.text(g.get("kickoff")));
-            if (gk != null && Duration.between(ko, gk).abs().toMinutes() <= 30
-                    && TeamNames.similar(g.get("home"), p.get("home")) + TeamNames.similar(g.get("away"), p.get("away")) > 3) {
-                @SuppressWarnings("unchecked")
-                Map<String, Object> r = (Map<String, Object>) g.get("result");
-                return r.get("home") == null || r.get("away") == null ? null : r;
-            }
-        }
-        return null;
-    }
-
-    private static Long score(String s) {
-        try {
-            return s == null ? null : Long.valueOf(s.trim());
-        } catch (NumberFormatException e) {
-            return null;
-        }
-    }
-
-    private static Instant instant(String iso) {
-        try {
-            return iso == null ? null : Instant.parse(iso);
-        } catch (RuntimeException e) {
-            return null;
-        }
     }
 
     /** Predictions older than this are dropped (keeps the database small). */

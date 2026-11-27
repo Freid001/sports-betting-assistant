@@ -62,6 +62,8 @@ final class GoalData {
         s.put("kickoff", f.get("kickoffUtc"));
         s.put("home", f.get("homeTeamName"));
         s.put("away", f.get("awayTeamName"));
+        s.put("homeTeamGoalId", f.get("homeTeamId"));   // GOAL API's team ids: the teams, exactly (see Games)
+        s.put("awayTeamGoalId", f.get("awayTeamId"));
         s.put("homeScore", f.get("homeTeamScore"));
         s.put("awayScore", f.get("awayTeamScore"));
         s.put("status", f.get("matchStatus"));

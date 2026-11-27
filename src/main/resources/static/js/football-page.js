@@ -97,10 +97,10 @@
       var teams = teamsByComp[m.compKey] || [];
       var matchCell = el('td', 'fw-semibold');
       var line = el('span', 'd-inline-flex align-items-center gap-1');
-      line.appendChild(F.logo(teams, m.home_team, 20));
+      line.appendChild(F.logo(teams, m.home_team, 20, m.home_team_id));
       line.appendChild(el('span', null, m.home_team));
       line.appendChild(el('span', 'text-muted fw-normal mx-1', 'v'));
-      line.appendChild(F.logo(teams, m.away_team, 20));
+      line.appendChild(F.logo(teams, m.away_team, 20, m.away_team_id));
       line.appendChild(el('span', null, m.away_team));
       matchCell.appendChild(line);
       tr.appendChild(matchCell);
@@ -382,8 +382,8 @@
       return t < now - 2 * 3600000 && t > now - 14 * 86400000;
     }).map(function (m) {
       var fx = Live.findFor(liveState, m);
-      return { tournament: String(m.sport_key || '').replace(/^soccer_/, ''), kickoff: m.commence_time, home: m.home_team,
-               away: m.away_team, saved: !!(fx && fx.saved === true), fx: fx };
+      return { eventId: m.id, tournament: String(m.sport_key || '').replace(/^soccer_/, ''), kickoff: m.commence_time,
+               home: m.home_team, away: m.away_team, saved: !!(fx && fx.saved === true), fx: fx };
     });
   }
   $('liveBtn').addEventListener('click', function () {

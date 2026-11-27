@@ -25,9 +25,11 @@ import com.sportsbettingassistant.store.Store;
 public class FootballTables {
 
     private final Store store;
+    private final Games games;
 
     public FootballTables(Store store) {
         this.store = store;
+        this.games = new Games(store);
     }
 
     // ---------------------------------------------------------------- saving API answers
@@ -38,21 +40,31 @@ public class FootballTables {
         store.transaction(() -> {
             saveCompetition(code, Json.map(body.get("competition")));
             for (Map<String, Object> m : Json.maps(body.get("matches"))) {
-                long id = Json.number(m.get("id"));
-                if (id < 0) {
+                long apiId = Json.number(m.get("id"));
+                Map<String, Object> home = Json.map(m.get("homeTeam")), away = Json.map(m.get("awayTeam"));
+                Long homeId = whole(home.get("id")), awayId = whole(away.get("id"));
+                if (apiId < 0 || homeId == null || awayId == null) {
                     continue;
                 }
-                Map<String, Object> home = Json.map(m.get("homeTeam")), away = Json.map(m.get("awayTeam"));
                 saveTeam(home, null);
                 saveTeam(away, null);
+                // the game: found by GOAL API's apiId, else the same teams near this kick-off (an odds event seen
+                // first), else new
+                Optional<Long> game = games.link(Games.GOAL_NUMBER, String.valueOf(apiId), code, Json.text(m.get("utcDate")),
+                        homeId, awayId);
+                if (game.isEmpty()) {
+                    continue;
+                }
+                games.alsoKnownAs(game.get(), Games.GOAL, Json.text(m.get("goalId")));
                 Map<String, Object> score = Json.map(m.get("score"));
                 Map<String, Object> ft = Json.map(score.get("fullTime")), ht = Json.map(score.get("halfTime"));
-                store.update("INSERT OR REPLACE INTO matches (id, competition, utc_date, status, stage, grp, matchday, "
-                        + "home_team_id, away_team_id, home_goals, away_goals, ht_home, ht_away) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        id, code, Json.text(m.get("utcDate")), Json.text(m.get("status")), Json.text(m.get("stage")),
-                        Json.text(m.get("group")), whole(m.get("matchday")), whole(home.get("id")), whole(away.get("id")),
-                        whole(ft.get("home")), whole(ft.get("away")), whole(ht.get("home")), whole(ht.get("away")));
+                store.update("UPDATE games SET competition = ?, kickoff_at = ?, status = ?, stage = ?, grp = ?, matchday = ?, "
+                        + "home_team_id = ?, away_team_id = ?, home_goals = ?, away_goals = ?, ht_home = ?, ht_away = ? "
+                        + "WHERE id = ?",
+                        code, Json.text(m.get("utcDate")), Json.text(m.get("status")), Json.text(m.get("stage")),
+                        Json.text(m.get("group")), whole(m.get("matchday")), homeId, awayId,
+                        whole(ft.get("home")), whole(ft.get("away")), whole(ht.get("home")), whole(ht.get("away")),
+                        game.get());
             }
             store.markRefreshed(matchesName(code, status), Instant.now());
         });
@@ -215,9 +227,9 @@ public class FootballTables {
     /** Teams with a saved fixture (SCHEDULED or TIMED) kicking off between now and {@code days} from now. */
     public List<Long> teamsPlayingWithin(int days) {
         Instant now = Instant.now();
-        return store.query("SELECT DISTINCT t FROM (SELECT home_team_id AS t, utc_date, status FROM matches UNION ALL "
-                        + "SELECT away_team_id, utc_date, status FROM matches) WHERE t IS NOT NULL AND status IN ('SCHEDULED', 'TIMED') "
-                        + "AND utc_date >= ? AND utc_date <= ? ORDER BY t",
+        return store.query("SELECT DISTINCT t FROM (SELECT home_team_id AS t, kickoff_at, status FROM games UNION ALL "
+                        + "SELECT away_team_id, kickoff_at, status FROM games) WHERE t IS NOT NULL AND status IN ('SCHEDULED', 'TIMED') "
+                        + "AND kickoff_at >= ? AND kickoff_at <= ? ORDER BY t",
                 rs -> rs.getLong(1), now.toString(), now.plus(java.time.Duration.ofDays(days)).toString());
     }
 
@@ -286,8 +298,7 @@ public class FootballTables {
 
     /** A saved fixture's home and away team ids. */
     public Optional<long[]> matchTeams(long matchId) {
-        return store.first("SELECT home_team_id, away_team_id FROM matches WHERE id = ? AND home_team_id IS NOT NULL "
-                + "AND away_team_id IS NOT NULL", rs -> new long[] {rs.getLong(1), rs.getLong(2)}, matchId);
+        return store.first("SELECT home_team_id, away_team_id FROM games WHERE id = ?", rs -> new long[] {rs.getLong(1), rs.getLong(2)}, matchId);
     }
 
     /** A team by GOAL API's name for it ("Manchester City"), preferring the competition's own teams. */
@@ -345,8 +356,8 @@ public class FootballTables {
 
     /** Clubs (or countries) that have played in a competition, for the Favourites list. */
     public List<Map<String, Object>> teamsPlayingIn(String code) {
-        return store.query("SELECT * FROM teams WHERE id IN (SELECT home_team_id FROM matches WHERE competition = ? "
-                + "UNION SELECT away_team_id FROM matches WHERE competition = ?) ORDER BY name", FootballTables::team, code, code);
+        return store.query("SELECT * FROM teams WHERE id IN (SELECT home_team_id FROM games WHERE competition = ? "
+                + "UNION SELECT away_team_id FROM games WHERE competition = ?) ORDER BY name", FootballTables::team, code, code);
     }
 
     /** {"matches":[...]} for a competition and status (FINISHED or SCHEDULED), if they were saved. */
@@ -357,13 +368,13 @@ public class FootballTables {
         // football-data's "SCHEDULED" fixtures include ones with a confirmed time (status TIMED)
         String statuses = "SCHEDULED".equals(status) ? "('SCHEDULED', 'TIMED')" : "('" + status.replaceAll("[^A-Z_]", "") + "')";
         return Optional.of(Json.write(Map.of("matches", matches(
-                "WHERE m.competition = ? AND m.status IN " + statuses + " ORDER BY m.utc_date", code))));
+                "WHERE m.competition = ? AND m.status IN " + statuses + " ORDER BY m.kickoff_at", code))));
     }
 
     /** A team's last 30 finished matches in every saved competition, newest first, as {"matches":[...]}. */
     public Optional<String> teamResults(long teamId) {
         List<Map<String, Object>> list = matches("WHERE m.status = 'FINISHED' AND (m.home_team_id = ? OR m.away_team_id = ?) "
-                + "ORDER BY m.utc_date DESC LIMIT 30", teamId, teamId);
+                + "ORDER BY m.kickoff_at DESC LIMIT 30", teamId, teamId);
         return list.isEmpty() ? Optional.empty() : Optional.of(Json.write(Map.of("matches", list)));
     }
 
@@ -379,7 +390,7 @@ public class FootballTables {
         if (store.refreshedAt(matchesName(code, "FINISHED")).isEmpty()) {
             return Optional.empty();
         }
-        String games = "SELECT %s AS team_id, %s AS gf, %s AS ga FROM matches WHERE competition = ? AND status = 'FINISHED' "
+        String games = "SELECT %s AS team_id, %s AS gf, %s AS ga FROM games WHERE competition = ? AND status = 'FINISHED' "
                 + "AND home_goals IS NOT NULL AND away_goals IS NOT NULL "
                 + "AND (stage IS NULL OR stage IN ('REGULAR_SEASON', 'LEAGUE_STAGE', 'GROUP_STAGE'))";
         List<Map<String, Object>> table = store.query("WITH r AS ("
@@ -568,7 +579,7 @@ public class FootballTables {
         return store.query("SELECT m.*, c.name AS comp_name, c.type AS comp_type, "
                 + "h.name AS h_name, h.short_name AS h_short, h.tla AS h_tla, h.crest AS h_crest, "
                 + "a.name AS a_name, a.short_name AS a_short, a.tla AS a_tla, a.crest AS a_crest "
-                + "FROM matches m LEFT JOIN competitions c ON c.code = m.competition "
+                + "FROM games m LEFT JOIN competitions c ON c.code = m.competition "
                 + "LEFT JOIN teams h ON h.id = m.home_team_id LEFT JOIN teams a ON a.id = m.away_team_id " + where,
                 FootballTables::match, args);
     }
@@ -576,7 +587,7 @@ public class FootballTables {
     private static Map<String, Object> match(ResultSet rs) throws SQLException {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", rs.getLong("id"));
-        m.put("utcDate", rs.getString("utc_date"));
+        m.put("utcDate", rs.getString("kickoff_at"));
         m.put("status", rs.getString("status"));
         m.put("stage", rs.getString("stage"));
         m.put("group", rs.getString("grp"));

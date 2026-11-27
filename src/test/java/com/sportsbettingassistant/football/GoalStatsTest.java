@@ -96,7 +96,7 @@ class GoalStatsTest {
 
         assertThat(goal.saveResults("PL")).isEqualTo(1);   // last season reached: no second page
         String json = tables.teamResults(3086).orElseThrow();
-        assertThat(json).contains("\"id\":812752").contains("\"utcDate\":\"2026-11-23T20:00:00Z\"")
+        assertThat(json).contains("\"id\":" + gameId(812752)).contains("\"utcDate\":\"2026-11-23T20:00:00Z\"")
                 .contains("\"score\":{\"fullTime\":{\"home\":4,\"away\":0},\"halfTime\":{\"home\":2,\"away\":0}}")
                 .contains("\"homeTeam\":{\"id\":3086,\"name\":\"Brentford\"")
                 .contains("\"competition\":{\"code\":\"PL\",\"name\":\"Premier League\",\"type\":\"LEAGUE\"}")
@@ -114,8 +114,13 @@ class GoalStatsTest {
         api.answer(PL + "/results", 200, "{\"data\":[" + game(5, "2026/2027", "FINISHED", "A", 1, "B", 2, "2026-08-21T19:00:00Z", "0-2", "0-1")
                 + "],\"pagination\":{\"hasMore\":false}}");
         assertThat(goal.saveResults("PL")).isEqualTo(2);
-        assertThat(tables.teamResults(1).orElseThrow()).contains("\"id\":5,").contains("\"id\":1099,");
+        assertThat(tables.teamResults(1).orElseThrow()).contains("\"id\":" + gameId(5) + ",").contains("\"id\":" + gameId(1099) + ",");
         assertThat(api.last().query()).contains("offset=100");
+    }
+
+    /** Our id for the game GOAL API numbers apiId (games have ids of their own). */
+    private long gameId(long apiId) {
+        return new Games(store).game(Games.GOAL_NUMBER, String.valueOf(apiId)).orElseThrow();
     }
 
     @Test
@@ -123,9 +128,9 @@ class GoalStatsTest {
         api.answer(PL + "/fixtures", 200, "{\"data\":["
                 + game(900, "2026/2027", "SCHEDULED", "Doncaster", 3082, "Huddersfield", 3101, "2026-11-28T15:00:00.000Z", null, null) + "]}");
         goal.saveFixtures("PL");
-        assertThat(tables.matchesJson("PL", "SCHEDULED").orElseThrow()).contains("\"id\":900").contains("\"status\":\"SCHEDULED\"")
+        assertThat(tables.matchesJson("PL", "SCHEDULED").orElseThrow()).contains("\"id\":" + gameId(900)).contains("\"status\":\"SCHEDULED\"")
                 .contains("\"homeTeam\":{\"id\":3082,\"name\":\"Doncaster\"");
-        assertThat(tables.matchTeams(900).orElseThrow()).containsExactly(3082, 3101);
+        assertThat(tables.matchTeams(gameId(900)).orElseThrow()).containsExactly(3082, 3101);
         assertThat(api.last().query()).contains("from=").contains("to=");
     }
 
@@ -182,8 +187,8 @@ class GoalStatsTest {
                 + "\"match_hometeam_name\":\"Brentford\",\"match_awayteam_name\":\"Everton\",\"match_hometeam_score\":\"3\",\"match_awayteam_score\":\"0\"},"
                 + "{\"match_date\":\"2026-11-29\",\"match_status\":\"\",\"match_hometeam_score\":\"\",\"match_awayteam_score\":\"\"}]}}");
 
-        assertThat(goal.saveHeadToHead(77)).isTrue();
-        String json = tables.headToHeadJson(77).orElseThrow();
+        assertThat(goal.saveHeadToHead(gameId(77))).isTrue();
+        String json = tables.headToHeadJson(gameId(77)).orElseThrow();
         assertThat(json).contains("\"numberOfMatches\":2").contains("\"totalGoals\":5");
         assertThat(json.indexOf("2026-04-18T13:30:00Z")).isLessThan(json.indexOf("2025-09-20T15:00:00Z"));
         assertThat(goal.saveHeadToHead(12345)).isFalse();   // not a saved fixture: no call

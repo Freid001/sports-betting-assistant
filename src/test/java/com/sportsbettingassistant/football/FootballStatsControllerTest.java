@@ -39,11 +39,13 @@ class FootballStatsControllerTest {
     private static final String H2H_PATH = "/h2h/g65/g63/direct";
 
     /** A saved fixture (id) between Man City (65) and Fulham (63), whose GOAL API ids are known. */
-    private void fixture(long id) {
+    /** A saved fixture (GOAL API's apiId), and our id for it. */
+    private long fixture(long id) {
         tables.saveMatches("PL", "SCHEDULED", "{\"matches\":[{\"id\":" + id + ",\"status\":\"SCHEDULED\",\"utcDate\":\"2026-12-01T20:00:00Z\","
                 + "\"homeTeam\":{\"id\":65,\"name\":\"Manchester City\"},\"awayTeam\":{\"id\":63,\"name\":\"Fulham\"}}]}");
         tables.saveGoalId("g65", 65);
         tables.saveGoalId("g63", 63);
+        return new Games(store).game(Games.GOAL_NUMBER, String.valueOf(id)).orElseThrow();
     }
 
     @BeforeEach
@@ -97,7 +99,7 @@ class FootballStatsControllerTest {
         assertThat(controller.scorers("PL").getBody()).contains("\"player\":{\"id\":1,\"name\":\"Saka\"}")
                 .contains("\"team\":{\"id\":57,\"name\":\"Arsenal FC\",\"shortName\":\"Arsenal\"}")
                 .contains("\"goals\":7").contains("\"playedMatches\":11");
-        assertThat(controller.teamMatches(57).getBody()).contains("\"id\":8")
+        assertThat(controller.teamMatches(57).getBody()).contains("\"id\":" + new Games(store).game(Games.GOAL_NUMBER, "8").orElseThrow())
                 .contains("\"score\":{\"fullTime\":{\"home\":1,\"away\":2},\"halfTime\":{\"home\":0,\"away\":1}}");
         assertThat(controller.standings("PL").getBody()).contains("\"position\":1");
         assertThat(api.requests).isEmpty();
@@ -105,32 +107,32 @@ class FootballStatsControllerTest {
 
     @Test
     void headToHeadIsFetchedOnceThenKeptForAWeek() {
-        fixture(123);
+        long game = fixture(123);
         api.answer(H2H_PATH, 200, H2H);
-        String first = controller.headToHead(123).getBody();
+        String first = controller.headToHead(game).getBody();
         assertThat(first).contains("\"numberOfMatches\":2").contains("\"totalGoals\":8").contains("\"home\":3,\"away\":1")
                 .contains("\"utcDate\":\"2026-02-11T20:00:00Z\"");
-        assertThat(controller.headToHead(123).getBody()).isEqualTo(first);
+        assertThat(controller.headToHead(game).getBody()).isEqualTo(first);
         assertThat(api.count(H2H_PATH)).isEqualTo(1);
 
         store.update("UPDATE head_to_head SET fetched_at = ?", java.time.Instant.now().minus(java.time.Duration.ofDays(8)));
-        controller.headToHead(123);                                   // a week later: fetched again
+        controller.headToHead(game);                                  // a week later: fetched again
         assertThat(api.count(H2H_PATH)).isEqualTo(2);
     }
 
     @Test
     void anOldHeadToHeadIsUsedIfTheApiRefuses() {
-        fixture(5);
+        long game = fixture(5);
         api.answer(H2H_PATH, 200, H2H);
         api.answer(H2H_PATH, 429, "{\"message\":\"slow down\"}");
-        controller.headToHead(5);
+        controller.headToHead(game);
         store.update("UPDATE head_to_head SET fetched_at = ?", java.time.Instant.now().minus(java.time.Duration.ofDays(8)));
-        assertThat(controller.headToHead(5).getStatusCode().value()).isEqualTo(200);
-        assertThat(controller.headToHead(5).getBody()).contains("\"numberOfMatches\":2");
+        assertThat(controller.headToHead(game).getStatusCode().value()).isEqualTo(200);
+        assertThat(controller.headToHead(game).getBody()).contains("\"numberOfMatches\":2");
 
         // nothing saved and the API refuses: an error; a fixture we don't know: no meetings, no call
         store.update("DELETE FROM head_to_head");
-        assertThat(controller.headToHead(5).getStatusCode().value()).isEqualTo(503);
+        assertThat(controller.headToHead(game).getStatusCode().value()).isEqualTo(503);
         long calls = api.requests.size();
         assertThat(controller.headToHead(6).getBody()).contains("\"numberOfMatches\":0");
         assertThat(api.requests).hasSize((int) calls);

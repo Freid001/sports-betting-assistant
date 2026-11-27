@@ -1,27 +1,12 @@
 package com.sportsbettingassistant.football.live;
 
-import java.time.Duration;
-import java.time.Instant;
-import java.util.Map;
-
 /**
  * Matching team names between sources ("Nottingham" / "Nottingham Forest", "Man Utd" / "Manchester United"):
- * a similarity score from their words, used to pair GOAL API's games with The Odds API's events.
+ * a similarity score from their words. Used once per spelling, to match a name to a team (see Games.team).
  */
 public final class TeamNames {
 
     private TeamNames() {
-    }
-
-    static boolean sameGame(Map<String, Object> w, String tournament, String kickoff, String home, String away) {
-        return tournament.equals(w.get("tournament")) && near(w.get("kickoff"), kickoff)
-                && similar(w.get("home"), home) + similar(w.get("away"), away) > 3;
-    }
-
-    /** Within 30 minutes of each other (ISO times). */
-    static boolean near(Object a, String b) {
-        Instant x = GoalData.instant(a), y = GoalData.instant(b);
-        return x != null && y != null && Duration.between(x, y).abs().compareTo(Duration.ofMinutes(30)) <= 0;
     }
 
     /** How alike two team names are: 3 same, 2 one inside the other, 1 same first word (4+ letters), else 0. */

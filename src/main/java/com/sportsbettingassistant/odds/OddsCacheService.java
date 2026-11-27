@@ -41,9 +41,12 @@ public class OddsCacheService {
     /** Credits left this month, from The Odds API's last answer (-1 until we've seen one). */
     private volatile long creditsLeft = -1;
 
+    private final com.sportsbettingassistant.football.Games games;
+
     public OddsCacheService(OddsApiClient client, Store store, Environment env) {
         this.client = client;
         this.store = store;
+        this.games = new com.sportsbettingassistant.football.Games(store);
         Map<String, String> books = Binder.get(env).bind("odds-api.bookmakers", Bindable.mapOf(String.class, String.class))
                 .orElse(DEFAULT_BOOKMAKERS);
         Map<String, List<String>> markets = new LinkedHashMap<>();
@@ -178,6 +181,7 @@ public class OddsCacheService {
             store.update("INSERT OR REPLACE INTO odds_fetches (sport, fetched_at_iso, days, markets, bookmakers, credits) "
                     + "VALUES (?, ?, ?, ?, ?, ?)", sport, fetchedAt, days, markets, bookmakers, credits);
         });
+        games.linkOddsEvents();   // new events: each to its game (once)
     }
 
     /**
@@ -458,44 +462,14 @@ public class OddsCacheService {
     }
 
     /**
-     * The saved match for a game from another source (GOAL API): kick-off within 30 minutes and similar team names.
+     * The saved odds event for a GOAL API game (its fixture id), through the game both are linked to.
      * Returns {sport, id}, or empty if it isn't in the saved odds.
      */
-    public Optional<Map<String, String>> findEvent(String kickoff, String home, String away) {
-        Instant ko;
-        try {
-            ko = Instant.parse(kickoff);
-        } catch (RuntimeException e) {
-            return Optional.empty();
-        }
-        Map<String, String> best = null;
-        int bestScore = 3;
-        for (Map<String, String> e : store.query("SELECT id, sport, kickoff, home_team, away_team FROM odds_events", rs -> {
-            Map<String, String> m = new LinkedHashMap<>();
-            m.put("id", rs.getString("id"));
-            m.put("sport", rs.getString("sport"));
-            m.put("kickoff", rs.getString("kickoff"));
-            m.put("home", rs.getString("home_team"));
-            m.put("away", rs.getString("away_team"));
-            return m;
-        })) {
-            Instant t;
-            try {
-                t = Instant.parse(e.get("kickoff"));
-            } catch (RuntimeException ex) {
-                continue;
-            }
-            if (java.time.Duration.between(t, ko).abs().toMinutes() > 30) {
-                continue;
-            }
-            int score = com.sportsbettingassistant.football.live.TeamNames.similar(e.get("home"), home)
-                    + com.sportsbettingassistant.football.live.TeamNames.similar(e.get("away"), away);
-            if (score > bestScore) {
-                best = Map.of("sport", e.get("sport"), "id", e.get("id"));
-                bestScore = score;
-            }
-        }
-        return Optional.ofNullable(best);
+    public Optional<Map<String, String>> findEvent(String goalFixtureId) {
+        return games.game(com.sportsbettingassistant.football.Games.GOAL, goalFixtureId)
+                .flatMap(games::oddsEvent)
+                .flatMap(id -> store.first("SELECT sport FROM odds_events WHERE id = ?", rs -> rs.getString(1), id)
+                        .map(sport -> Map.of("sport", sport, "id", id)));
     }
 
     /**
@@ -600,9 +574,15 @@ public class OddsCacheService {
 
     private List<Map<String, Object>> events(String sport) {
         Map<String, Map<String, Object>> events = new LinkedHashMap<>();
-        for (Map<String, Object> e : store.query("SELECT e.* FROM odds_events e WHERE e.sport = ? ORDER BY e.kickoff, e.id", rs -> {
+        for (Map<String, Object> e : store.query("SELECT e.*, g.id AS game_id, g.home_team_id, g.away_team_id FROM odds_events e "
+                + "LEFT JOIN game_sources s ON s.source = 'odds' AND s.source_id = e.id LEFT JOIN games g ON g.id = s.game_id "
+                + "WHERE e.sport = ? ORDER BY e.kickoff, e.id", rs -> {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("id", rs.getString("id"));
+            // our game and its teams (GOAL API's, as the stats tables have them): null if the names weren't matched
+            ev.put("game_id", Store.longOrNull(rs, "game_id"));
+            ev.put("home_team_id", Store.longOrNull(rs, "home_team_id"));
+            ev.put("away_team_id", Store.longOrNull(rs, "away_team_id"));
             ev.put("sport_key", sport);
             ev.put("sport_title", rs.getString("sport_title"));
             ev.put("commence_time", rs.getString("kickoff"));

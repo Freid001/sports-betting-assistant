@@ -318,15 +318,9 @@ window.MatchStats = (function () {
       keyPlayers(kpHome, homeTeam, comps(hl), 'home');
       keyPlayers(kpAway, awayTeam, comps(al), 'away');
 
-      // Head to head: find this fixture's saved id, then its previous meetings.
-      (code ? getJson('/api/football/data/competitions/' + code + '/matches?status=SCHEDULED')
-            : Promise.reject(new Error('no competition'))).then(function (up) {
-        var fx = (up.matches || []).find(function (m) {
-          return m.homeTeam.id === homeTeam.id && m.awayTeam.id === awayTeam.id;
-        });
-        if (!fx) throw new Error('fixture not found');
-        return getJson('/api/football/data/matches/' + fx.id + '/head2head');
-      }).then(function (h) {
+      // Head to head: this game's previous meetings (the server linked the odds to the game: ev.game_id)
+      (ev.game_id != null ? getJson('/api/football/data/matches/' + ev.game_id + '/head2head')
+                          : Promise.reject(new Error('game not matched'))).then(function (h) {
         h2hBox.replaceChildren();
         var past = (h.matches || []).filter(function (m) { return m.status === 'FINISHED'; })
           .sort(function (a, b) { return b.utcDate.localeCompare(a.utcDate); }).slice(0, 5);

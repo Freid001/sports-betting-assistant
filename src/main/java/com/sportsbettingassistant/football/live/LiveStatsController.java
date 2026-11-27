@@ -52,19 +52,17 @@ public class LiveStatsController {
         return Json.ok(live.track(ids));
     }
 
-    /** Follow (on=true) or stop following a game from the match page; it's ticked on match day. */
+    /** Follow (on=true) or stop following a game from the match page (eventId: its Odds API id); ticked on match day. */
     @PostMapping("/follow")
-    public ResponseEntity<String> follow(@RequestParam String tournament, @RequestParam String kickoff,
-                                         @RequestParam String home, @RequestParam String away,
-                                         @RequestParam(defaultValue = "true") boolean on) {
+    public ResponseEntity<String> follow(@RequestParam String eventId, @RequestParam(defaultValue = "true") boolean on) {
         try {
-            return Json.ok(on ? live.follow(tournament, kickoff, home, away) : live.unfollow(tournament, kickoff, home, away));
+            return Json.ok(on ? live.follow(eventId) : live.unfollow(eventId));
         } catch (IllegalArgumentException e) {
             return Json.message(404, e.getMessage());
         }
     }
 
-    /** Post-Match for many finished games at once: body {"games": [{tournament, kickoff, home, away}]}. */
+    /** Post-Match for many finished games at once: body {"games": [{eventId, home, away}]}. */
     @PostMapping("/post-match")
     public ResponseEntity<String> postMatch(@RequestBody String body) {
         List<java.util.Map<String, Object>> games = Json.maps(Json.parse(body).get("games"));
@@ -72,11 +70,9 @@ public class LiveStatsController {
     }
 
     @PostMapping("/replay")
-    public ResponseEntity<String> replay(@RequestParam String tournament, @RequestParam String date,
-                                         @RequestParam(required = false) String kickoff,
-                                         @RequestParam String home, @RequestParam String away) {
+    public ResponseEntity<String> replay(@RequestParam String eventId) {
         try {
-            return Json.ok(live.replay(tournament, date, kickoff, home, away));
+            return Json.ok(live.replay(eventId));
         } catch (IllegalArgumentException e) {
             return Json.message(404, e.getMessage());
         } catch (RuntimeException e) {
