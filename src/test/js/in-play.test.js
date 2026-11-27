@@ -38,7 +38,10 @@ test('goals still to come blend the pre-match model with live xG, and the team b
 test('bets fit the window and each market adds up to 100%', () => {
   const r = InPlay.rates(MODEL, { period: 'HT', homeScore: '1', awayScore: '0', xg: [1.39, 0.31] });
   const ht = InPlay.bets(r, NAMES, 'HT');
-  assert.deepEqual([...new Set(ht.map(b => b.market))], ['Draw No Bet', 'Next Goal', 'Team To Score Again', 'Second-Half Goals']);
+  // the match result and both teams to score at every point (the markets bookmakers keep pricing in-play)
+  assert.deepEqual([...new Set(ht.map(b => b.market))],
+    ['Match Result', 'Draw No Bet', 'Next Goal', 'Team To Score Again', 'Both Teams To Score', 'Second-Half Goals']);
+  close(sum(ht, 'Both Teams To Score'), 1);
   close(sum(ht, 'Draw No Bet'), 1);
   close(sum(ht, 'Next Goal'), 1);
   ht.forEach(b => close(b.minPrice, 1.05 / b.chance));
@@ -47,8 +50,8 @@ test('bets fit the window and each market adds up to 100%', () => {
   const sixty = InPlay.bets(InPlay.rates(MODEL, { period: '60', homeScore: 1, awayScore: 1 }), NAMES, '60');
   close(sum(sixty, 'Match Result'), 1);
   assert.ok(sixty.some(b => b.market === 'Total Goals' && b.name === 'Over 2.5'), 'over lines start from the current total');
-  assert.deepEqual([...InPlay.bets(r, NAMES, '80').map(b => b.market)], ['Next Goal', 'Next Goal', 'Next Goal']);
-  assert.equal(InPlay.bets(r, NAMES, 'WATCH').length, 0);
+  assert.deepEqual([...new Set(InPlay.bets(r, NAMES, '80').map(b => b.market))], ['Match Result', 'Next Goal', 'Both Teams To Score']);
+  assert.deepEqual([...new Set(InPlay.bets(r, NAMES, 'WATCH').map(b => b.market))], ['Match Result', 'Both Teams To Score']);
   assert.equal(InPlay.bets(r, NAMES, 'FT').length, 0);
 });
 
@@ -58,21 +61,22 @@ function tableStub() {
   return t;
 }
 
-test('render: the better team not winning goes first with ★; none when already winning', () => {
+test('render: value only (as before kick-off); the better team not winning first with ★; nothing worth it: No Bet', () => {
   const ev = { home_team: NAMES[0], away_team: NAMES[1] };
   const check = Live.checklist(ROWS_HT);
   const box = w.document.createElement('div');
   const table = tableStub();
+  // no prices for this point: no verdicts, so nothing to recommend
   InPlay.render(box, ev, MODEL, { period: 'HT', homeScore: '0', awayScore: '0', xg: [1.39, 0.31], rows: ROWS_HT }, check, 'drawing', { table });
-  assert.equal(table.title, 'In-play bet');
-  assert.match(table.rows[0].label, /^★ Tottenham Hotspur/);
-  assert.equal(table.rows[0].o.price, null);
-  assert.equal(table.rows[0].r, null, 'no price, no verdict');
-  assert.match(table.rows[0].hint, /value at .* or bigger/);
-  assert.equal(box.textContent, '', 'no notes above the table');
+  assert.equal(box.textContent, 'No Bet');
 
-  InPlay.render(box, ev, MODEL, { period: 'HT', homeScore: '1', awayScore: '0', xg: [1.39, 0.31], rows: ROWS_HT }, check, 'winning', { table });
-  assert.ok(table.rows.every(x => !x.fits));
+  // generous prices for everything: only value bets listed, the leader's (★) first
+  const markets = [{ key: 'h2h', outcomes: [{ name: NAMES[0], price: 9 }, { name: 'Draw', price: 1.2 }, { name: NAMES[1], price: 1.2 }] }];
+  table.rows = null;
+  InPlay.render(box, ev, MODEL, { period: 'HT', homeScore: '0', awayScore: '0', xg: [1.39, 0.31], rows: ROWS_HT }, check, 'drawing', { table, markets });
+  assert.equal(table.title, 'In-play bet');
+  assert.ok(table.rows.every(x => x.r && x.r.ret >= 0.05), 'value only');
+  assert.match(table.rows[0].label, /^★ Tottenham Hotspur/);
 
   InPlay.render(box, ev, MODEL, { period: 'FT', homeScore: '2', awayScore: '0', rows: [] }, Live.checklist([]), null, { table });
   assert.equal(box.textContent, 'No Bet');
@@ -113,20 +117,17 @@ test('render: live odds give the price and the same verdicts as the markets; Ref
   assert.equal(refreshed, 1);
 });
 
-test('render: without odds for the point a dash (pre-match prices are not used), with them a verdict', () => {
+test('render: without odds for the point No Bet (pre-match prices are not used), with them a verdict', () => {
   const ev = { home_team: NAMES[0], away_team: NAMES[1] };
   const box = w.document.createElement('div');
   const table = tableStub();
   InPlay.render(box, ev, MODEL, { period: 'HT', homeScore: '1', awayScore: '0', xg: [1.39, 0.31], rows: ROWS_HT },
     Live.checklist(ROWS_HT), 'winning', { table, confidence: 'Low' });
-  const over = table.rows.find(x => /Over 0\.5 · Second-Half Goals/.test(x.label));
-  assert.equal(over.o.price, null);
-  assert.equal(over.r, null);
-  assert.match(over.hint, /No odds for this point in the match/);
+  assert.equal(box.textContent, 'No Bet');
 
   const live = [{ key: 'alternate_totals', outcomes: [{ name: 'Over', price: 1.5, point: 1.5 }] }];
   InPlay.render(box, ev, MODEL, { period: 'HT', homeScore: '1', awayScore: '0', xg: [1.39, 0.31], rows: ROWS_HT, live: true },
-    Live.checklist(ROWS_HT), 'winning', { table, markets: live, confidence: 'Low', onRefresh: () => {} });
+    Live.checklist(ROWS_HT), 'winning', { table, markets: live, confidence: 'Low' });
   const liveOver = table.rows.find(x => /Over 0\.5 · Second-Half Goals/.test(x.label));
   assert.equal(liveOver.o.price, 1.5);
   assert.ok(liveOver.r.verdict);

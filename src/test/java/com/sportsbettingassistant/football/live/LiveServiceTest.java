@@ -228,6 +228,36 @@ class LiveServiceTest {
     }
 
     @Test
+    void substitutionsAndCommentaryMomentsWithAPlayerGoInTheTimeline() {
+        var subs = LiveService.officialSubs(Json.parse("{\"data\":[{\"time\":\"46\",\"substitution\":\"D. Welbeck | E. Emegha\","
+                + "\"team\":\"away\"},{\"time\":\"72\",\"substitution\":\"Igor Jesus | D. Ndoye\",\"team\":\"home\"}]}"));
+        assertThat(subs).extracting(e -> e.get("kind")).containsExactly("sub", "sub");
+        assertThat(subs.get(0)).containsEntry("side", "away").containsEntry("player", "E. Emegha")
+                .containsEntry("info", "for D. Welbeck").containsEntry("minute", "46'").containsEntry("half", 2);
+
+        var said = LiveService.commentary(Json.parse("{\"data\":["
+                + "{\"time\":\"53:09\",\"text\":\"Nottingham shot on goal\",\"state\":\"J McAtee,\"},"
+                + "{\"time\":\"12:40\",\"text\":\"Chelsea free kick\",\"state\":\"C Palmer\"},"
+                + "{\"time\":\"05:22\",\"text\":\"Nottingham goal\",\"state\":\"\"},"
+                + "{\"time\":\"20:01\",\"text\":\"Chelsea in possession\",\"state\":\"M Caicedo\"},"
+                + "{\"time\":\"30:00\",\"text\":\"Chelsea shot on goal\",\"state\":\"\"}]}"), "Nottingham", "Chelsea");
+        assertThat(said).extracting(e -> e.get("kind")).containsExactly("shot", "freekick", "possession");   // only with a player
+        assertThat(said.get(0)).containsEntry("side", "home").containsEntry("player", "J McAtee")
+                .containsEntry("minute", "54'").containsEntry("half", 2);
+        assertThat(said.get(1)).containsEntry("side", "away").containsEntry("half", 1);
+    }
+
+    @Test
+    void theKeepersComeFromTheLineUps() {
+        var gk = LiveService.keepersOf(Json.parse("{\"data\":{\"home\":{\"startingLineups\":["
+                + "{\"lineupPlayer\":\"Jair\",\"playerPosition\":\"Defenders\"},"
+                + "{\"lineupPlayer\":\"Matz Sels\",\"playerPosition\":\"Goalkeepers\"}]},"
+                + "\"away\":{\"startingLineups\":[{\"lineupPlayer\":\"R. Sanchez\",\"playerPosition\":\"Goalkeepers\"}]}}}"));
+        assertThat(gk).containsExactly("Matz Sels", "R. Sanchez");
+        assertThat(LiveService.keepersOf(Json.parse("{\"data\":{}}"))).containsExactly(null, null);
+    }
+
+    @Test
     void goalApisOwnGoalsAndCardsGiveRealMinutesScorersAssistsAndPenalties() {
         Map<String, Object> goals = Json.parse("{\"data\":["
                 + "{\"time\":\"5\",\"timeNum\":5,\"type\":\"GOAL\",\"homeScorer\":null,\"awayScorer\":\"C. Humphreys\","

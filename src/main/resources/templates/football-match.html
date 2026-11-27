@@ -33,14 +33,17 @@
     <div class="row g-3">
         <!-- Left (wide): what to bet on, then every market -->
         <div class="col-lg-7 d-flex flex-column gap-3">
-            <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold">Checklist</div>
-                <div class="card-body small" id="checklist"><span class="text-muted">Loading…</span></div>
-                <div class="card-footer bg-transparent py-1 small text-muted text-end">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
-            </div>
+            <!-- The live checklist is still worked out (who's the better side, for the in-play bets) but not shown -->
+            <div class="d-none"><div id="checklist"></div></div>
             <!-- Pre-Match: what our model expects (incl. markets the app has no odds for); at a point in the match: the rest of the game -->
             <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold" id="predictionTitle">Prediction</div>
+                <div class="card-header py-2 d-flex align-items-center flex-wrap gap-2">
+                    <span class="fw-semibold me-auto" id="predictionTitle">Prediction</span>
+                    <ul class="nav nav-pills small d-none" id="predictionTabs">
+                        <li class="nav-item"><button class="nav-link active py-0 px-2" type="button" data-pred="merged">30'</button></li>
+                        <li class="nav-item"><button class="nav-link py-0 px-2" type="button" data-pred="rest">Rest of game</button></li>
+                    </ul>
+                </div>
                 <div class="card-body small" id="prediction"><span class="text-muted">Loading…</span></div>
                 <div class="card-footer bg-transparent py-1 small text-muted text-end">
                     <span class="text-nowrap">Source: our model · <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></span>
@@ -62,6 +65,8 @@
                 </div>
                 <div class="card-footer bg-transparent py-1 small d-flex justify-content-between gap-2">
                     <span class="text-muted" id="marketsNote"></span>
+                    <!-- TEMPORARY test button: fetch the in-play odds for the ticked markets now (not saved) -->
+                    <button type="button" class="btn btn-sm btn-outline-theme py-0" id="testLiveOdds">Test: Fetch Live Odds</button>
                     <span class="text-muted ms-auto">Source: <a class="text-muted" href="https://the-odds-api.com" target="_blank" rel="noopener noreferrer">the-odds-api.com</a></span>
                 </div>
             </div>
@@ -84,7 +89,10 @@
                 </div>
             </div>
             <div class="card shadow-sm">
-                <div class="card-header py-2 fw-semibold">Timeline</div>
+                <div class="card-header py-2 d-flex align-items-center flex-wrap gap-2">
+                    <span class="fw-semibold me-auto">Timeline</span>
+                    <span id="timelineFilter"></span>
+                </div>
                 <div class="card-body small" id="players"><span class="text-muted">Loading…</span></div>
                 <div class="card-footer bg-transparent py-1 small text-muted text-end">Source: <a class="text-muted" href="https://goal-api.com" target="_blank" rel="noopener noreferrer">goal-api.com</a></div>
             </div>
@@ -192,13 +200,17 @@
   var liveOdds = {};   // in-play prices saved for this match, by point in the match: {"HT": {fetchedAt, credits, markets}}
   /** The point in the match a timeline view stands for (10, 25, HT, 60, 80, FT), and the prices saved for it. */
   function pointOf(snap) { return snap.point || snap.period; }
-  function oddsAt(snap) { return liveOdds[pointOf(snap)] || null; }
+  function oddsAt(snap) {
+    var saved = liveOdds[pointOf(snap)] || null, now = liveOdds.LIVE;   // LIVE: fetched by hand (Test: Fetch Live Odds)
+    if (snap.live && now && (!saved || now.fetchedAt > saved.fetchedAt)) return now;
+    return saved;
+  }
   // Live Stats found the game: its score under the competition, and FT / HT / 61' instead of "Started"
   // The Checklist, Live Match Stats and Player cards: hidden before kick-off and on Pre-Match (nothing to show)
   // Pre-Match shows the pre-match cards (form, goals profile, head to head, top scorers); a point in the match
   // (10', HT, LIVE...) shows that point's live cards (checklist, live stats, player shots) instead
   window.onLiveCards = function (show) {
-    ['checklist', 'liveStats', 'players'].forEach(function (id) { $(id).closest('.card').classList.toggle('d-none', !show); });
+    ['liveStats', 'players'].forEach(function (id) { $(id).closest('.card').classList.toggle('d-none', !show); });   // (the checklist isn't shown)
     ['form', 'stats', 'discipline', 'h2h', 'topScorers', 'topFoulers', 'topDefenders'].forEach(function (id) { $(id).closest('.card').classList.toggle('d-none', show); });
   };
   // Each poll's live score: a goal since the last poll gets the GOAL! banner and sound (goal-alert.js)
@@ -229,11 +241,10 @@
   // and Recommended Bets switch to it (Pre-Match: the pre-match bets, no score)
   window.onLiveView = function (snap) {
     liveView = snap.period === 'PRE' ? null : snap;
+    // full time: the markets are closed, so no Bets card (Pre-Match and the bet windows still have it)
+    $('bestBets').closest('.card').classList.toggle('d-none', snap.period === 'FT');
+    // the header always shows the game as it is now (score, 46', HT, FT): picking a bet window doesn't change it
     if (snap.period === 'PRE' && ev && new Date(ev.commence_time) > new Date()) showScore('', countdown(ev.commence_time));   // not started
-    else if (snap.period === 'PRE') showScore('0–0', 'Pre-Match');
-    else if (!snap.live && snap.period && snap.homeScore !== undefined && snap.homeScore !== null) {
-      showScore(snap.homeScore + '–' + snap.awayScore, periodName(snap.period));
-    }
     draw();   // Markets and Recommended Bets switch to this point
   };
   function showScore(score, status) {
@@ -761,7 +772,7 @@
     if (!bk) {
       box.appendChild(el('p', 'text-muted mb-0', 'No ' + name + ' odds saved for this match yet. Refresh Odds with ' + name + ' picked.'));
       $('bestBets').replaceChildren(el('span', 'text-muted', 'No odds to check yet.'));
-      prediction(views ? ValueCheck.analyse(ev, views.home, views.away, ValueCheck.DEFAULT_STAKE) : null);   // needs no odds
+      showPredictionCard(views ? ValueCheck.analyse(ev, views.home, views.away, ValueCheck.DEFAULT_STAKE) : null);   // needs no odds
       return;
     }
     var a = views ? ValueCheck.analyse(ev, views.home, views.away, F.stake() || ValueCheck.DEFAULT_STAKE) : null;
@@ -849,9 +860,13 @@
       box.appendChild(table(rows, 'Bet', false, true));
     }
 
-    prediction(a);
+    showPredictionCard(a);
     // the prediction log (before kick-off only): scored against the result later, for the accuracy report
-    if (a && new Date(ev.commence_time) > new Date()) ValueCheck.log(ValueCheck.record(ev, a, teamIds[0], teamIds[1]));
+    if (a && new Date(ev.commence_time) > new Date()) {
+      var preRec = ValueCheck.record(ev, a, teamIds[0], teamIds[1]);
+      if (preRec) preRec.predictionRows = plainRows(rowsOf(function () { prediction(a); }));   // the card, kept at kick-off
+      ValueCheck.log(preRec);
+    }
     if (a) logWindows(a);   // and the bet windows saved so far
     showPrediction(a);
   }
@@ -869,6 +884,18 @@
    * come), with the prices saved for that point and their verdicts, or "–" for odds and verdict when none were saved.
    * FT: the markets are closed.
    */
+  /**
+   * In-play anytime goalscorer: his share of his team's goals (pre-match: his expected goals / the team's) times the
+   * goals his team still has to come (InPlay.rates), so the chance he scores in the time left. Doesn't know who's on
+   * the pitch (a player subbed off or on the bench still gets a chance). Null if he isn't in the scorer tables.
+   */
+  function scorerNow(a, r, o) {
+    if (!a || !o || !o.description) return null;
+    var p = ValueCheck.scorerChances(a.view || a.model).find(function (x) { return F.samePlayer(x.name, o.description); });
+    if (!p || !(p.lam > 0)) return null;
+    var left = p.side === 'home' ? r.home : r.away;
+    return 1 - Math.exp(-(p.x / p.lam) * left);
+  }
   function inPlayMarkets(box, bk, snap, name, a) {
     var point = pointOf(snap), saved = oddsAt(snap);
     var r = a && snap.period !== 'PRE' ? InPlay.rates(a.view || a.model, snap) : null, names = [ev.home_team, ev.away_team];
@@ -882,7 +909,7 @@
                  hint: 'No odds saved for this point in the match.' };
       });
       rows.forEach(function (x) {
-        var ours = r ? InPlay.chanceFor(r, names, mk.key, x.o) : null;
+        var ours = r ? (mk.key === 'player_goal_scorer_anytime' ? scorerNow(a, r, x.o) : InPlay.chanceFor(r, names, mk.key, x.o)) : null;
         if (ours === null || isNaN(ours)) { if (!saved) x.chance = null; return; }
         if (x.o.price) {   // the bookmaker's chance (margin removed) stays on the odds badge; ours on Chance + verdict
           var ret = ours * x.o.price - 1;
@@ -908,7 +935,39 @@
         box.appendChild(more);
       }
     });
-    $('marketsNote').textContent = saved ? 'Odds from ' + F.ago(saved.fetchedAt) + '.' : '';
+    // a window without odds: the bookmaker had its markets suspended then (the app tries again for a few minutes)
+    $('marketsNote').textContent = saved ? 'Odds from ' + F.ago(saved.fetchedAt) + '.'
+      : !snap.live ? 'No ' + name + ' odds for this point: its in-play markets were suspended.' : '';
+  }
+
+  /**
+   * A bet window's Recommended Bets as first worked out, from the prediction log: shown as they were, never
+   * redone (a later model or a code change doesn't rewrite what a snapshot said). {"30": [rows], ...}
+   */
+  var frozenBets = {}, frozenPred = {}, frozenAsked = false;
+  function loadFrozenBets() {
+    if (frozenAsked || !ev) return;
+    frozenAsked = true;
+    F.getJson('/api/predictions').then(function (body) {
+      ((body && body.predictions) || []).forEach(function (p) {
+        if (p.matchId !== ev.id) return;
+        if (p.point !== 'PRE' && Array.isArray(p.recommended)) frozenBets[p.point] = p.recommended;
+        if (Array.isArray(p.predictionRows)) frozenPred[p.point] = p.predictionRows;
+      });
+      if (Object.keys(frozenBets).length || Object.keys(frozenPred).length) draw();
+    }).catch(function () { /* worked out as usual */ });
+  }
+  /** The rows the in-play Recommended Bets would list for a window, without drawing them (for the log). */
+  function windowBets(a, snap) {
+    var rows = [], check = Live.checklist(snap.rows);
+    InPlay.render(el('div'), ev, a.view || a.model, snap, check, Live.setup(check, snap.homeScore, snap.awayScore), {
+      table: function (r) { rows = r; return el('table'); }, confidence: a.level.name,
+      markets: oddsAt(snap) ? oddsAt(snap).markets : null
+    });
+    return rows.map(function (x) {
+      return { label: x.label, o: { price: x.o.price }, chance: x.chance, fits: x.fits, hint: x.hint,
+               r: x.r && { ours: x.r.ours, fair: x.r.fair, ret: x.r.ret, verdict: x.r.verdict } };
+    });
   }
 
   function inPlayBets(a, snap) {
@@ -916,14 +975,174 @@
     var check = Live.checklist(snap.rows);
     var holder = el('div');
     box.appendChild(holder);
+    loadFrozenBets();
+    var kept = !snap.live && frozenBets[pointOf(snap)];
+    if (kept) {   // a bet window: what it recommended at the time
+      if (kept.length) holder.appendChild(table(kept, 'In-play bet'));
+      else holder.appendChild(el('div', 'text-muted', 'No Bet'));
+      showPredictionCard(a);
+      showPrediction(a);
+      return;
+    }
     var r = InPlay.render(holder, ev, a.view || a.model, snap, check, Live.setup(check, snap.homeScore, snap.awayScore), {
       table: table, confidence: a.level.name,
       markets: oddsAt(snap) ? oddsAt(snap).markets : null, fetchedAt: oddsAt(snap) ? oddsAt(snap).fetchedAt : null,
       // a fetch is only for where the game is now, saved under that point (about 3 credits; clicking never fetches)
       onRefresh: null   // no manual button: each point's odds are fetched automatically when it's saved (60', 80'...)
     });
-    inPlayPrediction(a, snap);
+    showPredictionCard(a);
     showPrediction(a);
+  }
+
+  var liveMatch = null, predTab = 'merged';
+  /** The rows a prediction function would draw on the card, without drawing them. */
+  function rowsOf(fn) {
+    var keep = predCapture, rows = [];
+    predCapture = rows;
+    try { fn(); } finally { predCapture = keep; }
+    return rows;
+  }
+  /** Rows as plain data, to keep in the prediction log: [label, text or [{player, text}]]. */
+  function plainRows(rows) {
+    return (rows || []).map(function (r) {
+      return [r[0], Array.isArray(r[1]) ? r[1].map(function (x) { return x && x.player ? { player: x.player, text: x.text } : x; }) : r[1]];
+    });
+  }
+  /** Kept rows, with the live ones' "how we worked this out" links where they still say the same. */
+  function withLinks(kept, live) {
+    return kept.map(function (k) {
+      var same = (live || []).find(function (r) { return r[0] === k[0] && JSON.stringify(plainRows([r])[0][1]) === JSON.stringify(k[1]); });
+      return same || [k[0], k[1]];
+    });
+  }
+
+  /**
+   * The Prediction card follows the point picked on the timeline:
+   *  - Pre-Match: the pre-match prediction (as it stood at kick-off), no tabs.
+   *  - a bet window (30', HT, 60', 80') or LIVE: two tabs. The window's own (e.g. "30'"): what had been predicted
+   *    going into it, the pre-match lines with the earlier windows' lines swapped in (marked with where each is
+   *    from), and how each did. "Rest of game": what this window (or LIVE) newly predicts.
+   *  - FT: the lines as they finished (every window's), no tabs.
+   * Settled lines: green ✓ (came true) or red ✗.
+   */
+  function showPredictionCard(a) {
+    var card = $('prediction'), tabs = $('predictionTabs');
+    var pre = rowsOf(function () { prediction(a); });
+    if (frozenPred.PRE && new Date(ev.commence_time) <= new Date()) pre = withLinks(frozenPred.PRE, pre);
+    if (!a || !a.model) { prediction(a); tabs.classList.add('d-none'); return; }
+    var point = liveView ? (liveView.live ? 'LIVE' : liveView.period) : 'PRE';
+    var draw = function (title, rows, note) {
+      rows.forEach(function (r) { settle(r, r.from || 'PRE'); });
+      $('predictionTitle').textContent = title;
+      card.replaceChildren();   // (working out the windows' lines touches the card)
+      predictionSummary(card, rows);
+      if (note) card.appendChild(el('div', 'small text-muted', note));
+    };
+    if (point === 'PRE') {
+      tabs.classList.add('d-none');
+      draw('Prediction · Pre-Match', pre.map(function (r) { return r.slice(); }), null);
+      return;
+    }
+    // the windows up to the point picked (FT: all of them; LIVE: all so far, then the live lines on top)
+    var windows = liveSnaps.filter(function (sn) { return ['30', 'HT', '60', '80'].indexOf(sn.period) >= 0; });
+    var upTo = windows.findIndex(function (sn) { return sn.period === point; });
+    if (upTo >= 0) windows = windows.slice(0, upTo + 1);
+    var merged = pre.map(function (r) { var x = r.slice(); x.from = 'PRE'; return x; }), own = [];
+    var swapIn = function (rows, from) {
+      rows.forEach(function (r) {
+        var x = r.slice(); x.from = from;
+        var i = merged.findIndex(function (y) { return y[0] === r[0]; });
+        if (i >= 0) merged[i] = x; else merged.push(x);
+      });
+    };
+    // the window's own tab: what had been predicted GOING INTO it (pre-match + the earlier windows), how each did;
+    // Rest of game: what this window (or LIVE) newly predicts. FT: every window's.
+    windows.forEach(function (sn) {
+      var rows = rowsOf(function () { inPlayPrediction(a, sn); });
+      if (frozenPred[sn.period]) rows = withLinks(frozenPred[sn.period], rows);
+      if (sn.period === point) own = rows;
+      else swapIn(rows, sn.period);
+    });
+    if (point === 'LIVE') {   // where the game is now (not kept: it moves with every refresh)
+      own = rowsOf(function () { inPlayPrediction(a, liveView); });
+    }
+    if (point === 'FT') {
+      tabs.classList.add('d-none');
+      draw('Prediction · FT', merged, 'How the prediction finished: the pre-match lines, updated by each bet window.');
+      return;
+    }
+    var name = point === 'LIVE' ? (liveView.label || 'LIVE') : periodName(point);
+    tabs.classList.remove('d-none');
+    tabs.querySelector('[data-pred="merged"]').textContent = name;
+    tabs.querySelectorAll('[data-pred]').forEach(function (b) {
+      b.classList.toggle('active', b.getAttribute('data-pred') === predTab);
+      b.onclick = function () { predTab = b.getAttribute('data-pred'); showPredictionCard(a); };
+    });
+    if (predTab === 'rest') {
+      draw('Prediction', own.map(function (r) { var x = r.slice(); x.from = point; x.noTag = true; return x; }),
+        'The rest of the game from ' + name + ': the score and time left then, and the stats so far.');
+    } else {
+      draw('Prediction', merged, 'Going into ' + name + ': what we\'d predicted up to then (pre-match, and the bet windows before it), and how each did. The new prediction is in Rest of game.');
+    }
+  }
+
+  /** Minute each bet window stands for, and whether an event (from the Timeline) came after it. */
+  var WINDOW_MINUTE = { PRE: 0, '30': 30, HT: 45, '60': 60, '80': 80 };
+  function after(e, from) {
+    if (from === 'PRE') return true;
+    if (from === 'LIVE') return liveView && liveView.minute != null ? (e.elapsed || 0) > liveView.minute : false;
+    if (from === 'HT') return e.half === 2;
+    return (e.half === 2 && WINDOW_MINUTE[from] < 45) || (e.elapsed || 0) > WINDOW_MINUTE[from];
+  }
+  /**
+   * Is a line settled? Sets r.settled (true / false) or, for player lists, each player's. Settled as soon as the
+   * answer is known: the HT score at half time, BTTS yes once both have scored, over 2.5 at the third goal, a
+   * scorer when he scores, the rest at full time. Lines from a bet window count from that point (Another goal: one
+   * more than the score then; Next goal: the first one after it).
+   */
+  function settle(r, from) {
+    r.settled = null;
+    var fx = liveMatch && liveMatch.fixture;
+    if (!fx) return;
+    var ft = Live.finished(fx), h = parseInt(fx.homeScore, 10) || 0, w = parseInt(fx.awayScore, 10) || 0;
+    var events = (liveMatch.events || []), names = [shortTeam(ev.home_team), shortTeam(ev.away_team)];
+    var text = typeof r[1] === 'string' ? r[1] : '';
+    var nums = /(\d+)\s*–\s*(\d+)/.exec(text);
+    var side = text.indexOf(names[0]) === 0 ? 'home' : text.indexOf(names[1]) === 0 ? 'away' : null;
+    var htSnap = liveSnaps.find(function (x) { return x.period === 'HT'; });
+    var base = from === 'LIVE' ? liveView : liveSnaps.find(function (x) { return x.period === from; });
+    var baseGoals = base ? (parseInt(base.homeScore, 10) || 0) + (parseInt(base.awayScore, 10) || 0) : 0;
+    var label = r[0];
+    if (label === 'HT Score' && nums && htSnap) r.settled = +nums[1] === +htSnap.homeScore && +nums[2] === +htSnap.awayScore;
+    else if (label === 'FT Score' && nums && ft) r.settled = +nums[1] === h && +nums[2] === w;
+    else if (label === 'Result' && ft) r.settled = /^Draw/.test(text) ? h === w : side === 'home' ? h > w : side === 'away' ? w > h : null;
+    else if (label === 'Goals') {
+      var g = /(Over|Under)\s+([\d.]+)/.exec(text);
+      if (g) { var over = h + w > +g[2]; if (over || ft) r.settled = g[1] === 'Over' ? over : !over; }
+    } else if (label === 'Both teams to score') {
+      var both = h > 0 && w > 0;
+      if (both || ft) r.settled = /^Yes/.test(text) ? both : !both;
+    } else if (label === 'Another goal') {
+      var more = h + w > baseGoals;
+      if (more || ft) r.settled = /^Yes/.test(text) ? more : !more;
+    } else if (label === 'Next goal') {
+      var next = events.find(function (e) { return e.kind === 'goal' && after(e, from); });
+      if (next) r.settled = /^No more/.test(text) ? false : next.side === side;
+      else if (ft) r.settled = /^No more/.test(text);
+    } else if (label === 'Another yellow card') {
+      var card = events.some(function (e) { return (e.kind === 'yellow' || e.kind === 'red') && after(e, from); });
+      if (card || ft) r.settled = /^Yes/.test(text) ? card : !card;
+    } else if ((label === 'Most cards' || label === 'Most fouls') && ft && side) {
+      var row = ((liveMatch.stats && liveMatch.stats.rows) || []).find(function (x) { return x.label === (label === 'Most cards' ? 'Yellow cards' : 'Fouls'); });
+      if (row) { var hv = parseInt(row.home, 10) || 0, wv = parseInt(row.away, 10) || 0; r.settled = side === 'home' ? hv > wv : wv > hv; }
+    } else if ((label === 'Likely scorers' || label === 'Likely booked') && Array.isArray(r[1])) {
+      var kinds = label === 'Likely scorers' ? ['goal'] : ['yellow', 'red'];
+      r[1] = r[1].map(function (x) {
+        if (!x || !x.player) return x;
+        var did = events.some(function (e) { return kinds.indexOf(e.kind) >= 0 && e.player && F.samePlayer(e.player, x.player) && after(e, from); });
+        return Object.assign({}, x, { settled: did ? true : ft ? false : null });
+      });
+    }
   }
 
   /**
@@ -1017,7 +1236,13 @@
         '\'s ' + pcx(lh / (lh + la)) + ' of those (their share of the goals expected).'));
     });
     predictionSummary(card, sum);
-    ValueCheck.log(windowRecord(a, snap));
+    // logged (and its Recommended Bets kept) once the window's odds are in; without them, logWindows logs it once a
+    // later window has passed
+    if (oddsAt(snap)) {
+      var rec = windowRecord(a, snap);
+      if (rec) rec.predictionRows = plainRows(sum);   // what this window predicted, kept as it was
+      ValueCheck.log(rec);
+    }
   }
 
   /**
@@ -1075,6 +1300,32 @@
     $('marketModalBody').replaceChildren(box);
     bootstrap.Modal.getOrCreateInstance($('marketModal')).show();
   }
+  /**
+   * TEMPORARY: the Test: Fetch Live Odds button. Asks the bookmaker for exactly what's ticked in Settings (as a bet
+   * window would) right now, and shows them on the LIVE view: Markets and Recommended Bets use them (not saved on the
+   * server, so the bet windows are untouched; gone on reload).
+   */
+  $('testLiveOdds').addEventListener('click', function () {
+    var btn = this;
+    if (!ev) return;
+    btn.disabled = true;
+    F.getJson('/api/settings').then(function (s) {
+      var o = s.refresh || {}, markets = (o.matchResult === false ? [] : ['h2h']).concat(o.markets || []);
+      if (markets.indexOf('alternate_totals') >= 0) markets.push('totals');   // as a bet window: the main goal line too
+      if (!markets.length) throw new Error('Nothing ticked under Odds in Settings.');
+      return F.sendJson('/api/odds/cache/' + ev.sport_key + '/events/' + encodeURIComponent(ev.id) + '/live-test?bookmaker=' +
+        F.bookmaker() + '&markets=' + encodeURIComponent(markets.join(','))).then(function (r) { return { asked: markets, r: r }; });
+    }).then(function (x) {
+      var got = (x.r.markets || []).map(function (m) { return m.key; });
+      var missing = x.asked.filter(function (k) { return got.indexOf(k) < 0; });
+      liveOdds.LIVE = x.r;
+      draw();
+      notify('Live odds fetched · ' + x.r.credits + ' credit' + (x.r.credits === 1 ? '' : 's') + ' · shown on LIVE' +
+        (missing.length ? ' · not returned: ' + missing.map(function (k) { return F.EXTRA_MARKET_NAMES[k] || k; }).join(', ') : ''),
+        missing.length ? 'warning' : 'success');
+    }).catch(function (e) { notify('Live odds test: ' + e.message, 'danger'); })
+      .then(function () { btn.disabled = false; });
+  });
   /** One numbered step: a heading and its lines. */
   function step(box, n, title, lines) {
     box.appendChild(el('div', 'section-label', n + '. ' + title));
@@ -1142,11 +1393,21 @@
   }
 
   /** The Prediction card: a few lines, label | our call (e.g. "Match result | Chelsea Win (42%)"). */
+  var predCapture = null;   // while set (rowsOf): the rows are collected here instead of drawn
   function predictionSummary(card, rows) {
+    if (predCapture) { predCapture.push.apply(predCapture, rows); return; }
     var t = el('table', 'table table-sm align-middle mb-1 stats-table'), tb = el('tbody');
+    var mark = function (node, ok) {   // a settled call: green and ✓ if it came true, red and ✗ if not
+      if (ok === true || ok === false) {
+        node.classList.add(ok ? 'text-success' : 'text-danger');
+        node.appendChild(el('span', 'ms-1', ok ? '✓' : '✗'));
+      }
+    };
     rows.forEach(function (r) {
       var tr = el('tr');
-      tr.appendChild(el('td', 'text-muted text-nowrap align-top', r[0]));
+      var lab = el('td', 'text-muted text-nowrap align-top', r[0]);
+      if (r.from && !r.noTag) lab.appendChild(el('span', 'small ms-1', '· ' + periodName(r.from)));   // the window it's from
+      tr.appendChild(lab);
       var v = el('td', 'text-end fw-semibold');
       // a click on the call (or a player's percentage) opens how we worked it out
       var howLink = function (text, how) {
@@ -1164,6 +1425,7 @@
           while (cell.firstChild) div.appendChild(cell.firstChild);
           div.appendChild(document.createTextNode(' '));
           div.appendChild(howLink((line.text || '').trim(), line.how));
+          mark(div, line.settled);
         } else {
           // only the percentage is the link, not the team or call beside it
           var m = r[2] && /^(.*?)(\d+(?:\.\d+)?%)(.*)$/.exec(String(line));
@@ -1174,6 +1436,7 @@
           } else {
             div.appendChild(howLink(line, r[2]));
           }
+          mark(div, r.settled);
         }
         v.appendChild(div);
       });
@@ -1198,6 +1461,8 @@
                 home: ev.home_team, away: ev.away_team, homeTeamId: teamIds[0], awayTeamId: teamIds[1],
                 version: ValueCheck.MODEL_VERSION, score: [h0, a0], minute: r.minute,
                 chances: { home: H, draw: D, away: 1 - H - D, moreGoals: 1 - Math.exp(-(lh + la)), lh: lh, la: la } };
+    rec.recommended = windowBets(a, snap);   // kept with the window: shown as it was from now on
+    if (!frozenBets[rec.point] && oddsAt(snap)) frozenBets[rec.point] = rec.recommended;
     var saved = oddsAt(snap), h2h = saved && (saved.markets || []).find(function (mk) { return mk.key === 'h2h'; });
     if (h2h) {
       var price = function (n) { var o = h2h.outcomes.find(function (x) { return x.name === n; }); return o ? o.price : null; };
@@ -1555,7 +1820,10 @@
       var missing = (wanted || []).some(function (k) { return !points[k]; });
       clearTimeout(oddsRetry);
       if (missing && (tries || 0) < 15) oddsRetry = setTimeout(function () { rereadLiveOdds(wanted, (tries || 0) + 1); }, 4000);
-      if (Object.keys(points).join() !== Object.keys(liveOdds || {}).join()) { liveOdds = points; draw(); }
+      var mine = (liveOdds || {}).LIVE;   // the hand-fetched odds stay (they aren't saved on the server)
+      if (Object.keys(points).join() !== Object.keys(liveOdds || {}).filter(function (k) { return k !== 'LIVE'; }).join()) {
+        liveOdds = points; if (mine) liveOdds.LIVE = mine; draw();
+      }
       // a bet window's odds just came in: a chime and a note (not for the ones there when the page opened)
       if (window.GoalAlert) GoalAlert.checkPoints(Object.keys(points)).forEach(function (k) {
         var name = /^\d+$/.test(k) ? k + '\'' : k;
@@ -1579,6 +1847,7 @@
         var saved = ((m && m.snapshots) || []).map(function (x) { return String(x.period); })
           .filter(function (k) { return ['30', 'HT', '60', '80'].indexOf(k) >= 0; });
         if (on) rereadLiveOdds(saved.slice(-1));
+        liveMatch = m || null;   // the score, events and stats: which predictions came true
         liveSnaps = ((m && m.snapshots) || []).map(function (x) {   // for the prediction log's bet windows
           return { period: String(x.period), rows: x.rows, xg: x.xg, homeScore: x.homeScore, awayScore: x.awayScore };
         });

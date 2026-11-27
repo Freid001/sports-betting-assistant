@@ -364,9 +364,21 @@ public class OddsCacheService {
      * Settings. Markets this bookmaker doesn't offer are left out ("h2h" is always offered).
      */
     public Map<String, Object> refreshLive(String sport, String eventId, String bookmaker, String point, List<String> only) {
+        return fetchLive(sport, eventId, bookmaker, point, only, true);
+    }
+
+    /**
+     * Test: the in-play prices for exactly these markets right now, without saving them under any point (so the bet
+     * windows aren't touched). Charged like a bet window: 1 credit per market returned.
+     */
+    public Map<String, Object> testLive(String sport, String eventId, String bookmaker, List<String> only) {
+        return fetchLive(sport, eventId, bookmaker, null, only, false);
+    }
+
+    private Map<String, Object> fetchLive(String sport, String eventId, String bookmaker, String point, List<String> only, boolean save) {
         OddsApiClient.safeId(sport);
         OddsApiClient.safeId(eventId);
-        if (!LIVE_POINTS.contains(point)) {
+        if (save && !LIVE_POINTS.contains(point)) {
             throw new IllegalArgumentException("Unknown point in the match: " + point);
         }
         List<String> offered = extraMarkets(bookmaker);
@@ -380,7 +392,8 @@ public class OddsCacheService {
             }
         } else {
             for (String m : only) {
-                if (("h2h".equals(m) || offered.contains(m)) && !markets.contains(m)) {
+                // h2h and totals (the main goal line) are the featured markets: always there, not in "offered"
+                if (("h2h".equals(m) || "totals".equals(m) || offered.contains(m)) && !markets.contains(m)) {
                     markets.add(m);
                 }
             }
@@ -411,6 +424,9 @@ public class OddsCacheService {
                         if (o.get("point") != null) {
                             x.put("point", o.get("point"));
                         }
+                        if (o.get("description") != null) {
+                            x.put("description", o.get("description"));   // the player, in goalscorer markets ("Yes" is the name)
+                        }
                         outcomes.add(x);
                     }
                     got.add(Map.of("key", String.valueOf(m.get("key")), "outcomes", outcomes));
@@ -423,7 +439,7 @@ public class OddsCacheService {
         }
         String fetchedAt = Instant.now().truncatedTo(ChronoUnit.SECONDS).toString();
         int cost = number(res.getHeaders().getFirst("x-requests-last"));
-        store.update("INSERT OR REPLACE INTO odds_live_points (event_id, bookmaker, point, fetched_at_iso, credits, markets) "
+        if (save) store.update("INSERT OR REPLACE INTO odds_live_points (event_id, bookmaker, point, fetched_at_iso, credits, markets) "
                 + "VALUES (?, ?, ?, ?, ?, ?)", eventId, bookmaker, point, fetchedAt, cost, Json.write(got));
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("eventId", eventId);

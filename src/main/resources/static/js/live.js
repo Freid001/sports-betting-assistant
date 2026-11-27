@@ -465,8 +465,9 @@ window.Live = (function () {
     var view = el('div');
     var before = function (snap) { var i = snaps.indexOf(snap); return i > 0 ? snaps[i - 1] : null; };
     var e = parseInt(f.elapsed, 10);
-    var live = isLive(f) && s && s.rows && s.rows.length ? { period: windowFor(f), point: pointFor(f), live: true,
-      label: 'LIVE ' + minute(f), minute: isNaN(e) ? null : e, xg: s.xg, rows: s.rows, homeScore: f.homeScore, awayScore: f.awayScore } : null;
+    // LIVE as soon as it kicks off, even before GOAL API has any stats (the first few minutes)
+    var live = isLive(f) ? { period: windowFor(f), point: pointFor(f), live: true,
+      label: 'LIVE ' + minute(f), minute: isNaN(e) ? null : e, xg: s && s.xg, rows: (s && s.rows) || [], homeScore: f.homeScore, awayScore: f.awayScore } : null;
     var pick = function (snap) {
       drawView(view, snap, ev, snap.live || snap.period === 'FT' ? s : null, snap.live ? snaps[snaps.length - 1] || null : before(snap));
     };
@@ -544,6 +545,13 @@ window.Live = (function () {
       if (window.onLiveView) window.onLiveView(snap);
       return;
     }
+    if (snap.live && !(snap.rows && snap.rows.length)) {   // kicked off, but no stats from GOAL API yet
+      view.appendChild(el('div', 'text-muted', 'Kicked off · no stats from GOAL API yet (they usually appear a few minutes in).'));
+      hostsSay('No Live Stats yet');
+      cards(false);
+      if (window.onLiveView) window.onLiveView(snap);
+      return;
+    }
     cards(true);
     var mo = momentumBox(snap, prev, ev);
     if (mo) view.appendChild(mo);
@@ -558,7 +566,7 @@ window.Live = (function () {
     var upTo = eventsUpTo(gameEvents, snap);
     if (playersHost) {
       playersHost.replaceChildren(upTo.length ? timelineBox(upTo, ev) : el('div', 'text-muted', gameEvents.length
-        ? 'Nothing yet: goals, shots on target, cards and penalties show here as they happen.'
+        ? 'Nothing yet: goals, shots, cards, substitutions and penalties show here as they happen.'
         : 'No timeline for this game: it\'s built while a game is followed live, so start following before kick-off.'));
     } else if (upTo.length) {
       view.appendChild(timelineBox(upTo, ev));
@@ -660,21 +668,47 @@ window.Live = (function () {
   }
 
   // Each event's tag: text, colour (Bootstrap badge classes) and what it means (hover)
+  // Solid = changed the game (goal, card, sub, penalty); outline = a chance or set piece; faint = general play;
+  // the match's phases all dark grey
+  var OUTLINE = 'bg-transparent border ';
   var EVENT_TAGS = {
-    goal:    ['GOAL',   'text-bg-success', 'Goal'],
-    shot:    ['SOT',    'text-bg-light border', 'Shot on target'],
-    yellow:  ['YELLOW', 'text-bg-warning', 'Yellow card'],
-    red:     ['RED',    'text-bg-danger', 'Red card'],
-    penalty: ['PEN',    'text-bg-primary', 'Penalty'],
-    kickoff: ['KO',     'text-bg-secondary', 'Kick-off'],
-    ht:      ['HT',     'text-bg-secondary', 'Half time'],
-    second:  ['2H',     'text-bg-secondary', 'Second half'],
-    ft:      ['FT',     'text-bg-dark', 'Full time']
+    goal:     ['GOAL',    'text-bg-success', 'Goal'],
+    penalty:  ['PEN',     'tl-pen', 'Penalty'],
+    yellow:   ['YELLOW',  'text-bg-warning', 'Yellow card'],
+    red:      ['RED',     'text-bg-danger', 'Red card'],
+    sub:      ['SUB',     'text-bg-info', 'Substitution: the player on, for the player off'],
+    shot:     ['SOT',     OUTLINE + 'border-success text-success', 'Shot on target'],
+    miss:     ['SHOT',    OUTLINE + 'text-secondary', 'Shot off target or blocked'],
+    save:     ['SAVE',    OUTLINE + 'border-primary text-primary', 'Save by this team\'s keeper'],
+    danger:   ['DANGER',  OUTLINE + 'border-danger text-danger', 'Dangerous attack (GOAL API\'s commentary: some, not all)'],
+    corner:   ['CORNER',  OUTLINE + 'text-secondary', 'Corner (GOAL API has no player for it)'],
+    freekick: ['FK',      OUTLINE + 'text-secondary', 'Free kick won (GOAL API\'s commentary: some, not all)'],
+    offside:  ['OFFSIDE', OUTLINE + 'text-secondary', 'Offside (GOAL API has no player for it)'],
+    goalkick: ['GK',      OUTLINE + 'text-secondary', 'Goal kick (GOAL API\'s commentary: some, not all)'],
+    attack:   ['ATTACK',  'bg-transparent text-body-tertiary fw-normal', 'Attack (GOAL API\'s commentary: some, not all)'],
+    possession: ['BALL',  'bg-transparent text-body-tertiary fw-normal', 'In possession (GOAL API\'s commentary: some, not all)'],
+    kickoff:  ['KO',      'text-bg-secondary', 'Kick-off'],
+    ht:       ['HT',      'text-bg-secondary', 'Half time'],
+    second:   ['2H',      'text-bg-secondary', 'Second half'],
+    ft:       ['FT',      'text-bg-secondary', 'Full time']
   };
   /**
-   * Timeline: newest at the top, one row per event: Time | Event (GOAL, SOT, YELLOW...) | Team | Player.
+   * Timeline: newest at the top, one row per event: Time | Event (GOAL, SOT, SHOT, YELLOW...) | Team | Player.
    * Goals show the new score; HT and FT the score then. Cards and penalties have no player (GOAL API only counts them).
    */
+  /** The small stuff (grey): hidden when the Timeline is set to Key events. */
+  var MINOR = ['shot', 'miss', 'save', 'corner', 'offside', 'freekick', 'danger', 'attack', 'possession', 'goalkick'];
+  var timelineKeyOnly = false;
+  try { timelineKeyOnly = localStorage.getItem('timelineKeyOnly') === '1'; } catch (e) { /* All */ }
+  /**
+   * Where an event goes in the Timeline: its minute, except half time after every first-half event (stoppage time
+   * included) and full time after everything (a 90+3' substitution came before FT, not after it).
+   */
+  function orderOf(e) {
+    if (e.kind === 'ft') return 1e9;
+    if (e.kind === 'ht') return 199998;
+    return (e.order || 0) + (e.sec != null ? e.sec / 100 : 0.6);   // within a minute, by the second (no seconds: last)
+  }
   function timelineBox(events, ev) {
     var names = namesOf(ev);
     var table = el('table', 'table table-sm align-middle mb-0 event-timeline');
@@ -684,26 +718,57 @@ window.Live = (function () {
     var tb = el('tbody');
     // newest first; events in the same minute in reverse too (the later one in the list happened after: yellow, then red)
     events.map(function (e, i) { return { e: e, i: i }; })
-      .sort(function (a, b) { return (b.e.order || 0) - (a.e.order || 0) || b.i - a.i; })
+      .sort(function (a, b) { return orderOf(b.e) - orderOf(a.e) || b.i - a.i; })
       .map(function (x) { return x.e; }).forEach(function (e) {
       var tag = EVENT_TAGS[e.kind] || [String(e.kind).toUpperCase(), 'text-bg-secondary', ''];
-      var tr = el('tr', e.kind === 'shot' ? 'text-muted' : e.kind === 'goal' ? 'fw-semibold' : '');
-      tr.appendChild(el('td', 'text-nowrap', e.minute || ''));
+      var minor = MINOR.indexOf(e.kind) >= 0;   // the small stuff in grey
+      var tr = el('tr', minor ? 'text-muted tl-minor' : e.kind === 'goal' ? 'fw-semibold' : '');
+      var time = el('td', 'text-nowrap', e.clock || e.minute || '');   // the exact time where GOAL API gives it (53:09)
+      if (e.clock) time.title = 'Match minute ' + e.minute;
+      tr.appendChild(time);
       var badge = el('span', 'badge ' + tag[1], tag[0]);
       badge.title = tag[2];
       var what = el('td', 'text-nowrap'); what.appendChild(badge);
       if (e.score && ['goal', 'ht', 'ft'].indexOf(e.kind) >= 0) what.appendChild(el('span', 'ms-1', e.score));
       tr.appendChild(what);
-      tr.appendChild(el('td', 'text-nowrap', e.side === 'home' ? names[0] : e.side === 'away' ? names[1] : ''));
+      var team = e.side === 'home' ? names[0] : e.side === 'away' ? names[1] : '';
+      if (['ht', 'second', 'ft'].indexOf(e.kind) >= 0) {   // who's winning then, or Draw
+        var sc = /(\d+)\s*[–-]\s*(\d+)/.exec(e.score || '');
+        if (sc) team = +sc[1] > +sc[2] ? names[0] : +sc[2] > +sc[1] ? names[1] : 'Draw';
+      }
+      tr.appendChild(el('td', 'text-nowrap', team));
       var who = el('td');
-      who.appendChild(document.createTextNode(e.player || (e.kind === 'goal' ? 'Scorer not known yet' : '')));
-      if (e.info) who.appendChild(el('span', 'ms-1 text-muted fw-normal', /^penalty$/i.test(e.info) ? '(pen)' : '(' + e.info + ')'));
+      who.appendChild(document.createTextNode(e.player || (e.kind === 'goal' ? 'Scorer not known yet' : '-')));
+      // (pen), (for D. Welbeck); "commentary" just marks where it came from, no note
+      if (e.info && e.info !== 'commentary') who.appendChild(el('span', 'ms-1 text-muted fw-normal', /^penalty$/i.test(e.info) ? '(pen)' : '(' + e.info + ')'));
       if (e.assist) who.appendChild(el('div', 'small text-muted fw-normal', 'Assist: ' + e.assist));
       tr.appendChild(who);
       tb.appendChild(tr);
     });
     table.appendChild(tb);
-    return table;
+    // All / Key events (goals, cards, subs, penalties, kick-off, HT, FT): the choice is remembered
+    var box = el('div', timelineKeyOnly ? 'tl-key-only' : '');
+    if (document.head && !document.getElementById('tl-style')) {
+      var css = el('style'); css.id = 'tl-style';
+      css.textContent = '.tl-key-only .tl-minor { display: none; } .tl-pen { background: #6f42c1; color: #fff; }';
+      document.head.appendChild(css);
+    }
+    // the card's header has a place for the tabs (like the other cards' tabs); else above the table
+    var host = document.getElementById && document.getElementById('timelineFilter');
+    var pick = host ? el('ul', 'nav nav-pills small') : el('div', 'btn-group btn-group-sm mb-2');
+    [['All', false], ['Key events', true]].forEach(function (o) {
+      var b = el('button', (host ? 'nav-link py-0 px-2' : 'btn btn-outline-theme') + (o[1] === timelineKeyOnly ? ' active' : ''), o[0]);
+      b.type = 'button';
+      b.onclick = function () {
+        timelineKeyOnly = o[1];
+        try { localStorage.setItem('timelineKeyOnly', o[1] ? '1' : '0'); } catch (e) { /* this page only */ }
+        box.classList.toggle('tl-key-only', o[1]);
+        pick.querySelectorAll('button').forEach(function (x) { x.classList.toggle('active', x === b); });
+      };
+      if (host) { var li = el('li', 'nav-item'); li.appendChild(b); pick.appendChild(li); } else pick.appendChild(b);
+    });
+    if (host) { host.replaceChildren(pick); box.appendChild(table); } else box.append(pick, table);
+    return box;
   }
 
   /** Players with shots on target (live, or full time). */

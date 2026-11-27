@@ -69,6 +69,9 @@ public class LiveService {
     private final Map<String, List<Map<String, Object>>> timeline = new LinkedHashMap<>();
     /** Games whose official goals and cards were already asked for this run (finished games: once). */
     private final Set<String> officialTried = new LinkedHashSet<>();
+    private final Map<String, Instant> lastOfficial = new java.util.HashMap<>();   // when a game's official feeds were last read
+    private final Map<String, String[]> keepers = new java.util.HashMap<>();       // each game's goalkeepers [home, away]
+    static final Duration OFFICIAL_EVERY = Duration.ofMinutes(5);
     /** Every player with a shot in the last refresh (side -> players), to see who scored or hit the target since. */
     private final Map<String, Map<String, List<Map<String, Object>>>> lastPlayers = new LinkedHashMap<>();
     /** Games picked to follow before GOAL API lists them: {tournament, kickoff, home, away}. Ticked on match day. */
@@ -143,6 +146,18 @@ public class LiveService {
         list.sort(Comparator.comparing(f -> String.valueOf(f.get("kickoff"))));
         out.put("fixtures", list);
         return out;
+    }
+
+    /** Reads a game's official events again (see refreshOfficial) and saves them; then the game as match() gives it. */
+    public synchronized Map<String, Object> refreshEvents(String id) {
+        if (!fixtures.containsKey(id)) {
+            throw new IllegalArgumentException("No such game: " + id);
+        }
+        if (refreshOfficial(id)) {
+            lastOfficial.put(id, Instant.now());
+            save();
+        }
+        return match(id);
     }
 
     /** One game's summary and its latest stats (null if none yet). */
@@ -443,6 +458,10 @@ public class LiveService {
         return out;
     }
 
+    private static int rowCount(Map<String, Object> st) {
+        return st == null || !(st.get("rows") instanceof List<?> rows) ? 0 : rows.size();
+    }
+
     private void putSnapshot(String id, String period, Object homeScore, Object awayScore, Map<String, Object> st) {
         Map<String, Object> snap = new LinkedHashMap<>();
         snap.put("period", period);
@@ -578,6 +597,15 @@ public class LiveService {
                 Map<String, Object> s = computeStats(body);
                 s.put("minute", f.get("minute"));
                 s.put("final", isFinished(f));
+                // GOAL API sometimes answers a live game with no stats at all for a refresh or two: keep the last
+                // good ones (so the page doesn't go blank, and the next shots on target are counted from them)
+                Map<String, Object> prev = stats.get(id);
+                if (rowCount(s) == 0 && rowCount(prev) > 0) {
+                    s.put("rows", prev.get("rows"));
+                    s.put("xg", prev.get("xg"));
+                    s.put("stale", true);
+                    log.info("GOAL API sent no stats for {} at {}': kept the last ones.", id, f.get("minute"));
+                }
                 @SuppressWarnings("unchecked")
                 Map<String, List<Map<String, Object>>> all = (Map<String, List<Map<String, Object>>>) s.remove("allPlayers");
                 addEvents(id, before.get(id), f, stats.get(id), s, all);
@@ -602,11 +630,18 @@ public class LiveService {
         boolean finished = isFinished(f);
         boolean pastHalfTime = finished || String.valueOf(f.get("period")).toUpperCase().matches(".*(HALF_TIME|SECOND|2ND).*");
         List<Map<String, Object>> firstHalf = Json.maps(match.get("firstHalf"));
-        if (pastHalfTime && !have.containsKey("HT") && !firstHalf.isEmpty() && f.get("htHome") != null) {
-            putSnapshot(id, "HT", f.get("htHome"), f.get("htAway"), statsFromRows(firstHalf));
-            boolean atTheBreak = !finished && String.valueOf(f.get("period")).toUpperCase().contains("HALF_TIME")
-                    || "HT".equalsIgnoreCase(String.valueOf(f.get("minute")));
-            if (atTheBreak) {
+        boolean atTheBreak = !finished && String.valueOf(f.get("period")).toUpperCase().contains("HALF_TIME")
+                || "HT".equalsIgnoreCase(String.valueOf(f.get("minute")));
+        // At the break the match stats so far ARE the first half's, and GOAL API's separate first-half block can be
+        // much thinner (no shots, no xG): so at the break the full stats; saved later in the 2nd half, the first-half
+        // block (the full stats include the 2nd half by then). At the break a thin HT is replaced by a fuller one.
+        Map<String, Object> htStats = atTheBreak ? s : firstHalf.isEmpty() ? null : statsFromRows(firstHalf);
+        boolean fuller = atTheBreak && have.containsKey("HT") && htStats != null
+                && rowCount(htStats) > rowCount(have.get("HT"));
+        if (pastHalfTime && htStats != null && f.get("htHome") != null && (!have.containsKey("HT") || fuller)) {
+            boolean first = !have.containsKey("HT");
+            putSnapshot(id, "HT", f.get("htHome"), f.get("htAway"), htStats);
+            if (atTheBreak && first) {
                 announce(id, "HT", f);   // the half-time odds only if it's half-time now (not saved late in the 2nd half)
             }
         }
@@ -796,10 +831,19 @@ public class LiveService {
         }
         List<Map<String, Object>> found = events(before, f, prevStats, s, prevPlayers, players, list);
         found.forEach(e -> e.put("source", "seen"));
+        String[] gk = keepers.get(id);   // a save: that side's keeper (from the line-ups)
+        if (gk != null) {
+            found.stream().filter(e -> "save".equals(e.get("kind")) && e.get("player") == null)
+                    .forEach(e -> e.put("player", "home".equals(e.get("side")) ? gk[0] : gk[1]));
+        }
         list.addAll(found);
         boolean big = found.stream().anyMatch(e -> List.of("goal", "yellow", "red", "penalty", "ft").contains(e.get("kind")));
-        if (big) {
-            refreshOfficial(id);   // GOAL API's own goals and cards: real minutes, scorers, assists (2 calls)
+        // GOAL API's own goals, cards, substitutions and commentary (4 calls): after a goal or card, and every 5
+        // minutes anyway (substitutions and commentary moments aren't seen in the stats)
+        Instant last = lastOfficial.computeIfAbsent(id, k -> Instant.now());   // the first: 5 minutes from now
+        if (big || last.plus(OFFICIAL_EVERY).isBefore(Instant.now())) {
+            refreshOfficial(id);
+            lastOfficial.put(id, Instant.now());
         }
     }
 
@@ -869,6 +913,16 @@ public class LiveService {
         try {
             official.addAll(officialGoals(api.getJson("/fixtures/" + id + "/events", Map.of())));
             official.addAll(officialCards(api.getJson("/fixtures/" + id + "/cards", Map.of())));
+            official.addAll(officialSubs(api.getJson("/fixtures/" + id + "/substitutions", Map.of())));
+            if (!keepers.containsKey(id)) {   // the line-ups, once: each side's goalkeeper (for the saves)
+                String[] gk = keepersOf(api.getJson("/fixtures/" + id + "/lineups", Map.of()));
+                if (gk[0] != null || gk[1] != null) {
+                    keepers.put(id, gk);
+                }
+            }
+            Map<String, Object> fx = fixtures.get(id);
+            official.addAll(commentary(api.getJson("/fixtures/" + id + "/commentary", Map.of()),
+                    fx == null ? null : Json.text(fx.get("home")), fx == null ? null : Json.text(fx.get("away"))));
         } catch (RuntimeException e) {
             log.warn("GOAL API events for {} failed: {}", id, e.getMessage());
             return false;
@@ -878,6 +932,14 @@ public class LiveService {
         list.removeIf(e -> "api".equals(e.get("source")));
         if (haveOfficial) {
             list.removeIf(e -> List.of("goal", "yellow", "red").contains(e.get("kind")));
+            // a penalty spotted from the team's count that the commentary names (same side, within 2')
+            list.removeIf(e -> "penalty".equals(e.get("kind")) && e.get("player") == null && official.stream().anyMatch(o -> "penalty".equals(o.get("kind"))
+                    && String.valueOf(o.get("side")).equals(e.get("side"))
+                    && Math.abs(num(Json.text(o.get("elapsed"))) - num(Json.text(e.get("elapsed")))) <= 2));
+            // a shot on target spotted from the player stats that the commentary has too (same side, within 2')
+            list.removeIf(e -> "shot".equals(e.get("kind")) && official.stream().anyMatch(o -> "shot".equals(o.get("kind"))
+                    && String.valueOf(o.get("side")).equals(e.get("side"))
+                    && Math.abs(num(Json.text(o.get("elapsed"))) - num(Json.text(e.get("elapsed")))) <= 2));
             list.removeIf(e -> "penalty".equals(e.get("kind")) && official.stream().anyMatch(o -> "goal".equals(o.get("kind"))
                     && "Penalty".equalsIgnoreCase(String.valueOf(o.get("info"))) && String.valueOf(o.get("side")).equals(e.get("side"))
                     && Math.abs(num(Json.text(o.get("elapsed"))) - num(Json.text(e.get("elapsed")))) <= 5));
@@ -885,6 +947,80 @@ public class LiveService {
         list.addAll(official);
         list.sort(Comparator.comparingInt(e -> num(Json.text(e.get("order")))));
         return true;
+    }
+
+    /** GOAL API's substitutions: [{time "46", substitution "Off | On", team "home" / "away"}]: SUB, the player on, "for" the one off. */
+    static List<Map<String, Object>> officialSubs(Map<String, Object> body) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> x : Json.maps(body.get("data"))) {
+            String[] who = String.valueOf(x.get("substitution")).split("\\|");
+            String side = "home".equalsIgnoreCase(Json.text(x.get("team"))) ? "home" : "away";
+            if (who.length < 2) {
+                continue;
+            }
+            Map<String, Object> e = official("sub", side, x, who[1].trim());
+            e.put("info", "for " + who[0].trim());
+            out.add(e);
+        }
+        return out;
+    }
+
+    /** The starting goalkeepers in GOAL API's line-ups: [home, away] (null if not listed). */
+    static String[] keepersOf(Map<String, Object> body) {
+        String[] out = new String[2];
+        Map<String, Object> data = Json.map(body.get("data"));
+        String[] sides = {"home", "away"};
+        for (int i = 0; i < 2; i++) {
+            for (Map<String, Object> p : Json.maps(Json.map(data.get(sides[i])).get("startingLineups"))) {
+                if (String.valueOf(p.get("playerPosition")).toLowerCase(java.util.Locale.ROOT).startsWith("goalkeeper")) {
+                    out[i] = Json.text(p.get("lineupPlayer"));
+                    break;
+                }
+            }
+        }
+        return out;
+    }
+
+    /**
+     * GOAL API's live commentary: [{time "53:09", text "Nottingham shot on goal", state "J McAtee,"}]. Only some moments
+     * are in it (not every shot), but each names the player: every kind with a player except the ones the official
+     * feeds have in full (goals, cards, substitutions). Longer names first ("dangerous attack" before "attack").
+     */
+    static List<Map<String, Object>> commentary(Map<String, Object> body, String home, String away) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        String[][] kinds = {{"shot on goal", "shot"}, {"free kick", "freekick"}, {"dangerous attack", "danger"},
+            {"attack", "attack"}, {"in possession", "possession"}, {"goal kick", "goalkick"}, {"penalty", "penalty"}};
+        for (Map<String, Object> x : Json.maps(body.get("data"))) {
+            String text = String.valueOf(x.get("text")), player = Json.text(x.get("state"));
+            player = player == null ? "" : player.replaceAll("[,\\s]+$", "").trim();
+            if (player.isEmpty()) {
+                continue;
+            }
+            String side = home != null && text.startsWith(home) ? "home" : away != null && text.startsWith(away) ? "away" : null;
+            if (side == null) {
+                continue;
+            }
+            for (String[] k : kinds) {
+                if (text.toLowerCase(java.util.Locale.ROOT).endsWith(" " + k[0])) {
+                    int mm = num(String.valueOf(x.get("time")).split(":")[0]);
+                    Map<String, Object> t = new LinkedHashMap<>();
+                    // the minute it's in (53:09 is the 54th); stoppage time as 90+n'
+                    t.put("time", mm + 1 > 90 ? "90+" + (mm + 1 - 90) : String.valueOf(mm + 1));
+                    t.put("scoreInfoTime", mm >= 45 ? "2nd Half" : "1st Half");
+                    Map<String, Object> e = official(k[1], side, t, player);
+                    e.put("info", "commentary");
+                    // the exact time it gives (53:09): for the Timeline's order within a minute, and to show
+                    String[] clock = String.valueOf(x.get("time")).split(":");
+                    if (clock.length == 2) {
+                        e.put("clock", String.valueOf(x.get("time")));
+                        e.put("sec", num(clock[1]));
+                    }
+                    out.add(e);
+                    break;   // one kind per line ("dangerous attack" isn't an "attack" too)
+                }
+            }
+        }
+        return out;
     }
 
     /** GOAL API's goals: [{time "34", timeNum, homeScorer / awayScorer, ...Assist, score "1 - 2", info "Penalty", scoreInfoTime}]. */
@@ -996,7 +1132,21 @@ public class LiveService {
                 }
             }
         }
-        // shots on target (a goal is one too, so those aren't listed twice)
+        // saves (the side whose keeper made it: his name is added from the line-ups, see addEvents), corners, offsides:
+        // the team's counts (GOAL API has no feed with each one)
+        String[][] counted = {{"Saves", "save"}, {"Corners", "corner"}, {"Offsides", "offside"}};
+        for (String[] k : counted) {
+            if (!hasRow(prevStats, k[0])) {
+                continue;
+            }
+            int[] a = count(prevStats, k[0]), b = count(s, k[0]);
+            for (int i = 0; i < 2; i++) {
+                for (int n = a[i]; n < b[i]; n++) {
+                    out.add(event(f, k[1], sides[i], null, null, 0));
+                }
+            }
+        }
+        // shots on target (a goal is one too, so those aren't listed twice): only with the player's name (see risers)
         for (String side : sides) {
             Map<String, Integer> goals = new LinkedHashMap<>();
             for (String name : risers(prevPlayers, players, side, "goals")) {
@@ -1053,6 +1203,10 @@ public class LiveService {
         return out;
     }
 
+    private static boolean hasRow(Map<String, Object> st, String label) {
+        return st != null && Json.maps(st.get("rows")).stream().anyMatch(r -> label.equals(r.get("label")));
+    }
+
     private static int[] count(Map<String, Object> st, String label) {
         for (Map<String, Object> r : Json.maps(st.get("rows"))) {
             if (label.equals(r.get("label"))) {
@@ -1089,7 +1243,9 @@ public class LiveService {
         e.put("minute", label);
         e.put("half", half);
         e.put("elapsed", "kickoff".equals(kind) ? 0 : el);
-        e.put("order", "kickoff".equals(kind) ? 0 : half * 100000 + el * 100 + extra * 2 + late);
+        // half time after all the first half's stoppage time, full time after everything
+        e.put("order", "kickoff".equals(kind) ? 0 : "ht".equals(kind) ? 199998 : "ft".equals(kind) ? 1_000_000_000
+                : half * 100000 + el * 100 + extra * 2 + late);
         e.put("at", Instant.now().toString());
         return e;
     }

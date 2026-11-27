@@ -259,6 +259,29 @@ public class SettingsService {
         store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "live-odds", on ? "on" : "off");
     }
 
+    /** The bet windows there are, in match order. */
+    public static final List<String> BET_WINDOWS = List.of("30", "HT", "60", "80");
+
+    /** Bet Windows: which of them fetch the in-play odds (Refresh Odds Live); all of them until picked. */
+    public List<String> betWindows() {
+        String v = saved("bet-windows").orElse(null);
+        if (v == null) {
+            return BET_WINDOWS;
+        }
+        List<String> picked = List.of(v.split(","));
+        return BET_WINDOWS.stream().filter(picked::contains).toList();
+    }
+
+    public void setBetWindows(List<String> windows) {
+        for (String w : windows) {
+            if (!BET_WINDOWS.contains(w)) {
+                throw new IllegalArgumentException("Bet windows are 30, HT, 60 and 80: not " + w);
+            }
+        }
+        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "bet-windows",
+                String.join(",", BET_WINDOWS.stream().filter(windows::contains).toList()));
+    }
+
     // ---------------------------------------------------------------- top bar
 
     /** Stake Bar: the £ stake buttons in the top bar (on unless switched off). */

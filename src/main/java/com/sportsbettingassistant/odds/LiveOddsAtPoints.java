@@ -10,7 +10,7 @@ import com.sportsbettingassistant.football.live.LiveService;
 /**
  * When Live Stats saves a timeline point of a followed game (30', HT, 60', 80'), fetch the picked bookmaker's in-play
  * prices once and save them under that point, so the match page shows that point's odds and verdicts later at no cost.
- * About 3 Odds API credits a point (15 a game).
+ * 1 Odds API credit per market ticked in Settings at each point (4 points a game: 30', HT, 60', 80').
  */
 @Component
 public class LiveOddsAtPoints {
@@ -31,10 +31,37 @@ public class LiveOddsAtPoints {
 
     @EventListener
     public void onPoint(LiveService.PointSaved p) {
-        if (settings != null && !settings.liveOdds()) {
-            return;   // switched off in Settings: no credits spent
+        if (settings != null && (!settings.liveOdds() || !settings.betWindows().contains(p.point()))) {
+            return;   // switched off, or not one of the bet windows picked in Settings: no credits spent
         }
-        Thread.startVirtualThread(() -> fetch(p));   // not inside the Live Stats refresh (it holds its lock)
+        Thread.startVirtualThread(() -> fetchWithRetries(p, RETRIES, RETRY_EVERY));   // not inside the Live Stats refresh (it holds its lock)
+    }
+
+    /** Bookmakers suspend their in-play markets for a minute or two (after a goal, a card, VAR): try again a few times. */
+    static final int RETRIES = 4;
+    static final java.time.Duration RETRY_EVERY = java.time.Duration.ofMinutes(1);
+
+    /**
+     * Fetches a point's prices; if none came back (suspended markets, an error), tries again every minute, up to
+     * {@code retries} more times. A try that gets nothing costs nothing. Stops if Refresh Odds Live is switched off.
+     */
+    boolean fetchWithRetries(LiveService.PointSaved p, int retries, java.time.Duration every) {
+        for (int i = 0; ; i++) {
+            if (fetch(p)) {
+                return true;
+            }
+            if (i >= retries || (settings != null && !settings.liveOdds()) || marketsFor(p) != null && marketsFor(p).isEmpty()) {
+                return false;
+            }
+            log.info("Live odds at {} for {} v {}: none yet, trying again in {}s ({} of {}).", p.point(), p.home(), p.away(),
+                    every.toSeconds(), i + 1, retries);
+            try {
+                Thread.sleep(every);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
+        }
     }
 
     /**
@@ -52,6 +79,10 @@ public class LiveOddsAtPoints {
         }
         if (opts.get("markets") instanceof java.util.List<?> ticked) {
             ticked.forEach(m -> out.add(String.valueOf(m)));
+            // in-play, bookmakers often drop the full set of goal lines but keep the main one: ask for that too
+            if (ticked.contains("alternate_totals")) {
+                out.add("totals");
+            }
         }
         return out;
     }

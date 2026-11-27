@@ -130,13 +130,13 @@
         // Same column widths in every day's card, so the columns line up from one day to the next
         var table = el('table', 'table table-sm table-hover align-middle mb-0 small match-list');
         var cols = el('colgroup');
-        ['1.5rem', '6.5rem', 'auto', '5.5rem', '5.5rem', '5.5rem'].forEach(function (w) {
+        ['1.5rem', '3.5rem', '7rem', '10rem', 'auto', '5.5rem', '5.5rem', '5.5rem'].forEach(function (w) {
           var c = el('col'); if (w !== 'auto') c.style.width = w; cols.appendChild(c);
         });
         table.appendChild(cols);
         var head = el('tr', 'text-muted');
-        ['', 'Time', 'Match', 'Home', 'Draw', 'Away'].forEach(function (h, i) {
-          head.appendChild(el('th', i >= 3 ? 'text-center' : null, h));
+        ['', 'Time', 'Status', 'Competition', 'Match', 'Home', 'Draw', 'Away'].forEach(function (h, i) {
+          head.appendChild(el('th', i >= 5 ? 'text-center' : null, h));
         });
         var thead = el('thead'); thead.appendChild(head); table.appendChild(thead);
         tbody = el('tbody'); table.appendChild(tbody);
@@ -151,13 +151,19 @@
       var td0 = el('td', fav ? 'text-dark' : 'text-muted', fav ? '★' : '☆');
       td0.title = fav ? 'Favourite team playing' : 'No favourite team playing (set them in Favourites)';
       tr.appendChild(td0);
-      var timeCell = el('td', 'text-nowrap', start.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }));
-      // Ticked in Live Stats: LIVE 10' 1–0 (minute as of the last refresh) or FT 2–1; otherwise from the clock: 10', HT, FT
+      tr.appendChild(el('td', 'text-nowrap', start.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })));
+      // Status: empty until kick-off, then LIVE 10' 1–0 / HT 1–0 / FT 2–1 (score and minute as of GOAL API's last
+      // refresh), or, without GOAL API's data for it, the clock's 10' / HT / FT
+      var statusCell = el('td', 'text-nowrap');
       var lb = Live.badge(Live.findFor(liveState, m));
       var clock = F.clockStatus(m.commence_time);
-      if (lb) timeCell.appendChild(lb);
-      else if (clock) { var cb = F.statusBadge(clock); cb.classList.add('ms-1'); timeCell.appendChild(cb); }   // same colours as live ones
-      tr.appendChild(timeCell);
+      if (lb) { lb.classList.remove('ms-1'); statusCell.appendChild(lb); }
+      else if (clock) statusCell.appendChild(F.statusBadge(clock));   // same colours as live ones
+      tr.appendChild(statusCell);
+      // the competition in its own column (cut short with … if it's too long; the full name on hover)
+      var compCell = el('td', 'text-muted text-truncate', m.comp || '');
+      compCell.title = m.comp || '';
+      tr.appendChild(compCell);
       var teams = teamsByComp[m.compKey] || [];
       var matchCell = el('td', 'fw-semibold');
       var line = el('span', 'd-inline-flex align-items-center gap-1');
@@ -167,8 +173,6 @@
       line.appendChild(F.logo(teams, m.away_team, 20));
       line.appendChild(el('span', null, m.away_team));
       matchCell.appendChild(line);
-      // the competition under the match, as on the Bets page
-      matchCell.appendChild(el('div', 'text-muted fw-normal', m.comp));
       tr.appendChild(matchCell);
       var chances = (ph && pd && pa) ? F.fairChances([ph, pd, pa]).chances : [null, null, null];
       [ph, pd, pa].forEach(function (p, i) {

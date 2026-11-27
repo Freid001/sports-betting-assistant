@@ -6,6 +6,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import java.util.List;
+
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -106,6 +108,16 @@ class SettingsServiceTest {
         settings.setLiveRefreshMinutes(2);
         assertThat(new SettingsService(store, null).liveRefreshMinutes()).isEqualTo(2);
         assertThatThrownBy(() -> settings.setLiveRefreshMinutes(3)).isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void betWindowsAreAllUntilPickedAndCanBeAnyOrNone() {
+        assertThat(settings.betWindows()).containsExactly("30", "HT", "60", "80");
+        settings.setBetWindows(List.of("80", "HT"));
+        assertThat(settings.betWindows()).containsExactly("HT", "80");   // in match order
+        settings.setBetWindows(List.of());
+        assertThat(settings.betWindows()).isEmpty();
+        assertThatThrownBy(() -> settings.setBetWindows(List.of("25"))).isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

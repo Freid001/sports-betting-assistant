@@ -43,22 +43,26 @@
                         <div class="text-muted small mt-1">The colour of the top bar, card headers and buttons.</div></td>
                 </tr>
                 <tr>
+                    <td class="text-nowrap fw-semibold pt-2">Stake Bar</td>
+                    <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="stakeBar"></div>
+                        <div class="text-muted small mt-1">Shows £ stake buttons in the top bar (on wide screens). Pick one to see what each bet would return.</div></td>
+                </tr>
+                <tr>
+                    <td class="text-nowrap fw-semibold pt-2">Bet Windows</td>
+                    <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="betWindows"></div>
+                        <div class="text-muted small mt-1">Snapshots in a followed game where the bets are checked again. Pick any.</div></td>
+                </tr>
+                <tr>
+                    <td class="text-nowrap fw-semibold pt-2">Refresh Odds Live</td>
+                    <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="liveOdds"></div>
+                        <div class="text-muted small mt-1">Refreshes the bookmaker's in-play odds at each bet window<span id="live-odds-cost"></span>.</div></td>
+                </tr>
+                <tr>
                     <td class="text-nowrap fw-semibold pt-2">Refresh Data Live</td>
                     <td class="w-100 pt-2">
                         <div class="btn-group btn-group-sm" role="group" id="liveRefresh"></div>
                         <div class="text-muted small mt-1" id="liveRefreshNote"></div>
                     </td>
-                </tr>
-                <tr>
-                    <td class="text-nowrap fw-semibold pt-2">Refresh Odds Live</td>
-                    <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="liveOdds"></div>
-                        <div class="text-muted small mt-1">Refreshes the bookmaker's in-play odds at each bet window (30' HT 60' 80')
-                            · 1 credit per market per refresh.</div></td>
-                </tr>
-                <tr>
-                    <td class="text-nowrap fw-semibold pt-2">Stake Bar</td>
-                    <td class="w-100 pt-2"><div class="btn-group btn-group-sm" role="group" id="stakeBar"></div>
-                        <div class="text-muted small mt-1">Shows £ stake buttons in the top bar (on wide screens). Pick one to see what each bet would return.</div></td>
                 </tr>
             </tbody></table>
         </div>
@@ -464,33 +468,44 @@
         return td;
       }
       /** Cost row: credits per match for the ticked extra markets, and the most one Refresh Odds can cost now. */
+      /**
+       * Cost: the credits Refresh Odds Live spends on a followed game: each bet window fetches Home / Draw / Away if
+       * ticked plus every ticked extra market the bookmaker has (1 credit each), at each bet window picked in General.
+       */
       function cost() {
         if (!costCell) return;
         var has = offered[book] || [];
-        var perMatch = opts.scope === 'off' ? 0 : rows.filter(function (x) { return x.cb.checked && has.indexOf(x.key) >= 0; }).length;
-        var n = opts.scope === 'favs' ? favMatches.length : opts.scope === 'all' ? soon.length : 0;
-        var resultCredits = result.cb.checked ? 2 * comps : 0, total = resultCredits + perMatch * n;
-        // two totals: one press of Refresh Odds with these settings, and every odd there is
-        var pl = function (x, one, many) { return x + ' ' + (x === 1 ? one : many); };
-        var name = F.bookmakerName(book), allResult = 2 * comps, allTotal = allResult + has.length * soon.length;
-        var t = el('table', 'table table-sm table-borderless mb-0 w-auto');
-        var tb2 = el('tbody');
-        function addRow(label, credits, sum) {
+        var perWindow = (result.cb.checked ? 1 : 0) + rows.filter(function (x) { return x.cb.checked && has.indexOf(x.key) >= 0; }).length;
+        var pl = function (x) { return x + ' credit' + (x === 1 ? '' : 's'); };
+        var t = el('table', 'table table-sm table-borderless mb-0 w-auto'), tb2 = el('tbody');
+        var windows = (window.BET_WINDOWS || ['30', 'HT', '60', '80']).length;
+        [['Total credits per bet window', perWindow],
+         ['Total credits per match (' + windows + ' bet window' + (windows === 1 ? '' : 's') + ')', windows * perWindow]].forEach(function (r) {
           var tr = el('tr');
-          var left = el('td', 'ps-0');
-          left.append(el('div', 'fw-semibold', label), el('div', 'text-muted small', sum));
-          tr.append(left, el('td', 'text-end fw-semibold text-nowrap ps-4', pl(credits, 'credit', 'credits')));
+          tr.append(el('td', 'ps-0', r[0]), el('td', 'text-end fw-semibold text-nowrap ps-4', pl(r[1])));
           tb2.appendChild(tr);
-        }
-        var mine = [];
-        if (result.cb.checked) mine.push('Home / Draw / Away: 2 × ' + pl(comps, 'competition', 'competitions'));
-        if (opts.scope !== 'off' && perMatch) mine.push(pl(perMatch, 'market', 'markets') + ' × ' + pl(n, 'match', 'matches'));
-        addRow('Refresh Odds with these settings', total, mine.length ? mine.join(' + ') : 'Nothing ticked');
-        addRow('All odds', allTotal, 'Home / Draw / Away: 2 × ' + pl(comps, 'competition', 'competitions') + ' + every ' + name + ' market (' +
-          has.length + ') × all ' + pl(soon.length, 'match', 'matches'));
+        });
         t.appendChild(tb2);
-        costCell.replaceChildren(t, el('div', 'text-muted small mt-1', 'Next 30 days · "up to": you\'re only charged for markets ' +
-          name + ' returns. Live odds during games are separate (Refresh Odds Live).'));
+        // Refresh Odds Live off: nothing is spent during games, so no totals, just that
+        costCell.replaceChildren(window.LIVE_ODDS === false ? el('div', 'text-muted', 'Refresh Odds Live is Off: no credits spent during games.') : t);
+        if (window.LIVE_ODDS !== false && !windows) costCell.appendChild(el('div', 'text-muted small mt-1', 'No bet windows picked, so none of this is spent.'));
+        // always, at the top: what Refresh Odds (Football page) costs per match before kick-off: 1 per ticked extra
+        // market (Home / Draw / Away is 2 per competition, for all its matches in one go)
+        var extras = opts.scope === 'off' ? 0 : rows.filter(function (x) { return x.cb.checked && has.indexOf(x.key) >= 0; }).length;
+        var pre = el('table', 'table table-sm table-borderless mb-1 w-auto'), pb = el('tbody');
+        function preRow(label, sum, credits) {
+          var tr = el('tr'), left = el('td', 'ps-0', label);
+          if (sum) left.appendChild(el('div', 'text-muted small', sum));
+          tr.append(left, el('td', 'text-end fw-semibold text-nowrap ps-4 align-top', pl(credits)));
+          pb.appendChild(tr);
+        }
+        preRow('Refresh Odds, per match', 'Extra markets' + (result.cb.checked ? ' (Home / Draw / Away is 2 per competition)' : '') +
+          (opts.scope === 'favs' ? ' · Favourite Teams only' : ''), extras);
+        pre.appendChild(pb);
+        costCell.prepend(pre);
+        // the same total next to Refresh Odds Live (General card), while it's on
+        $('live-odds-cost').textContent = window.LIVE_ODDS === false ? ''
+          : ' · ' + pl(windows * perWindow) + ' per followed match';
       }
       var costCell = null;
 
@@ -498,16 +513,20 @@
         cost();
         opts.markets = rows.filter(function (x) { return x.cb.checked; }).map(function (x) { return x.key; });
         opts.matchResult = result.cb.checked;
+        cost();
         F.saveRefreshOptions(opts).catch(function (e) { notify('Couldn\'t save: ' + e.message, 'danger'); });
       }
+      // each tick's cost: a press of Refresh Odds, and (Refresh Odds Live on) each bet window of a followed game
       function update() {
         cost();
+        var live = window.LIVE_ODDS !== false;
+        result.note.textContent = '· 2 credits per competition' + (live ? ', 1 per bet window' : '');
         var has = offered[book] || [], name = F.bookmakerName(book);
         rows.forEach(function (x) {
           var ok = has.indexOf(x.key) >= 0;
           x.cb.disabled = opts.scope === 'off' || !ok;
           x.row.classList.toggle('opacity-50', opts.scope === 'off' || !ok);
-          x.note.textContent = ok ? '· 1 credit per match' : '· not at ' + name;
+          x.note.textContent = ok ? '· 1 credit per match' + (live ? ', and per bet window' : '') : '· not at ' + name;
         });
       }
 
@@ -522,7 +541,7 @@
 
       // Extra Markets: which matches get them (its own row), then every tick box together
       var extraCell = row(tb, 'Extra Markets');
-      extraCell.appendChild(toggle('extraScope', [['off', 'Off'], ['favs', '★ Favourites\' matches'], ['all', 'All matches']],
+      extraCell.appendChild(toggle('extraScope', [['all', 'All Matches'], ['favs', 'Favourite Teams'], ['off', 'Off']],
         opts.scope, function (v) { opts.scope = v; update(); save(); }));
       extraCell.appendChild(el('div', 'text-muted small mt-1', 'Which matches in the next 30 days get the extra markets below.'));
 
@@ -547,6 +566,7 @@
 
       costCell = row(tb, 'Cost');
       box.replaceChildren(table);
+      window.redrawLiveOddsCost = update;   // Refresh Odds Live's On / Off redraws it (only once the tick boxes are here)
       update();
     }).catch(function (e) { $('refreshBox').replaceChildren(el('span', 'text-muted', 'Couldn\'t load: ' + e.message)); });
   }
@@ -578,12 +598,16 @@
   }
   /** Refresh Odds Live: On (at each bet window) | Off buttons, like Stake Bar. */
   function liveOdds(current) {
+    window.LIVE_ODDS = current;
+    if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
     var group = $('liveOdds');
     group.replaceChildren();
     [[true, 'On'], [false, 'Off']].forEach(function (o) {
       var input = el('input', 'btn-check');
       input.type = 'radio'; input.name = 'liveOdds'; input.id = 'live-odds-' + (o[0] ? 'on' : 'off'); input.checked = o[0] === current;
       input.addEventListener('change', function () {
+        window.LIVE_ODDS = o[0];
+        if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
         F.sendJson('/api/settings/live-odds?on=' + o[0]).catch(function (e) { notify(e.message, 'danger'); });
       });
       var label = el('label', 'btn btn-outline-theme', o[1]);
@@ -591,10 +615,33 @@
       group.append(input, label);
     });
   }
+  /** Bet Windows: 30' HT 60' 80', each on or off (any number); the Odds card's Cost counts the ones picked. */
+  var ALL_WINDOWS = ['30', 'HT', '60', '80'];
+  function betWindows(current) {
+    window.BET_WINDOWS = current.slice();
+    if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
+    var group = $('betWindows');
+    group.replaceChildren();
+    ALL_WINDOWS.forEach(function (w) {
+      var input = el('input', 'btn-check');
+      input.type = 'checkbox'; input.id = 'window-' + w; input.checked = current.indexOf(w) >= 0;
+      input.addEventListener('change', function () {
+        var picked = ALL_WINDOWS.filter(function (k) { return $('window-' + k).checked; });
+        window.BET_WINDOWS = picked;
+        if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
+        F.sendJson('/api/settings/bet-windows?windows=' + encodeURIComponent(picked.join(',')))
+          .catch(function (e) { notify(e.message, 'danger'); });
+      });
+      var label = el('label', 'btn btn-outline-theme', w === 'HT' ? 'HT' : w + '\'');
+      label.htmlFor = input.id;
+      group.append(input, label);
+    });
+  }
   F.getJson('/api/settings').then(function (s) {
     liveRefresh(s.liveRefresh != null ? s.liveRefresh : 5);
     liveOdds(s.liveOdds !== false);
-  }).catch(function () { liveRefresh(5); liveOdds(true); });
+    betWindows(s.betWindows || ALL_WINDOWS);
+  }).catch(function () { liveRefresh(5); liveOdds(true); betWindows(ALL_WINDOWS); });
 
   /** Stake Bar: On | Off buttons like Live Refresh; shown or hidden straight away, and on every page from now on. */
   function stakeBar(current) {

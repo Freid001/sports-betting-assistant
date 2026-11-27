@@ -89,6 +89,15 @@ public class LiveStatsController {
         return Json.ok(live.match(id));
     }
 
+    /**
+     * Reads a game's official events again: goals, cards, substitutions, commentary moments and (once) the line-ups'
+     * keepers (4-5 GOAL API calls). For a finished game whose Timeline is missing some. Returns the game as /match does.
+     */
+    @PostMapping("/match/{id}/events")
+    public ResponseEntity<String> refreshEvents(@PathVariable String id) {
+        return Json.ok(live.refreshEvents(id));
+    }
+
     /** A finished game's highlights video: {url, title} or {} (1 GOAL API call at most every 6 hours a game). */
     @GetMapping("/match/{id}/highlights")
     public ResponseEntity<String> highlights(@PathVariable String id) {

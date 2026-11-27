@@ -442,10 +442,11 @@ window.ValueCheck = (function () {
   /** Sends a prediction to the log (once per page load per match and point; the server keeps the last pre-match one). */
   function log(rec) {
     if (!rec || !window.fetch) return;
-    var k = rec.matchId + '|' + rec.point;
-    if (sent[k]) return;
-    sent[k] = true;
-    fetch('/api/predictions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(rec) })
+    var k = rec.matchId + '|' + rec.point, body = JSON.stringify(rec);
+    // a bet window once; pre-match again whenever it changes (e.g. once the squads are in), until kick-off
+    if (sent[k] && (rec.point !== 'PRE' || sent[k] === body)) return;
+    sent[k] = body;
+    fetch('/api/predictions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: body })
       .catch(function () { delete sent[k]; });
   }
 

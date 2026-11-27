@@ -75,6 +75,8 @@ window.InPlay = (function () {
       '70': ['next', 'over'],
       '80': ['next']
     }[period] || [];
+    // the match result and both teams to score at every point of the game: the markets bookmakers keep pricing in-play
+    if (period !== 'FT') want = want.concat(['win', 'btts'].filter(function (k) { return want.indexOf(k) < 0; }));
     if (want.indexOf('win') >= 0) {
       add('Match Result', names[0], 'home', H, { keys: ['h2h'], name: names[0] });
       add('Match Result', 'Draw', null, D, { keys: ['h2h'], name: 'Draw' });
@@ -92,6 +94,11 @@ window.InPlay = (function () {
     if (want.indexOf('team') >= 0) {
       add('Team To Score Again', names[0], 'home', 1 - Math.exp(-lh));
       add('Team To Score Again', names[1], 'away', 1 - Math.exp(-la));
+    }
+    if (want.indexOf('btts') >= 0 && !(h0 > 0 && a0 > 0)) {   // not once both have scored: settled
+      var yes = (h0 > 0 ? 1 : 1 - Math.exp(-lh)) * (a0 > 0 ? 1 : 1 - Math.exp(-la));
+      add('Both Teams To Score', 'Yes', null, yes, { keys: ['btts'], name: 'Yes' });
+      add('Both Teams To Score', 'No', null, 1 - yes, { keys: ['btts'], name: 'No' });
     }
     if (want.indexOf('over') >= 0) {
       [0.5, 1.5, 2.5].forEach(function (more) {
@@ -174,6 +181,7 @@ window.InPlay = (function () {
    * Without a price for this point: "–" for odds and verdict (pre-match prices are out of date once it's started).
    * Bets on the checklist leader come first when they're not already winning (the framework's ideal setup).
    */
+  var RECOMMEND_MIN = 0.05, MIN_ODDS = 4 / 3;   // the same bar as the pre-match Recommended Bets (value-check.js)
   function render(box, ev, model, snap, check, setup, opts) {
     opts = opts || {};
     box.replaceChildren();
@@ -182,7 +190,7 @@ window.InPlay = (function () {
     var leader = check && check.leader;
     var team = leader === 'home' ? names[0] : leader === 'away' ? names[1] : null;
     // Only the windows with nothing to bet on get a line of text: the table says the rest
-    if (snap.period === 'FT' || snap.period === 'WATCH' || snap.period === '10') box.appendChild(el('div', 'text-muted', 'No Bet'));
+    if (snap.period === 'FT') { box.appendChild(el('div', 'text-muted', 'No Bet')); return r; }
 
     if (opts.onRefresh) {
       var src = el('div', 'small text-muted mb-2 d-flex align-items-center gap-2 flex-wrap');
@@ -209,6 +217,10 @@ window.InPlay = (function () {
       }
       return row;
     });
+    // Recommended: value only, as before kick-off (Possible / Good / Great Value: +5% or better, and 1/3 or bigger);
+    // no odds, no verdict, so those aren't listed either. Nothing: No Bet
+    rows = rows.filter(function (x) { return x.r && x.r.ret >= RECOMMEND_MIN && x.o.price >= MIN_ODDS; });
+    if (!rows.length) { box.appendChild(el('div', 'text-muted', 'No Bet')); return r; }
     var rank = function (x) { return x.r ? x.r.ret : -9; };
     rows.sort(function (p, q) { return (q.fits - p.fits) || (rank(q) - rank(p)) || (q.chance - p.chance); });
     box.appendChild(opts.table(rows, 'In-play bet'));

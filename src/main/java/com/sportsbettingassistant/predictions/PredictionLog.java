@@ -53,6 +53,11 @@ public class PredictionLog {
         if (!pre && store.first("SELECT 1 FROM predictions WHERE match_id = ? AND point = ?", rs -> 1, matchId, point).isPresent()) {
             return false;   // a bet window's snapshot is never changed
         }
+        if (pre && p.get("predictionRows") == null) {
+            // the Bets page logs it without the Prediction card's lines: keep the ones the match page saved
+            store.first("SELECT body FROM predictions WHERE match_id = ? AND point = 'PRE'", rs -> rs.getString(1), matchId)
+                    .map(b -> Json.parse(b).get("predictionRows")).ifPresent(rows -> p.put("predictionRows", rows));
+        }
         store.update("INSERT OR REPLACE INTO predictions (match_id, point, kickoff, competition, home, away, home_team_id, "
                 + "away_team_id, saved_at, version, body) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 matchId, point, ko.toString(), Json.text(p.get("competition")), Json.text(p.get("home")), Json.text(p.get("away")),

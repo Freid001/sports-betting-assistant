@@ -71,6 +71,17 @@ public class OddsCacheController {
         return cache.refreshLive(sport, eventId, bookmaker, point);
     }
 
+    /**
+     * Test: in-play prices for these markets now (comma-separated, e.g. h2h,btts), not saved under any bet window.
+     * 1 credit per market returned.
+     */
+    @PostMapping("/{sport}/events/{eventId}/live-test")
+    public Map<String, Object> testLive(@PathVariable String sport, @PathVariable String eventId,
+                                        @RequestParam(defaultValue = "skybet") String bookmaker,
+                                        @RequestParam String markets) {
+        return cache.testLive(sport, eventId, bookmaker, List.of(markets.split(",")));
+    }
+
     /** The in-play prices saved for a match, by point in the match (no API call). */
     @GetMapping("/events/{eventId}/live")
     public Map<String, Object> live(@PathVariable String eventId, @RequestParam(defaultValue = "skybet") String bookmaker) {

@@ -437,6 +437,8 @@ class OddsCacheServiceTest {
         assertThat(atPoints.marketsFor(at60)).containsExactly("h2h");   // Home / Draw / Away ticked by default
         settings.setRefreshOptions(true, "favs", java.util.List.of("btts", "player_goal_scorer_anytime"));
         assertThat(atPoints.marketsFor(at60)).containsExactly("h2h", "btts", "player_goal_scorer_anytime");
+        settings.setRefreshOptions(true, "all", java.util.List.of("alternate_totals"));   // all goal lines: the main one too
+        assertThat(atPoints.marketsFor(at60)).containsExactly("h2h", "alternate_totals", "totals");
         settings.setRefreshOptions(false, "off", java.util.List.of());
         assertThat(atPoints.marketsFor(at60)).isEmpty();
         assertThat(atPoints.fetch(at60)).isFalse();   // nothing ticked: nothing fetched
