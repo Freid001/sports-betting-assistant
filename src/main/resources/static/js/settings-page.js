@@ -442,11 +442,16 @@
       group.append(input, label);
     });
     function note(m) {
-      // a match with stoppage time is about 115 minutes; each refresh is about 2 calls with one game on
+      // a match with stoppage time is about 115 minutes of refreshes. Each refresh: 2 calls (scores, stats). Goals,
+      // cards, subs and commentary (4 calls): every 5 minutes (or every refresh, if slower) and after each goal or
+      // card (about 8 a match). The line-ups: once.
+      var refreshes = 115 / (m || 1), official = Math.min(refreshes, 115 / Math.max(m || 1, 5) + 8);
+      var perMatch = Math.round((2 * refreshes + 4 * official + 1) / 10) * 10;
       $('liveRefreshNote').textContent = !m
         ? 'Live games aren\'t refreshed: no live scores, stats, timeline or bet windows · no GOAL API calls.'
         : 'Refreshes the live match score, stats and timeline every ' + (m === 1 ? 'minute' : m + ' minutes') +
-          ' whilst following a live game · 2 GOAL API calls per refresh · about ' + Math.round(115 / m) * 2 + ' per match.';
+          ' whilst following a live game · 2 GOAL API calls per refresh, plus 4 for goals, cards, subs and commentary' +
+          ' every 5 minutes and after each goal or card · about ' + perMatch + ' per match.';
     }
     note(current);
   }
