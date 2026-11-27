@@ -20,7 +20,7 @@ window.InPlay = (function () {
   var VALUE_BAR = 1.05;
   var CHASE = 1.15, PROTECT = 0.9;
 
-  function pois(k, l) { var p = Math.exp(-l); for (var i = 1; i <= k; i++) p *= l / i; return p; }
+  var pois = F.pois, grid = F.grid;   // shared Poisson maths (football-data.js)
 
   /** Share of a match's goals still to come after minute t (0..1). */
   function shareLeft(t) {
@@ -45,11 +45,6 @@ window.InPlay = (function () {
     return { minute: t, home: r[0], away: r[1], pre: pre, live: live, weight: w, score: [h, a] };
   }
 
-  function grid(lh, la, f) {
-    var p = 0;
-    for (var i = 0; i <= 10; i++) for (var j = 0; j <= 10; j++) if (f(i, j)) p += pois(i, lh) * pois(j, la);
-    return p;
-  }
   function atLeast(n, l) { var p = 0; for (var k = 0; k < n; k++) p += pois(k, l); return 1 - p; }
 
   /**
@@ -137,16 +132,7 @@ window.InPlay = (function () {
     return null;
   }
 
-  var TAGS = [[0.75, 'Very Likely', 'chance-verylikely'], [0.5, 'Likely', 'chance-likely'], [0.35, 'Coin Flip', 'chance-tossup'],
-              [0.2, 'Outsider', 'chance-outsider'], [0.1, 'Long Shot', 'chance-longshot'], [0, 'Moonshot', 'chance-moonshot']];
-  function tagBadge(chance) {
-    var t = TAGS.find(function (x) { return chance >= x[0]; });
-    var b = el('span', 'badge rounded-pill chance-tag ' + t[2], t[1]);
-    b.setAttribute('data-bs-toggle', 'tooltip');
-    b.setAttribute('data-bs-title', (chance * 100).toFixed(1) + '%');
-    b.style.cursor = 'help';
-    return b;
-  }
+  var tagBadge = F.chanceBadge;   // (football-data.js)
 
   /** "9/4", "Evens", "2.5" -> decimal odds (null if it isn't a price). */
   function parsePrice(text) {
@@ -176,7 +162,7 @@ window.InPlay = (function () {
    * Draws the in-play Best Bets into `box` for a snapshot: the verdict line, where the prices come from, then the bets
    * in the page's own market table (opts.table(rows, title): Odds · Chance · Verdict, like the Sky Bet markets).
    * check = Live.checklist(snap.rows), setup = Live.setup(...).
-   * opts: { table, markets (the prices saved for this point), fetchedAt, confidence, onRefresh (shown for a live game) }.
+   * opts: { table, markets (the prices saved for this point), confidence }.
    * Rows: { label, o: {price}, r: {verdict, ours, fair, ret} or null, chance, fits, hint }.
    * Without a price for this point: "–" for odds and verdict (pre-match prices are out of date once it's started).
    * Bets on the checklist leader come first when they're not already winning (the framework's ideal setup).
@@ -192,16 +178,6 @@ window.InPlay = (function () {
     // Only the windows with nothing to bet on get a line of text: the table says the rest
     if (snap.period === 'FT') { box.appendChild(el('div', 'text-muted', 'No Bet')); return r; }
 
-    if (opts.onRefresh) {
-      var src = el('div', 'small text-muted mb-2 d-flex align-items-center gap-2 flex-wrap');
-      var btn = el('button', 'btn btn-sm btn-outline-theme', 'Refresh live odds');
-      btn.type = 'button';
-      btn.title = 'Fetches the bookmaker\'s prices now: about 3 Odds API credits';
-      btn.onclick = function () { btn.disabled = true; opts.onRefresh(); };
-      src.appendChild(btn);
-      src.appendChild(el('span', null, opts.fetchedAt ? 'Live odds from ' + F.ago(opts.fetchedAt) + '.' : 'No live odds fetched yet.'));
-      box.appendChild(src);
-    }
 
     var list = bets(r, names, snap.period);
     if (!list.length) return r;
@@ -227,14 +203,6 @@ window.InPlay = (function () {
     return r;
   }
 
-  /** Footer line: goals still to come and how they were worked out. */
-  function summary(r, names) {
-    var short = function (n) { return n.split(' ')[0]; };
-    return 'Goals still to come: ' + short(names[0]) + ' ' + r.home.toFixed(2) + ', ' + short(names[1]) + ' ' + r.away.toFixed(2) +
-      ' (' + Math.round(r.weight * 100) + '% pre-match model' + (r.live ? ', ' + Math.round((1 - r.weight) * 100) + '% live xG' : '') +
-      ') · Verdicts judge the price, not the result · Not financial advice.';
-  }
-
-  return { shareLeft: shareLeft, rates: rates, bets: bets, chanceFor: chanceFor, render: render, summary: summary, parsePrice: parsePrice,
+  return { shareLeft: shareLeft, rates: rates, bets: bets, chanceFor: chanceFor, render: render, parsePrice: parsePrice,
            livePrice: livePrice, MINUTE: MINUTE };
 })();

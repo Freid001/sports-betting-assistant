@@ -74,6 +74,21 @@ class PredictionLogTest {
     }
 
     @Test
+    void aGameFollowedLiveGivesItsResultBeforeRefreshStatsDoes() {
+        log.save(prediction("PRE", 0.40), KO.minusSeconds(60));
+        // GOAL API's names ("Nottingham") and kick-off format (.000Z) differ from The Odds API's
+        store.update("INSERT INTO live_games (id, kickoff, home, away, home_score, away_score, status) "
+                + "VALUES ('g1', '2026-11-28T15:00:00.000Z', 'Nottingham Forest', 'Chelsea', '3', '2', 'FINISHED')");
+        store.update("INSERT INTO live_snapshots (game_id, period, home_score, away_score, stats) VALUES ('g1', 'HT', '1', '0', '{}')");
+
+        Map<String, Object> p = log.all().get(0);
+        assertThat(String.valueOf(p.get("result"))).contains("home=3").contains("away=2").contains("htHome=1").contains("htAway=0");
+
+        store.update("UPDATE live_games SET status = 'LIVE'");   // not finished: no result yet
+        assertThat(log.all().get(0).get("result")).isNull();
+    }
+
+    @Test
     void aPredictionNeedsAMatchAPointAndAKickOff() {
         Map<String, Object> bad = prediction("FT", 0.4);
         assertThatThrownBy(() -> log.save(bad, KO)).isInstanceOf(IllegalArgumentException.class);

@@ -100,21 +100,17 @@ test('live prices are matched to bets: result by team, goals by Over and line', 
   assert.equal(InPlay.livePrice(null, { keys: ['h2h'], name: 'Draw' }), null);
 });
 
-test('render: live odds give the price and the same verdicts as the markets; Refresh shows for a live game', () => {
+test('render: live odds give the price and the same verdicts as the markets', () => {
   const ev = { home_team: NAMES[0], away_team: NAMES[1] };
   const box = w.document.createElement('div');
   const table = tableStub();
   const markets = [{ key: 'alternate_totals', outcomes: [{ name: 'Over', price: 1.5, point: 1.5 }] }];
-  let refreshed = 0;
   InPlay.render(box, ev, MODEL, { period: 'HT', homeScore: '1', awayScore: '0', xg: [1.39, 0.31], rows: ROWS_HT, live: true },
-    Live.checklist(ROWS_HT), 'winning', { table, markets, fetchedAt: new Date().toISOString(), confidence: 'Low', onRefresh: () => refreshed++ });
+    Live.checklist(ROWS_HT), 'winning', { table, markets, confidence: 'Low' });
   const over = table.rows.find(x => /Over 0\.5 · Second-Half Goals/.test(x.label));
   assert.equal(over.o.price, 1.5, 'second-half over 0.5 at 1-0 is the match over 1.5');
   assert.ok(over.r.verdict.text);
   assert.equal(table.rows[0], over, 'priced bets with the best return come first');
-  assert.match(box.textContent, /Live odds from/);
-  box.querySelector('button').click();
-  assert.equal(refreshed, 1);
 });
 
 test('render: without odds for the point No Bet (pre-match prices are not used), with them a verdict', () => {

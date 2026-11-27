@@ -1,0 +1,648 @@
+// The Settings page (templates/settings.html): storage, API keys, odds, general, animations.
+// Needs football-data.js, favourites.js and goal-alert.js loaded first.
+(function () {
+  var F = window.Football, el = F.el;
+  function $(id) { return document.getElementById(id); }
+  $('navStake').appendChild(F.stakeInput(function () {}));   // the Stake bar in the top banner, as on every page
+
+  // Bootstrap Icons "eye" and "eye-slash", drawn inline (colour follows the button's text)
+  var EYE = ['M16 8s-3-5.5-8-5.5S0 8 0 8s3 5.5 8 5.5S16 8 16 8M1.173 8a13 13 0 0 1 1.66-2.043C4.12 4.668 5.88 3.5 8 3.5s3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755C11.879 11.332 10.119 12.5 8 12.5s-3.879-1.168-5.168-2.457A13 13 0 0 1 1.172 8z',
+             'M8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5M4.5 8a3.5 3.5 0 1 1 7 0 3.5 3.5 0 0 1-7 0'];
+  var EYE_SLASH = ['M13.359 11.238C15.06 9.72 16 8 16 8s-3-5.5-8-5.5a7 7 0 0 0-2.79.588l.77.771A6 6 0 0 1 8 3.5c2.12 0 3.879 1.168 5.168 2.457A13 13 0 0 1 14.828 8q-.086.13-.195.288c-.335.48-.83 1.12-1.465 1.755q-.247.248-.517.486z',
+                   'M11.297 9.176a3.5 3.5 0 0 0-4.474-4.474l.823.823a2.5 2.5 0 0 1 2.829 2.829zm-2.943 1.299.822.822a3.5 3.5 0 0 1-4.474-4.474l.823.823a2.5 2.5 0 0 0 2.829 2.829',
+                   'M3.35 5.47q-.27.24-.518.487A13 13 0 0 0 1.172 8l.195.288c.335.48.83 1.12 1.465 1.755C4.121 11.332 5.881 12.5 8 12.5c.716 0 1.39-.133 2.02-.36l.77.772A7 7 0 0 1 8 13.5C3 13.5 0 8 0 8s.939-1.721 2.641-3.238l.708.709zm10.296 8.884-12-12 .708-.708 12 12z'];
+  function icon(paths) {
+    var NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg');
+    svg.setAttribute('width', '16'); svg.setAttribute('height', '16'); svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('fill', 'currentColor'); svg.setAttribute('aria-hidden', 'true');
+    paths.forEach(function (d) { var p = document.createElementNS(NS, 'path'); p.setAttribute('d', d); svg.appendChild(p); });
+    return svg;
+  }
+
+  /** The ⓘ pop-up for each API: what it's used for, and its plans (with a link to the plans page). */
+  var INFO = {
+    'odds-api': { uses: ['Bookmaker odds for every match', 'Recommended Bets', 'In-play odds during followed games'],
+                  plans: ['Free: 500 credits a month', 'Paid: from $30 a month (20,000 credits) up to $249 (15 million)'],
+                  plansUrl: 'https://the-odds-api.com/#get-access' },
+    'goal-api': { uses: ['Results, form and league tables', 'Top scorers and head to head', 'Team badges',
+                         'Live scores and match stats'],
+                  plans: ['Free: 1,000 calls a day', 'Paid plans available'],
+                  plansUrl: 'https://goal-api.com/pricing' }
+  };
+  var INFO_ICON = ['M8 15A7 7 0 1 1 8 1a7 7 0 0 1 0 14m0 1A8 8 0 1 0 8 0a8 8 0 0 0 0 16',
+                   'm8.93 6.588-2.29.287-.082.38.45.083c.294.07.352.176.288.469l-.738 3.468c-.194.897.105 1.319.808 1.319.545 0 1.178-.252 1.465-.598l.088-.416c-.2.176-.492.246-.686.246-.275 0-.375-.193-.304-.533zM9 4.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0'];
+  // false once a key is known not to work (Validate, or the usage check failing); a saved key counts as valid until then
+  var keyValid = {};
+  function showInfo(k) {
+    var info = INFO[k.name] || { uses: [], plans: [] };
+    var have = k.set && keyValid[k.name] !== false;   // a working key saved: manage it rather than request one
+    $('apiInfoTitle').textContent = k.label;
+    var body = $('apiInfoBody');
+    body.replaceChildren();
+    function list(title, items) {
+      body.appendChild(el('div', 'fw-semibold mb-1', title));
+      var ul = el('ul', 'mb-3 ps-3');
+      items.forEach(function (t) { ul.appendChild(el('li', null, t)); });
+      return ul;
+    }
+    // how to get a key (or, with one saved, where to manage it), in the blue box the app's pop-ups use for information
+    var how = el('div', 'alert alert-info px-3 py-2 mb-3');
+    if (have) {
+      how.appendChild(el('div', 'fw-semibold mb-1', 'Your key is saved'));
+      how.appendChild(el('div', null, 'Press Manage API Key below to see your key, usage or plan on the ' + k.label +
+        ' site. A new key goes in the ' + k.label + ' box on this page.'));
+    } else {
+      how.appendChild(el('div', 'fw-semibold mb-1', 'How to get your key'));
+      var steps = el('ol', 'mb-0 ps-3');
+      ['Sign up for a free ' + k.label + ' account.',
+       'Press Request API Key below: it opens the page with your key.',
+       'Copy the key, paste it into the ' + k.label + ' box on this page and press Save.'].forEach(function (t) {
+        steps.appendChild(el('li', null, t));
+      });
+      how.appendChild(steps);
+    }
+    body.appendChild(how);
+    body.appendChild(list('Used for', info.uses));
+    var plans = list('Plans', info.plans);
+    var more = el('a', 'text-muted', 'See the plans');
+    more.href = info.plansUrl; more.target = '_blank'; more.rel = 'noopener noreferrer';
+    var li = el('li'); li.appendChild(more); plans.appendChild(li);
+    plans.classList.replace('mb-3', 'mb-0');
+    body.appendChild(plans);
+    $('apiInfoGet').href = k.getKey;
+    $('apiInfoGet').textContent = have ? 'Manage API Key' : 'Request API Key';
+    bootstrap.Modal.getOrCreateInstance($('apiInfo')).show();
+  }
+
+  function keyRow(k) {
+    var tr = el('tr');
+    // the API's name (level with the key box) and ⓘ: what it's for, its plans, Request API Key
+    var name = el('td', 'text-nowrap fw-semibold pt-2', k.label);
+    var info = el('button', 'btn btn-link p-0 ms-1 align-baseline text-muted');
+    info.type = 'button'; info.title = 'What it\'s used for, plans and how to get a key';
+    info.setAttribute('aria-label', info.title);
+    info.appendChild(icon(INFO_ICON));
+    info.onclick = function () { showInfo(k); };
+    name.appendChild(info);
+    tr.appendChild(name);
+
+    // the key, masked like a password; Show reveals it
+    var input = el('input', 'form-control form-control-sm font-monospace');
+    input.type = 'password'; input.autocomplete = 'off'; input.spellcheck = false;
+    input.value = k.key || '';
+    input.placeholder = 'Paste your key';
+    var show = el('button', 'btn btn-sm btn-outline-theme d-inline-flex align-items-center');
+    show.type = 'button';
+    function eye(open) {   // eye: show the key; crossed-out eye: hide it again
+      show.replaceChildren(icon(open ? EYE : EYE_SLASH));
+      show.title = open ? 'Show the key' : 'Hide the key';
+      show.setAttribute('aria-label', show.title);
+    }
+    eye(true);
+    show.onclick = function () {
+      var hidden = input.type === 'password';
+      input.type = hidden ? 'text' : 'password';
+      eye(!hidden);
+    };
+    var group = el('div', 'input-group input-group-sm');
+    group.appendChild(input); group.appendChild(show);
+    var tdIn = el('td', 'w-100'); tdIn.appendChild(group);
+    // how much of the plan is used (filled in by usage() below)
+    var used = el('div', 'mt-2'); used.id = 'usage-' + k.name; tdIn.appendChild(used);
+    tr.appendChild(tdIn);
+
+    var save = el('button', 'btn btn-sm btn-theme', 'Save');
+    var check = el('button', 'btn btn-sm btn-outline-theme', 'Validate');
+    check.title = k.name === 'goal-api' ? 'Checks the key works (1 GOAL API call)' : 'Checks the key works (free: no credits used)';
+    check.disabled = !k.set;
+    var remove = el('button', 'btn btn-sm btn-outline-theme', 'Remove');
+    remove.title = 'Removes this key';
+    remove.disabled = !k.set;
+    var tdB = el('td', 'text-nowrap'); [save, check, remove].forEach(function (b) { tdB.appendChild(b); b.classList.add('ms-1'); });
+    tr.appendChild(tdB);
+
+    function send(value) {
+      return F.sendJson('/api/settings/keys/' + k.name, { key: value }).then(function (r) {
+        // the last key a new user needed: reload so the menu (Bets, Football...) appears
+        if (r.ready && !wasReady) { location.reload(); return r; }
+        return load().then(function () { return r; });
+      });
+    }
+    save.onclick = function () {
+      var v = input.value.trim();
+      if (!v) { notify('Paste a key first.', 'warning'); return; }
+      send(v).then(function () {
+        // saved: try it straight away, so a wrong key shows now rather than on the next refresh
+        return F.sendJson('/api/settings/keys/' + k.name + '/check').then(function (c) {
+          keyValid[k.name] = !!c.ok;
+          notify(c.ok ? k.label + ' key saved and working.' : k.label + ' key saved, but it didn\'t work: ' + c.message,
+                 c.ok ? 'success' : 'danger');
+        });
+      }).catch(function (e) { notify(e.message, 'danger'); });
+    };
+    input.addEventListener('keydown', function (e) { if (e.key === 'Enter') save.onclick(); });
+    remove.onclick = function () {
+      // ask first: without the key, the app can't fetch from that API (and Bets / Football are hidden)
+      $('removeKeyTitle').textContent = 'Remove ' + k.label + ' key?';
+      var body = $('removeKeyBody');
+      body.replaceChildren(
+        el('p', 'mb-2', 'The app won\'t be able to use ' + k.label + ' until you add a key again.'),
+        el('p', 'mb-0 text-muted', 'Bets, Football and Horse Racing are hidden until both keys are saved. ' +
+          'Your saved odds and stats are kept.'));
+      var modal = bootstrap.Modal.getOrCreateInstance($('removeKey'));
+      $('removeKeyOk').onclick = function () {
+        modal.hide();
+        send('').then(function () { notify(k.label + ' key removed.', 'success'); })
+          .catch(function (e) { notify(e.message, 'danger'); });
+      };
+      modal.show();
+    };
+    check.onclick = function () {
+      check.disabled = true;
+      F.sendJson('/api/settings/keys/' + k.name + '/check').then(function (r) {
+        keyValid[k.name] = !!r.ok;
+        notify(k.label + ': ' + r.message + (r.left ? ' ' + r.left + ' left.' : ''), r.ok ? 'success' : 'danger');
+      }).catch(function (e) { notify(e.message, 'danger'); })
+        .then(function () { check.disabled = false; });
+    };
+    return tr;
+  }
+
+  /** Theme: one button group like Stake Bar and Live Refresh, each with a little square of its colour. */
+  function themes(list, current) {
+    var group = $('themes');
+    group.replaceChildren();
+    list.forEach(function (t) {
+      var input = el('input', 'btn-check');
+      input.type = 'radio'; input.name = 'theme'; input.id = 'theme-' + t.key; input.checked = t.key === current;
+      input.addEventListener('change', function () {
+        F.sendJson('/api/settings/theme?key=' + encodeURIComponent(t.key)).then(function () {
+          // the new colours straight away (every page uses them from now on)
+          var root = document.documentElement.style;
+          root.setProperty('--theme', t.color); root.setProperty('--theme-hover', t.hover); root.setProperty('--theme-rgb', t.rgb);
+          root.setProperty('--theme-text', t.text); root.setProperty('--theme-text-rgb', t.textRgb); root.setProperty('--theme-ink', t.ink);
+          root.setProperty('--theme-accent', (window.THEME_ACCENTS || {})[t.key] || '#ffffff');
+        }).catch(function (e) { notify(e.message, 'danger'); });
+      });
+      var label = el('label', 'btn btn-outline-theme text-nowrap d-inline-flex align-items-center gap-1');
+      label.htmlFor = input.id;
+      var sw = el('span');
+      sw.style.cssText = 'display:inline-block;width:.75rem;height:.75rem;border-radius:.2rem;border:1px solid rgba(255,255,255,.6);' +
+        'box-shadow:0 0 0 1px rgba(0,0,0,.2);background:' + t.color;
+      label.append(sw, document.createTextNode(t.name));
+      group.append(input, label);
+    });
+  }
+
+  /**
+   * Usage bars under the keys, from what each API reported on its last answer (no calls for GOAL API; The Odds
+   * API's figures come from its free sports list). Theme colour, orange past 75% used, red past 90%.
+   */
+  function bar(box, used, limit, text) {
+    box.replaceChildren();
+    if (!(limit > 0) || used === null || isNaN(used)) {
+      box.appendChild(el('div', 'small text-muted', text || 'Usage shows after the first call.'));
+      return;
+    }
+    var pct = Math.max(0, Math.min(100, 100 * used / limit));
+    var outer = el('div', 'progress');
+    outer.style.height = '.4rem';
+    outer.setAttribute('role', 'progressbar');
+    outer.setAttribute('aria-valuenow', String(Math.round(pct)));
+    var inner = el('div', 'progress-bar' + (pct > 90 ? ' bg-danger' : pct > 75 ? ' bg-warning' : ''));
+    inner.style.width = pct + '%';
+    if (pct <= 75) inner.style.background = 'var(--theme)';
+    outer.appendChild(inner);
+    box.append(outer, el('div', 'small text-muted mt-1', text));
+  }
+  function usage() {
+    var odds = $('usage-odds-api'), goal = $('usage-goal-api');
+    if (odds) {
+      F.getJson('/api/odds/cache/quota').then(function (q) {
+        var left = parseFloat(q.remaining), used = parseFloat(q.used);
+        keyValid['odds-api'] = !!q.ok;
+        if (!q.ok || isNaN(left) || isNaN(used)) { bar(odds, null, 0); return; }
+        var total = Math.round(left + used);
+        bar(odds, used, total, Math.round(used).toLocaleString('en-GB') + ' of ' + total.toLocaleString('en-GB') +
+          ' credits used this month · ' + Math.round(left).toLocaleString('en-GB') + ' left · resets on the 1st');
+      }).catch(function () { bar(odds, null, 0); });
+    }
+    if (goal) {
+      F.getJson('/api/football/live').then(function (s) {
+        var u = s.usage || {}, limit = parseFloat(u.limit), left = parseFloat(u.remaining);
+        if (isNaN(limit) || isNaN(left)) { bar(goal, null, 0); return; }
+        var reset = u.reset ? new Date(parseFloat(u.reset) * 1000) : null;
+        bar(goal, limit - left, limit, Math.round(limit - left).toLocaleString('en-GB') + ' of ' + limit.toLocaleString('en-GB') +
+          ' calls used today · ' + Math.round(left).toLocaleString('en-GB') + ' left' +
+          (reset && !isNaN(reset) ? ' · resets ' + reset.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : '') +
+          // GOAL API's own count, from its answer to our last call (not counted by the app): say how old it is
+          (u.checkedAt && !isNaN(new Date(u.checkedAt)) ? ' · as of ' +
+            new Date(u.checkedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : ''));
+      }).catch(function () { bar(goal, null, 0); });
+    }
+  }
+
+  var wasReady = true;   // both keys saved when the page loaded
+  function load() {
+    return F.getJson('/api/settings').then(function (s) {
+      wasReady = s.ready !== false;
+      $('welcome').classList.toggle('d-none', wasReady);
+      $('stepKeys').classList.toggle('text-decoration-line-through', s.keysSet === true);
+      var t = el('table', 'table table-sm align-top mb-0'), tb = el('tbody');
+      s.keys.forEach(function (k) { tb.appendChild(keyRow(k)); });
+      t.appendChild(tb);
+      $('keys').replaceChildren(t);
+      usage();
+      themes(s.themes, s.theme);
+      stakeBar(s.stakeBar !== false);
+      onOff('animations', s.animations !== false, function (on) {
+        return F.sendJson('/api/settings/animations?on=' + on).then(function () { GoalAlert.setAnimations(on); });
+      });
+      onOff('sounds', s.sounds !== false, function (on) {
+        return F.sendJson('/api/settings/sounds?on=' + on).then(function () { window.MATCH_ALERTS.sounds = on; });
+      });
+    }).catch(function (e) { $('keys').replaceChildren(el('span', 'text-danger', 'Couldn\'t load settings: ' + e.message)); });
+  }
+  /**
+   * Refresh Odds: the bookmaker (the whole app shows its odds), the match result for every match, and which extra
+   * markets for which matches. Saved as soon as anything changes; the Football page's Refresh Odds uses them.
+   */
+  function loadRefresh() {
+    Promise.all([F.syncBookmaker().then(function () { return F.bookmaker(); }),
+                 F.getJson('/api/odds/cache/extra-markets'), F.refreshOptions(),
+                 // saved fixtures and favourites, for the Cost row (no API calls)
+                 F.loadAll().then(function (d) { return d.matches; }).catch(function () { return []; }),
+                 Favourites.load().catch(function () { return []; })]).then(function (r) {
+      var book = r[0], offered = r[1] || {}, opts = r[2], matches = r[3], favs = r[4];
+      var soon = matches.filter(function (m) {
+        var t = new Date(m.commence_time).getTime();
+        return t > Date.now() && t < Date.now() + 30 * 86400000;
+      });
+      var favMatches = soon.filter(function (m) { return Favourites.find(favs, m.home_team) || Favourites.find(favs, m.away_team); });
+      var comps = soon.reduce(function (set, m) { if (set.indexOf(m.compKey) < 0) set.push(m.compKey); return set; }, []).length;
+      if (!offered[book]) book = Object.keys(offered)[0] || book;
+      var box = $('refreshBox');
+
+      /** A row of theme-coloured toggle buttons. */
+      function toggle(name, options, current, onPick) {
+        var group = el('div', 'btn-group btn-group-sm');
+        group.setAttribute('role', 'group');
+        options.forEach(function (o) {
+          var input = el('input', 'btn-check');
+          input.type = 'radio'; input.name = name; input.id = name + '-' + o[0]; input.checked = o[0] === current;
+          input.addEventListener('change', function () { onPick(o[0]); });
+          var label = el('label', 'btn btn-outline-theme', o[1]);
+          label.htmlFor = input.id;
+          group.append(input, label);
+        });
+        return group;
+      }
+      /** A tick box as a small bordered tile: name, a line on what it is, and a note (cost, or not offered). */
+      function tick(id, text, about, checked) {
+        var tile = el('label', 'd-flex gap-2 border rounded px-2 py-1 h-100');
+        tile.htmlFor = id;
+        tile.style.cursor = 'pointer';
+        var cb = el('input', 'form-check-input mt-1 flex-shrink-0');
+        cb.type = 'checkbox'; cb.id = id; cb.checked = checked;
+        var words = el('div');
+        var name = el('div', 'fw-semibold', text);
+        var note = el('span', 'text-muted small fw-normal ms-1');
+        name.appendChild(note);
+        words.append(name, el('div', 'text-muted small', about || ''));
+        tile.append(cb, words);
+        return { row: tile, cb: cb, note: note };
+      }
+      /** One setting: its name on the left (like the API Keys card), its controls on the right. */
+      function row(tbody, name) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'text-nowrap fw-semibold pt-2', name));
+        var td = el('td', 'w-100 pt-2');
+        tr.appendChild(td);
+        tbody.appendChild(tr);
+        return td;
+      }
+      /** Cost row: credits per match for the ticked extra markets, and the most one Refresh Odds can cost now. */
+      /**
+       * Cost: the credits Refresh Odds Live spends on a followed game: each bet window fetches Home / Draw / Away if
+       * ticked plus every ticked extra market the bookmaker has (1 credit each), at each bet window picked in General.
+       */
+      function cost() {
+        if (!costCell) return;
+        var has = offered[book] || [];
+        var perWindow = (result.cb.checked ? 1 : 0) + rows.filter(function (x) { return x.cb.checked && has.indexOf(x.key) >= 0; }).length;
+        var pl = function (x) { return x + ' credit' + (x === 1 ? '' : 's'); };
+        var t = el('table', 'table table-sm table-borderless mb-0 w-auto'), tb2 = el('tbody');
+        var windows = (window.BET_WINDOWS || ['30', 'HT', '60', '80']).length;
+        [['Total credits per bet window', perWindow],
+         ['Total credits per match (' + windows + ' bet window' + (windows === 1 ? '' : 's') + ')', windows * perWindow]].forEach(function (r) {
+          var tr = el('tr');
+          tr.append(el('td', 'ps-0', r[0]), el('td', 'text-end fw-semibold text-nowrap ps-4', pl(r[1])));
+          tb2.appendChild(tr);
+        });
+        t.appendChild(tb2);
+        // Refresh Odds Live off: nothing is spent during games, so no totals, just that
+        costCell.replaceChildren(window.LIVE_ODDS === false ? el('div', 'text-muted', 'Refresh Odds Live is Off: no credits spent during games.') : t);
+        if (window.LIVE_ODDS !== false && !windows) costCell.appendChild(el('div', 'text-muted small mt-1', 'No bet windows picked, so none of this is spent.'));
+        // always, at the top: what Refresh Odds (Football page) costs per match before kick-off: 1 per ticked extra
+        // market (Home / Draw / Away is 2 per competition, for all its matches in one go)
+        var extras = opts.scope === 'off' ? 0 : rows.filter(function (x) { return x.cb.checked && has.indexOf(x.key) >= 0; }).length;
+        var pre = el('table', 'table table-sm table-borderless mb-1 w-auto'), pb = el('tbody');
+        function preRow(label, sum, credits) {
+          var tr = el('tr'), left = el('td', 'ps-0', label);
+          if (sum) left.appendChild(el('div', 'text-muted small', sum));
+          tr.append(left, el('td', 'text-end fw-semibold text-nowrap ps-4 align-top', pl(credits)));
+          pb.appendChild(tr);
+        }
+        preRow('Refresh Odds, per match', 'Extra markets' + (result.cb.checked ? ' (Home / Draw / Away is 2 per competition)' : '') +
+          (opts.scope === 'favs' ? ' · Favourite Teams only' : ''), extras);
+        pre.appendChild(pb);
+        costCell.prepend(pre);
+        // the same total next to Refresh Odds Live (General card), while it's on
+        $('live-odds-cost').textContent = window.LIVE_ODDS === false ? ''
+          : ' · ' + pl(windows * perWindow) + ' per followed match';
+      }
+      var costCell = null;
+
+      function save() {
+        cost();
+        opts.markets = rows.filter(function (x) { return x.cb.checked; }).map(function (x) { return x.key; });
+        opts.matchResult = result.cb.checked;
+        cost();
+        F.saveRefreshOptions(opts).catch(function (e) { notify('Couldn\'t save: ' + e.message, 'danger'); });
+      }
+      // each tick's cost: a press of Refresh Odds, and (Refresh Odds Live on) each bet window of a followed game
+      function update() {
+        cost();
+        var live = window.LIVE_ODDS !== false;
+        result.note.textContent = '· 2 credits per competition' + (live ? ', 1 per bet window' : '');
+        var has = offered[book] || [], name = F.bookmakerName(book);
+        rows.forEach(function (x) {
+          var ok = has.indexOf(x.key) >= 0;
+          x.cb.disabled = opts.scope === 'off' || !ok;
+          x.row.classList.toggle('opacity-50', opts.scope === 'off' || !ok);
+          x.note.textContent = ok ? '· 1 credit per match' + (live ? ', and per bet window' : '') : '· not at ' + name;
+        });
+      }
+
+      var table = el('table', 'table table-sm align-top mb-0'), tb = el('tbody');
+      table.appendChild(tb);
+
+      var bookCell = row(tb, 'Bookmaker');
+      bookCell.appendChild(toggle('bookmaker',
+        Object.keys(offered).map(function (k) { return [k, F.bookmakerName(k)]; }), book,
+        function (v) { book = v; F.setBookmaker(v); update(); }));
+      bookCell.appendChild(el('div', 'text-muted small mt-1', 'Which bookmaker\'s odds the app uses, including live odds.'));
+
+      // Extra Markets: which matches get them (its own row), then every tick box together
+      var extraCell = row(tb, 'Extra Markets');
+      extraCell.appendChild(toggle('extraScope', [['all', 'All Matches'], ['favs', 'Favourite Teams'], ['off', 'Off']],
+        opts.scope, function (v) { opts.scope = v; update(); save(); }));
+      extraCell.appendChild(el('div', 'text-muted small mt-1', 'Which matches in the next 30 days get the extra markets below.'));
+
+      var marketsCell = row(tb, 'Markets');
+      var grid = el('div', 'row row-cols-1 row-cols-md-2 g-2');
+      marketsCell.appendChild(grid);
+      // first, the match result: fetched for every match, whatever Extra Markets says
+      var result = tick('matchResult', 'Home / Draw / Away',
+        'Who wins, and the main over/under 2.5 goals line, for every match', opts.matchResult !== false);
+      result.note.textContent = '· 2 credits per competition';
+      result.cb.addEventListener('change', save);
+      var col1 = el('div', 'col'); col1.appendChild(result.row); grid.appendChild(col1);
+      var all = [];
+      Object.keys(offered).forEach(function (k) { offered[k].forEach(function (m) { if (all.indexOf(m) < 0) all.push(m); }); });
+      var rows = F.sortMarkets(all).map(function (key) {
+        var x = tick('market-' + key, F.EXTRA_MARKET_NAMES[key] || key, F.EXTRA_MARKET_INFO[key], (opts.markets || []).indexOf(key) >= 0);
+        x.key = key;
+        x.cb.addEventListener('change', save);
+        var col = el('div', 'col'); col.appendChild(x.row); grid.appendChild(col);
+        return x;
+      });
+
+      costCell = row(tb, 'Cost');
+      box.replaceChildren(table);
+      window.redrawLiveOddsCost = update;   // Refresh Odds Live's On / Off redraws it (only once the tick boxes are here)
+      update();
+    }).catch(function (e) { $('refreshBox').replaceChildren(el('span', 'text-muted', 'Couldn\'t load: ' + e.message)); });
+  }
+  loadRefresh();
+
+  /** Refresh Data Live: how often followed games are refreshed while on (or Off); ~2 GOAL calls each time for one game. */
+  function liveRefresh(current) {
+    var group = $('liveRefresh');
+    group.replaceChildren();
+    [1, 2, 5, 10, 0].forEach(function (m) {
+      var input = el('input', 'btn-check');
+      input.type = 'radio'; input.name = 'liveRefresh'; input.id = 'live-' + m; input.checked = m === current;
+      input.addEventListener('change', function () {
+        F.sendJson('/api/settings/live-refresh?minutes=' + m).then(function () { note(m); })
+          .catch(function (e) { notify(e.message, 'danger'); });
+      });
+      var label = el('label', 'btn btn-outline-theme', m ? m + '\'' : 'Off');
+      label.htmlFor = input.id;
+      group.append(input, label);
+    });
+    function note(m) {
+      // a match with stoppage time is about 115 minutes; each refresh is about 2 calls with one game on
+      $('liveRefreshNote').textContent = !m
+        ? 'Live games aren\'t refreshed: no live scores, stats, timeline or bet windows · no GOAL API calls.'
+        : 'Refreshes the live match score, stats and timeline every ' + (m === 1 ? 'minute' : m + ' minutes') +
+          ' whilst following a live game · 2 GOAL API calls per refresh · about ' + Math.round(115 / m) * 2 + ' per match.';
+    }
+    note(current);
+  }
+  /** Refresh Odds Live: On (at each bet window) | Off buttons, like Stake Bar. */
+  function liveOdds(current) {
+    window.LIVE_ODDS = current;
+    if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
+    var group = $('liveOdds');
+    group.replaceChildren();
+    [[true, 'On'], [false, 'Off']].forEach(function (o) {
+      var input = el('input', 'btn-check');
+      input.type = 'radio'; input.name = 'liveOdds'; input.id = 'live-odds-' + (o[0] ? 'on' : 'off'); input.checked = o[0] === current;
+      input.addEventListener('change', function () {
+        window.LIVE_ODDS = o[0];
+        if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
+        F.sendJson('/api/settings/live-odds?on=' + o[0]).catch(function (e) { notify(e.message, 'danger'); });
+      });
+      var label = el('label', 'btn btn-outline-theme', o[1]);
+      label.htmlFor = input.id;
+      group.append(input, label);
+    });
+  }
+  /** Bet Windows: 30' HT 60' 80', each on or off (any number); the Odds card's Cost counts the ones picked. */
+  var ALL_WINDOWS = ['30', 'HT', '60', '80'];
+  function betWindows(current) {
+    window.BET_WINDOWS = current.slice();
+    if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
+    var group = $('betWindows');
+    group.replaceChildren();
+    ALL_WINDOWS.forEach(function (w) {
+      var input = el('input', 'btn-check');
+      input.type = 'checkbox'; input.id = 'window-' + w; input.checked = current.indexOf(w) >= 0;
+      input.addEventListener('change', function () {
+        var picked = ALL_WINDOWS.filter(function (k) { return $('window-' + k).checked; });
+        window.BET_WINDOWS = picked;
+        if (window.redrawLiveOddsCost) window.redrawLiveOddsCost();
+        F.sendJson('/api/settings/bet-windows?windows=' + encodeURIComponent(picked.join(',')))
+          .catch(function (e) { notify(e.message, 'danger'); });
+      });
+      var label = el('label', 'btn btn-outline-theme', w === 'HT' ? 'HT' : w + '\'');
+      label.htmlFor = input.id;
+      group.append(input, label);
+    });
+  }
+  F.getJson('/api/settings').then(function (s) {
+    liveRefresh(s.liveRefresh != null ? s.liveRefresh : 5);
+    liveOdds(s.liveOdds !== false);
+    betWindows(s.betWindows || ALL_WINDOWS);
+  }).catch(function () { liveRefresh(5); liveOdds(true); betWindows(ALL_WINDOWS); });
+
+  /** Stake Bar: On | Off buttons like Live Refresh; shown or hidden straight away, and on every page from now on. */
+  function stakeBar(current) {
+    var group = $('stakeBar');
+    group.replaceChildren();
+    [[true, 'On'], [false, 'Off']].forEach(function (o) {
+      var input = el('input', 'btn-check');
+      input.type = 'radio'; input.name = 'stakeBar'; input.id = 'stake-' + o[1].toLowerCase(); input.checked = o[0] === current;
+      input.addEventListener('change', function () {
+        var on = o[0];
+        F.sendJson('/api/settings/stake-bar?on=' + on).then(function () {
+          window.STAKE_BAR = on;
+          $('navStake').classList.toggle('d-none', !on);
+        }).catch(function (e) { notify(e.message, 'danger'); });
+      });
+      var label = el('label', 'btn btn-outline-theme', o[1]);
+      label.htmlFor = input.id;
+      group.append(input, label);
+    });
+  }
+  /** On | Off buttons (like Stake Bar) in the group with this id; save(on) saves the choice. */
+  function onOff(id, current, save) {
+    var group = $(id);
+    group.replaceChildren();
+    [[true, 'On'], [false, 'Off']].forEach(function (o) {
+      var input = el('input', 'btn-check');
+      input.type = 'radio'; input.name = id; input.id = id + '-' + o[1].toLowerCase(); input.checked = o[0] === current;
+      input.addEventListener('change', function () { save(o[0]).catch(function (e) { notify(e.message, 'danger'); }); });
+      var label = el('label', 'btn btn-outline-theme', o[1]);
+      label.htmlFor = input.id;
+      group.append(input, label);
+    });
+  }
+
+  /** Try them: one button per alert, played here as it would be on a match page. */
+  (function alertTests() {
+    var team = 'Home Team', score = '1–0';
+    [['⚽ Goal', function () { GoalAlert.celebrate(team, null, null); }],
+     ['🟨 Yellow Card', function () { GoalAlert.card('yellow', team, null); }],
+     ['🟥 Red Card', function () { GoalAlert.card('red', team, null); }],
+     ['🎯 Penalty', function () { GoalAlert.card('penalty', team, null); }],
+     ['Kick-Off', function () { GoalAlert.phaseBanner('kickoff', ''); }],
+     ['Half Time', function () { GoalAlert.phaseBanner('ht', score); }],
+     ['Second Half', function () { GoalAlert.phaseBanner('second', score); }],
+     ['Full Time', function () { GoalAlert.phaseBanner('ft', '2–1'); }],
+     ['🔔 Bet Window', function () { GoalAlert.windowOpen('🔔 60\' bet window: new odds are in, Recommended Bets updated'); }]
+    ].forEach(function (t) {
+      var b = el('button', 'btn btn-sm btn-outline-theme', t[0]);
+      b.type = 'button';
+      b.addEventListener('click', function () { GoalAlert.stop(); t[1](); });   // again: restart it, don't stack
+      $('alertTests').appendChild(b);
+    });
+  })();
+  /**
+   * Storage: the database file in use (everything the app saves, these settings too), and a box to use another one
+   * from the next start: a new file gets a copy of your data, an existing one is used as it is.
+   */
+  function storage() {
+    F.getJson('/api/settings/storage').then(drawStorage)
+      .catch(function (e) { $('storage').replaceChildren(el('span', 'text-danger', 'Couldn\'t read the storage: ' + e.message)); });
+  }
+  /**
+   * One row like an API key's: the .db file's path in the box, Save (keep everything in the path typed) and Delete
+   * (asks first: everything goes). Under it the file's size and when it last saved. A new install gets the suggested
+   * Documents path and a note saying this comes first.
+   */
+  function drawStorage(st) {
+    var box = $('storage');
+    box.replaceChildren();
+    $('stepStorage').classList.toggle('text-decoration-line-through', !!st.chosen);
+    if (!st.chosen) {
+      var ask = el('div', 'alert alert-info px-3 py-2 mb-2');
+      ask.appendChild(el('div', 'fw-semibold mb-1', 'Where should the app keep your data?'));
+      ask.appendChild(el('div', null, 'Everything it saves goes in one database file: odds, stats, bets, favourites ' +
+        'and these settings. Pick a folder you back up, e.g. Documents, and press Save. Point it at an existing .db ' +
+        'file to carry on with that data.'));
+      box.appendChild(ask);
+    }
+    var t = el('table', 'table table-sm align-top mb-0'), tb = el('tbody'), tr = el('tr');
+    tr.appendChild(el('td', 'text-nowrap fw-semibold pt-2', 'Database'));
+    var input = el('input', 'form-control form-control-sm font-monospace');
+    input.type = 'text'; input.spellcheck = false; input.autocomplete = 'off';
+    input.placeholder = 'Full path of the .db file';
+    input.value = st.chosen ? (st.next || st.file) : st.suggested;
+    var tdIn = el('td', 'w-100');
+    tdIn.appendChild(input);
+    var mb = st.size >= 0 ? (st.size / 1048576).toFixed(1) + ' MB' : '';
+    var when = st.modified ? new Date(st.modified).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : '';
+    tdIn.appendChild(el('div', 'text-muted small mt-1', !st.file ? 'Not saved to a file yet: the app keeps everything ' +
+      'in memory until you press Save.' : (st.chosen ? '' : 'Now at ' + st.file + ' · ') +
+      [mb, when ? 'last saved ' + when : ''].filter(Boolean).join(' · ')));
+    if (st.next) {
+      var warn = el('div', 'alert alert-warning px-3 py-2 mt-2 mb-0');
+      warn.appendChild(document.createTextNode('Restart the app to load this database. Until then it keeps saving to '));
+      warn.appendChild(el('code', 'text-break', st.file));
+      warn.appendChild(document.createTextNode('.'));
+      tdIn.appendChild(warn);
+    }
+    tr.appendChild(tdIn);
+    var save = el('button', 'btn btn-sm btn-theme', 'Save');
+    save.type = 'button';
+    save.title = 'Keep everything in this file: a new file gets a copy of your data (the old one is kept), an existing one is used as it is';
+    var del = el('button', 'btn btn-sm btn-outline-theme', 'Delete');
+    del.type = 'button';
+    del.title = 'Deletes all your data (asks first)';
+    del.disabled = !st.chosen;
+    var tdB = el('td', 'text-nowrap'); [save, del].forEach(function (b) { tdB.appendChild(b); b.classList.add('ms-1'); });
+    tr.appendChild(tdB);
+    tb.appendChild(tr);
+    t.appendChild(tb);
+    box.appendChild(t);
+
+    function choose(path) {
+      save.disabled = true;
+      F.sendJson('/api/settings/storage', { path: path }).then(function (r) {
+        notify(r.copied ? 'Your data is now kept in ' + r.file + ' (the old file is still there).'
+          : r.existing ? 'Restart the app to load the database at ' + r.file + '.'
+          : 'Your data is kept in ' + r.file + '.', 'success');
+        if (r.ready && !wasReady) { location.reload(); return; }   // the last setup step: the menu appears
+        drawStorage(r);
+      }).catch(function (e) { notify(e.message, 'danger'); save.disabled = false; });
+    }
+    save.onclick = function () {
+      var v = input.value.trim();
+      if (!v) { notify('Type the full path of the .db file first.', 'warning'); return; }
+      if (st.chosen && v === (st.next || st.file)) { notify('That\'s the file in use already.', 'info'); return; }
+      choose(v);
+    };
+    del.onclick = function () {
+      var modal = bootstrap.Modal.getOrCreateInstance($('deleteData'));
+      $('deleteDataFile').textContent = st.file;
+      var confirm = $('deleteDataConfirm'), ok = $('deleteDataOk');
+      confirm.value = '';
+      ok.disabled = true;
+      confirm.oninput = function () { ok.disabled = confirm.value.trim() !== 'DELETE'; };
+      ok.onclick = function () {
+        if (confirm.value.trim() !== 'DELETE') return;
+        ok.disabled = true;
+        F.sendJson('/api/settings/storage/delete').then(function () {
+          modal.hide();
+          location.reload();   // keys and settings are gone: back to setup
+        }).catch(function (e) { notify(e.message, 'danger'); ok.disabled = false; });
+      };
+      modal.show();
+      setTimeout(function () { confirm.focus(); }, 300);
+    };
+  }
+  storage();
+  load();
+})();

@@ -12,6 +12,8 @@ window.Favourites = (function () {
 
   /** The favourite matching a team name from any source (Odds API, GOAL API...), or null. */
   function find(favs, name) { return favs && favs.length ? F.findTeam(favs, name) : null; }
+  /** Is a favourite team playing in this match (an Odds API event: home_team / away_team)? */
+  function playing(favs, m) { return !!(find(favs, m.home_team) || find(favs, m.away_team)); }
 
   function crestOrFlag(t, size) {
     return F.logo(t.crest ? [t] : [], t.name, size);
@@ -99,5 +101,5 @@ window.Favourites = (function () {
     });
   }
 
-  return { load: load, find: find, openModal: openModal };
+  return { load: load, find: find, playing: playing, openModal: openModal };
 })();

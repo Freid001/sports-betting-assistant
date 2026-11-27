@@ -455,23 +455,9 @@ window.GoalAlert = (function () {
     setTimeout(function () { box.remove(); bits.forEach(function (x) { x.remove(); }); done(); }, 5000);
   }
 
-  /** The 🔊 / 🔇 button by the score: Sounds on or off (the same switch as in Settings). */
-  function muteButton() {
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'btn btn-sm btn-link text-decoration-none p-0 ms-2 align-baseline';
-    var draw = function () {
-      b.textContent = soundOn() ? '🔊' : '🔇';
-      b.title = soundOn() ? 'Match sounds on (click to mute)' : 'Match sounds muted (click to turn on)';
-    };
-    b.addEventListener('click', function () { setSound(!soundOn()); draw(); if (soundOn()) unlock(); });
-    draw();
-    return b;
-  }
-
   return { parse: parse, check: check, checkCards: checkCards, checkStatus: checkStatus, checkPoints: checkPoints,
            phaseBanner: phaseBanner, windowOpen: windowOpen, chime: chime,
            reset: reset, stop: stop, celebrate: celebrate, card: card,
-           play: play, whistle: whistle, muteButton: muteButton,
+           play: play, whistle: whistle,
            soundOn: soundOn, setSound: setSound, animationsOn: animationsOn, setAnimations: setAnimations };
 })();

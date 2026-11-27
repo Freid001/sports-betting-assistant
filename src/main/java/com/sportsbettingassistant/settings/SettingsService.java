@@ -122,7 +122,7 @@ public class SettingsService {
         if (!KEY_TEXT.matcher(v).matches()) {
             throw new IllegalArgumentException("That doesn't look like an API key (letters, numbers and - _ . only).");
         }
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "key/" + k.name(), v);
+        save("key/" + k.name(), v);
     }
 
     /** What the Settings page shows for a key, including the key itself for its masked box (Show reveals it). */
@@ -171,7 +171,7 @@ public class SettingsService {
                 log.warn("Couldn't read .env: {}", e.getMessage());
             }
         }
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", IMPORTED, "yes");
+        save(IMPORTED, "yes");
     }
 
     // ---------------------------------------------------------------- theme
@@ -190,7 +190,7 @@ public class SettingsService {
         if (THEMES.stream().noneMatch(t -> t.key().equals(key))) {
             throw new IllegalArgumentException("Unknown theme: " + key);
         }
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "theme", key);
+        save("theme", key);
         theme = null;
     }
 
@@ -207,7 +207,7 @@ public class SettingsService {
     public Map<String, Object> refreshOptions() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("saved", saved("refresh-scope").isPresent());
-        out.put("matchResult", !"off".equals(saved("refresh-match-result").orElse("on")));
+        out.put("matchResult", isOn("refresh-match-result"));
         out.put("scope", saved("refresh-scope").filter(SCOPES::contains).orElse("off"));
         out.put("markets", saved("refresh-markets").map(m -> List.of(m.split(","))).orElse(List.of()));
         return out;
@@ -223,9 +223,9 @@ public class SettingsService {
             }
         }
         store.transaction(() -> {
-            store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "refresh-match-result", matchResult ? "on" : "off");
-            store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "refresh-scope", scope);
-            store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "refresh-markets", String.join(",", markets));
+            saveOn("refresh-match-result", matchResult);
+            save("refresh-scope", scope);
+            save("refresh-markets", String.join(",", markets));
         });
     }
 
@@ -247,16 +247,16 @@ public class SettingsService {
         if (!LIVE_REFRESH.contains(minutes)) {
             throw new IllegalArgumentException("Refresh Data Live is 1, 2, 5 or 10 minutes, or 0 for Off");
         }
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "live-refresh", String.valueOf(minutes));
+        save("live-refresh", String.valueOf(minutes));
     }
 
     /** Refresh Odds Live: the bookmaker's in-play odds at each timeline point of a followed game (on unless off). */
     public boolean liveOdds() {
-        return !"off".equals(saved("live-odds").orElse("on"));
+        return isOn("live-odds");
     }
 
     public void setLiveOdds(boolean on) {
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "live-odds", on ? "on" : "off");
+        saveOn("live-odds", on);
     }
 
     /** The bet windows there are, in match order. */
@@ -278,7 +278,7 @@ public class SettingsService {
                 throw new IllegalArgumentException("Bet windows are 30, HT, 60 and 80: not " + w);
             }
         }
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "bet-windows",
+        save("bet-windows",
                 String.join(",", BET_WINDOWS.stream().filter(windows::contains).toList()));
     }
 
@@ -286,31 +286,45 @@ public class SettingsService {
 
     /** Stake Bar: the £ stake buttons in the top bar (on unless switched off). */
     public boolean stakeBar() {
-        return !"off".equals(saved("stake-bar").orElse("on"));
+        return isOn("stake-bar");
     }
 
     public void setStakeBar(boolean on) {
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "stake-bar", on ? "on" : "off");
+        saveOn("stake-bar", on);
     }
 
     // ---------------------------------------------------------------- match page alerts
 
     /** Animations: the GOAL!, card, penalty, kick-off / HT / FT banners and the bet window note (on unless off). */
     public boolean animations() {
-        return !"off".equals(saved("match-animations").orElse("on"));
+        return isOn("match-animations");
     }
 
     public void setAnimations(boolean on) {
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "match-animations", on ? "on" : "off");
+        saveOn("match-animations", on);
     }
 
     /** Sounds: the crowd, whistles and the bet window chime on the match page (on unless off). */
     public boolean sounds() {
-        return !"off".equals(saved("match-sounds").orElse("on"));
+        return isOn("match-sounds");
     }
 
     public void setSounds(boolean on) {
-        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", "match-sounds", on ? "on" : "off");
+        saveOn("match-sounds", on);
+    }
+
+    /** Saves one setting (replacing what was there). */
+    private void save(String name, String value) {
+        store.update("INSERT OR REPLACE INTO settings (name, value) VALUES (?, ?)", name, value);
+    }
+
+    /** An On / Off setting: on unless it's been switched off. */
+    private boolean isOn(String name) {
+        return !"off".equals(saved(name).orElse("on"));
+    }
+
+    private void saveOn(String name, boolean on) {
+        save(name, on ? "on" : "off");
     }
 
     private Optional<String> saved(String name) {

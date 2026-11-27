@@ -23,7 +23,7 @@ window.ValueCheck = (function () {
   var last = null;          // last render arguments, so a stake change can redraw
 
   function mean(arr, f) { return arr.length ? arr.reduce(function (t, v) { return t + f(v); }, 0) / arr.length : null; }
-  function pois(k, l) { var p = Math.exp(-l); for (var i = 1; i <= k; i++) p *= l / i; return p; }
+  var pois = F.pois, pmf = F.pmf, grid = F.grid, chanceTag = F.chanceTag, tagBadge = F.tagBadge;   // shared (football-data.js)
 
   // ---- Team profile from the squad's season stats (GOAL API, saved by Refresh Stats) ----
 
@@ -139,27 +139,6 @@ window.ValueCheck = (function () {
     return { text: 'Poor Price', cls: 'odds-poor' };
   }
 
-  /** How LIKELY it is, separately from the price. */
-  function chanceTag(chance) {
-    if (chance >= 0.75) return 'Very Likely';   // 75%+
-    if (chance >= 0.5) return 'Likely';      // 50-74%
-    if (chance >= 0.35) return 'Coin Flip';    // 35-49%
-    if (chance >= 0.2) return 'Outsider';    // 20-34%
-    if (chance >= 0.1) return 'Long Shot';   // 10-19%
-    return 'Moonshot';                       // under 10%
-  }
-
-  var TAG_RANGES = { 'Very Likely': '75%+', 'Likely': '50-74%', 'Coin Flip': '35-49%', 'Outsider': '20-34%', 'Long Shot': '10-19%', 'Moonshot': 'under 10%' };
-
-  /** Chance tag badge, e.g. "Likely", with our calculated chance on hover, e.g. "58.3%" (the range if no chance given). */
-  function tagBadge(tag, chance) {
-    var b = el('span', 'badge rounded-pill chance-tag ' + tagClass(tag), tag);
-    b.setAttribute('data-bs-toggle', 'tooltip');
-    b.setAttribute('data-bs-title', chance !== undefined ? (chance * 100).toFixed(1) + '%' : TAG_RANGES[tag]);
-    b.style.cursor = 'help';
-    return b;
-  }
-
   // ---- Recommended bets: one rule for a match page's Best Bets and the Recommended Bets page ----
   // Value only (Possible / Good / Great Value: +5% or better). Fair Price has no edge: Betting Framework §2 lists it as
   // optional (£2-3) and "not listed in Bets to place"; Golden Rule 6: value beats likelihood.
@@ -227,11 +206,6 @@ window.ValueCheck = (function () {
     node.style.cursor = 'help';
   }
 
-  function tagClass(tag) {
-    return { 'Very Likely': 'chance-verylikely', 'Likely': 'chance-likely', 'Coin Flip': 'chance-tossup', 'Outsider': 'chance-outsider',
-             'Long Shot': 'chance-longshot', 'Moonshot': 'chance-moonshot' }[tag] || '';
-  }
-
   function pct(p) { return Math.round(p * 100) + '%'; }
   function money(v) { return (v >= 0 ? '+' : '−') + (Math.abs(v) < 1 ? Math.round(Math.abs(v) * 100) + 'p' : '£' + Math.abs(v).toFixed(2)); }
 
@@ -288,9 +262,9 @@ window.ValueCheck = (function () {
 
   /** Result, over 2.5 and both-teams-to-score chances from expected goals (Poisson). */
   function chances(lh, la) {
-    var home = 0, draw = 0, away = 0, under25 = 0;
+    var home = 0, draw = 0, away = 0, under25 = 0, ph = pmf(lh), pa = pmf(la);
     for (var i = 0; i <= 10; i++) for (var j = 0; j <= 10; j++) {
-      var p = pois(i, lh) * pois(j, la);
+      var p = ph[i] * pa[j];
       if (i > j) home += p; else if (i === j) draw += p; else away += p;
       if (i + j <= 2) under25 += p;
     }
@@ -334,12 +308,6 @@ window.ValueCheck = (function () {
 
   var FIRST_HALF = 0.45;   // share of goals scored before half-time (about 45% in top leagues)
 
-  /** Chance of a scoreline condition, goals for each side ~ Poisson. */
-  function grid(lh, la, f) {
-    var p = 0;
-    for (var i = 0; i <= 10; i++) for (var j = 0; j <= 10; j++) if (f(i, j)) p += pois(i, lh) * pois(j, la);
-    return p;
-  }
   function result(lh, la) {
     return { H: grid(lh, la, function (i, j) { return i > j; }), D: grid(lh, la, function (i, j) { return i === j; }),
              A: grid(lh, la, function (i, j) { return i < j; }) };

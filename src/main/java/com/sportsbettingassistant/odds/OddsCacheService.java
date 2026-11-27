@@ -488,8 +488,8 @@ public class OddsCacheService {
             if (java.time.Duration.between(t, ko).abs().toMinutes() > 30) {
                 continue;
             }
-            int score = com.sportsbettingassistant.football.live.LiveService.similar(e.get("home"), home)
-                    + com.sportsbettingassistant.football.live.LiveService.similar(e.get("away"), away);
+            int score = com.sportsbettingassistant.football.live.TeamNames.similar(e.get("home"), home)
+                    + com.sportsbettingassistant.football.live.TeamNames.similar(e.get("away"), away);
             if (score > bestScore) {
                 best = Map.of("sport", e.get("sport"), "id", e.get("id"));
                 bestScore = score;

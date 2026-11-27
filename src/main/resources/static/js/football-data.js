@@ -9,6 +9,54 @@ window.Football = (function () {
     if (text !== undefined && text !== null) e.textContent = text;
     return e;
   }
+  // ---- Poisson goals maths (the value check, in-play and the match page all use these) ----
+  /** P(exactly k goals) when l are expected. */
+  function pois(k, l) { var p = Math.exp(-l); for (var i = 1; i <= k; i++) p *= l / i; return p; }
+  /**
+   * P(0..10 goals) for an expected-goals figure, worked out once and kept: the value check tries thousands of
+   * pairs, and working each from scratch made one analyse() take over 100 ms. Same numbers as pois().
+   */
+  var pmfCache = {}, pmfCount = 0;
+  function pmf(l) {
+    var key = l.toFixed(6), out = pmfCache[key];
+    if (out) return out;
+    out = [Math.exp(-l)];
+    for (var k = 1; k <= 10; k++) out.push(out[k - 1] * (l / k));
+    if (++pmfCount > 5000) { pmfCache = {}; pmfCount = 1; }   // bounded (in-play rates vary continuously)
+    return (pmfCache[key] = out);
+  }
+  /** Chance of a scoreline condition f(home goals, away goals), each side's goals Poisson (0-10 each). */
+  function grid(lh, la, f) {
+    var p = 0, ph = pmf(lh), pa = pmf(la);
+    for (var i = 0; i <= 10; i++) for (var j = 0; j <= 10; j++) if (f(i, j)) p += ph[i] * pa[j];
+    return p;
+  }
+
+  // ---- Chance tags: how LIKELY something is (separately from the price) ----
+  var TAG_RANGES = { 'Very Likely': '75%+', 'Likely': '50-74%', 'Coin Flip': '35-49%', 'Outsider': '20-34%', 'Long Shot': '10-19%', 'Moonshot': 'under 10%' };
+  function chanceTag(chance) {
+    if (chance >= 0.75) return 'Very Likely';
+    if (chance >= 0.5) return 'Likely';
+    if (chance >= 0.35) return 'Coin Flip';
+    if (chance >= 0.2) return 'Outsider';
+    if (chance >= 0.1) return 'Long Shot';
+    return 'Moonshot';
+  }
+  function tagClass(tag) {
+    return { 'Very Likely': 'chance-verylikely', 'Likely': 'chance-likely', 'Coin Flip': 'chance-tossup', 'Outsider': 'chance-outsider',
+             'Long Shot': 'chance-longshot', 'Moonshot': 'chance-moonshot' }[tag] || '';
+  }
+  /** Chance tag badge, e.g. "Likely", with the chance on hover, e.g. "58.3%" (the tag's range if no chance given). */
+  function tagBadge(tag, chance) {
+    var b = el('span', 'badge rounded-pill chance-tag ' + tagClass(tag), tag);
+    b.setAttribute('data-bs-toggle', 'tooltip');
+    b.setAttribute('data-bs-title', chance !== undefined ? (chance * 100).toFixed(1) + '%' : TAG_RANGES[tag]);
+    b.style.cursor = 'help';
+    return b;
+  }
+  /** The badge for a chance: tagBadge(chanceTag(chance), chance). */
+  function chanceBadge(chance) { return tagBadge(chanceTag(chance), chance); }
+
   function title(name) { return NAMES[name] || name.replace(/_/g, ' '); }
   function ago(iso) {
     var mins = Math.round((Date.now() - new Date(iso)) / 60000);
@@ -509,7 +557,8 @@ window.Football = (function () {
     return (ev && ev.bookmakers || []).find(function (b) { return b.key === key; }) || null;
   }
 
-  return { loadTeams: loadTeams, findTeam: findTeam, logo: logo, el: el, title: title, ago: ago, day: day, time: time, loadAll: loadAll, fairChances: fairChances, fraction: fraction, nearestFraction: nearestFraction, fractionAtLeast: fractionAtLeast, clockStatus: clockStatus, statusBadge: statusBadge,
+  return { pois: pois, pmf: pmf, grid: grid, chanceTag: chanceTag, tagBadge: tagBadge, chanceBadge: chanceBadge,
+           loadTeams: loadTeams, findTeam: findTeam, logo: logo, el: el, title: title, ago: ago, day: day, time: time, loadAll: loadAll, fairChances: fairChances, fraction: fraction, nearestFraction: nearestFraction, fractionAtLeast: fractionAtLeast, clockStatus: clockStatus, statusBadge: statusBadge,
            oddsBadge: oddsBadge, chanceClass: chanceClass, legend: legend,
            stake: stake, stakeInput: stakeInput, STAKE_BANDS: STAKE_BANDS, money: money, norm: norm, infoBox: infoBox,
            getJson: getJson, sendJson: sendJson, modalFrame: modalFrame,

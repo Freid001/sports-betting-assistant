@@ -9,6 +9,7 @@ import java.util.Set;
 
 import org.springframework.stereotype.Service;
 
+import com.sportsbettingassistant.football.live.TeamNames;
 import com.sportsbettingassistant.json.Json;
 import com.sportsbettingassistant.store.Store;
 
@@ -70,7 +71,7 @@ public class PredictionLog {
      * Stats): [{...the prediction, savedAt, result: {home, away, htHome, htAway} or null}], newest first.
      */
     public List<Map<String, Object>> all() {
-        return store.query("SELECT p.*, m.home_goals, m.away_goals, m.ht_home, m.ht_away FROM predictions p "
+        List<Map<String, Object>> all = store.query("SELECT p.*, m.home_goals, m.away_goals, m.ht_home, m.ht_away FROM predictions p "
                 + "LEFT JOIN matches m ON m.status = 'FINISHED' AND m.home_team_id = p.home_team_id "
                 + "AND m.away_team_id = p.away_team_id AND ABS(julianday(m.utc_date) - julianday(p.kickoff)) < 1 "
                 + "ORDER BY p.kickoff DESC, p.match_id, p.point", rs -> {
@@ -89,6 +90,70 @@ public class PredictionLog {
                     }
                     return out;
                 });
+        // not in the saved results yet (they come with Refresh Stats): a game followed live has its final score already
+        List<Map<String, Object>> live = null;
+        for (Map<String, Object> p : all) {
+            if (p.get("result") == null) {
+                if (live == null) {
+                    live = finishedLiveGames();
+                }
+                p.put("result", liveResult(live, p));
+            }
+        }
+        return all;
+    }
+
+    /** Followed games that have finished: {kickoff, home, away, homeGoals, awayGoals, htHome, htAway} (HT if saved). */
+    private List<Map<String, Object>> finishedLiveGames() {
+        return store.query("SELECT g.kickoff, g.home, g.away, g.home_score, g.away_score, h.home_score AS ht_home, "
+                + "h.away_score AS ht_away FROM live_games g LEFT JOIN live_snapshots h ON h.game_id = g.id AND h.period = 'HT' "
+                + "WHERE g.status LIKE 'FINISH%' OR g.status IN ('FT', 'AET')", rs -> {
+                    Map<String, Object> g = new LinkedHashMap<>();
+                    g.put("kickoff", rs.getString("kickoff"));
+                    g.put("home", rs.getString("home"));
+                    g.put("away", rs.getString("away"));
+                    Map<String, Object> r = new LinkedHashMap<>();
+                    r.put("home", score(rs.getString("home_score")));
+                    r.put("away", score(rs.getString("away_score")));
+                    r.put("htHome", rs.getString("ht_home") == null ? null : score(rs.getString("ht_home")));
+                    r.put("htAway", rs.getString("ht_away") == null ? null : score(rs.getString("ht_away")));
+                    g.put("result", r);
+                    return g;
+                });
+    }
+
+    /** The finished live game that is this prediction's (kick-off within 30 minutes, team names alike), or null. */
+    static Map<String, Object> liveResult(List<Map<String, Object>> games, Map<String, Object> p) {
+        Instant ko = instant(Json.text(p.get("kickoff")));
+        if (ko == null) {
+            return null;
+        }
+        for (Map<String, Object> g : games) {
+            Instant gk = instant(Json.text(g.get("kickoff")));
+            if (gk != null && Duration.between(ko, gk).abs().toMinutes() <= 30
+                    && TeamNames.similar(g.get("home"), p.get("home")) + TeamNames.similar(g.get("away"), p.get("away")) > 3) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> r = (Map<String, Object>) g.get("result");
+                return r.get("home") == null || r.get("away") == null ? null : r;
+            }
+        }
+        return null;
+    }
+
+    private static Long score(String s) {
+        try {
+            return s == null ? null : Long.valueOf(s.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Instant instant(String iso) {
+        try {
+            return iso == null ? null : Instant.parse(iso);
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     /** Predictions older than this are dropped (keeps the database small). */

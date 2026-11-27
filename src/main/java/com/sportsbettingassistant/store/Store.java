@@ -33,7 +33,6 @@ public class Store implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(Store.class);
 
-    /** All tables. Times are milliseconds since 1970 (UTC) unless the column says _iso. */
     /** Columns added after a table was first made: added to older databases (ignored if already there). */
     static final List<String> NEW_COLUMNS = List.of(
             "ALTER TABLE scorers ADD COLUMN position TEXT",   // e.g. "Forwards"
@@ -45,14 +44,12 @@ public class Store implements AutoCloseable {
             // 1: found elsewhere in GOAL API (e.g. Cole Palmer, filed under England), kept when the squad is re-saved
             "ALTER TABLE squads ADD COLUMN added INTEGER");
 
+    /** All tables. Times are milliseconds since 1970 (UTC) unless the column says _iso. */
     static final String SCHEMA = """
         -- when something last finished: 'stats' (Refresh Stats), 'live', 'live-list', 'matches/PL/FINISHED'...
         CREATE TABLE IF NOT EXISTS refreshes (name TEXT PRIMARY KEY, finished_at INTEGER NOT NULL);
         -- app choices kept on the server, e.g. the bookmaker picked in Refresh Odds (pages and live odds both use it)
         CREATE TABLE IF NOT EXISTS settings (name TEXT PRIMARY KEY, value TEXT);
-        -- tidy-up of earlier versions: the key -> JSON table and its import marker are no longer used
-        DROP TABLE IF EXISTS saved;
-        DELETE FROM refreshes WHERE name = 'old-files-imported';
         -- calls left per API, from its last answer
         CREATE TABLE IF NOT EXISTS api_usage (api TEXT PRIMARY KEY, call_limit TEXT, remaining TEXT, resets TEXT, checked_at TEXT);
         CREATE TABLE IF NOT EXISTS favourites (position INTEGER NOT NULL, name TEXT PRIMARY KEY, short_name TEXT,
@@ -92,13 +89,10 @@ public class Store implements AutoCloseable {
             kickoff TEXT, home_team TEXT, away_team TEXT);
         CREATE INDEX IF NOT EXISTS odds_events_by_sport ON odds_events (sport, kickoff);
         -- when a match's extra markets (BTTS, goals lines, corners...) were last fetched from each bookmaker,
-        -- which came back, and the cost (replaces odds_extras, which had one row per match)
-        DROP TABLE IF EXISTS odds_extras;
+        -- which came back, and the cost
         CREATE TABLE IF NOT EXISTS odds_extra_fetches (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL,
             fetched_at_iso TEXT NOT NULL, markets TEXT, credits INTEGER, PRIMARY KEY (event_id, bookmaker));
-        -- in-play prices, one fetch per match, bookmaker and point in the match (10, 25, HT, 60, 80), markets is JSON
-        -- (replaces odds_live, which kept only the last fetch)
-        DROP TABLE IF EXISTS odds_live;
+        -- in-play prices, one fetch per match, bookmaker and bet window (30, HT, 60, 80), markets is JSON
         CREATE TABLE IF NOT EXISTS odds_live_points (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, point TEXT NOT NULL,
             fetched_at_iso TEXT, credits INTEGER, markets TEXT NOT NULL, PRIMARY KEY (event_id, bookmaker, point));
         CREATE TABLE IF NOT EXISTS odds_prices (event_id TEXT NOT NULL, position INTEGER NOT NULL, bookmaker TEXT,
@@ -118,24 +112,22 @@ public class Store implements AutoCloseable {
         -- a game's stats at a point in the match ('30', 'HT', '60', '80', 'FT'): stats is the JSON the page shows
         CREATE TABLE IF NOT EXISTS live_snapshots (game_id TEXT NOT NULL, period TEXT NOT NULL, home_score TEXT,
             away_score TEXT, stats TEXT NOT NULL, saved_at TEXT, PRIMARY KEY (game_id, period));
-        -- what happened in a followed game (goal, yellow, red, penalty, shot, kickoff, ht, second, ft), worked out
-        -- refresh by refresh: the match page's Timeline card
-        -- (source: 'api' for GOAL API's own goals and cards, with real minutes, or 'seen' for what the refreshes spotted)
-        DROP TABLE IF EXISTS live_events;
+        -- what happened in a followed game (goal, yellow, red, penalty, sub, shot, save, corner, offside, commentary
+        -- moments, kickoff, ht, second, ft): the match page's Timeline card (see MatchTimeline)
+        -- (source: 'api' for GOAL API's own feeds, with real minutes, or 'seen' for what the refreshes spotted)
         CREATE TABLE IF NOT EXISTS live_timeline (game_id TEXT NOT NULL, seq INTEGER NOT NULL, kind TEXT NOT NULL,
             side TEXT, player TEXT, assist TEXT, info TEXT, score TEXT, minute TEXT, half INTEGER, elapsed INTEGER,
             sort_order INTEGER, source TEXT, at TEXT, PRIMARY KEY (game_id, seq));
         -- a finished game's highlights video (GOAL API /videos/match): url empty = none yet, checked_at for re-checking
         CREATE TABLE IF NOT EXISTS live_videos (game_id TEXT PRIMARY KEY, url TEXT, title TEXT, checked_at TEXT);
-        -- the prediction log: what the model said before a game (point PRE) and at each bet window (10, 25, HT, 60,
-        -- 80), scored against the result later. body: the prediction as the page sent it (JSON)
+        -- the prediction log: what the model said before a game (point PRE) and at each bet window (30, HT, 60, 80;
+        -- 10 and 25 in older logs), scored against the result later. body: the prediction as the page sent it (JSON)
         CREATE TABLE IF NOT EXISTS predictions (match_id TEXT NOT NULL, point TEXT NOT NULL, kickoff TEXT NOT NULL,
             competition TEXT, home TEXT, away TEXT, home_team_id INTEGER, away_team_id INTEGER, saved_at TEXT,
             version TEXT, body TEXT NOT NULL, PRIMARY KEY (match_id, point));
         -- games to follow live once GOAL API lists them (on match day), picked with the match page's play button
         CREATE TABLE IF NOT EXISTS live_follow (tournament TEXT NOT NULL, kickoff TEXT NOT NULL, home TEXT NOT NULL,
             away TEXT NOT NULL, PRIMARY KEY (tournament, kickoff, home));
-        DROP TABLE IF EXISTS goal_badges;
         -- GOAL API's own id for each team (squads and head to head are asked for by it)
         CREATE TABLE IF NOT EXISTS goal_teams (goal_id TEXT PRIMARY KEY, team_id INTEGER NOT NULL);
         CREATE INDEX IF NOT EXISTS goal_teams_by_team ON goal_teams (team_id);
@@ -143,6 +135,22 @@ public class Store implements AutoCloseable {
         CREATE TABLE IF NOT EXISTS standings (competition TEXT NOT NULL, team_id INTEGER NOT NULL, team_name TEXT,
             position INTEGER, played INTEGER, won INTEGER, draw INTEGER, lost INTEGER, goals_for INTEGER,
             goals_against INTEGER, points INTEGER, grp TEXT, PRIMARY KEY (competition, team_id));
+        """;
+
+    /**
+     * Clean-ups of older versions' data, run after the tables (each does nothing once done). Safe to delete a line
+     * once no database from before it is in use.
+     */
+    static final String LEGACY_CLEANUP = """
+        -- tables earlier versions used: the key -> JSON table (and its import marker), odds_extras (one row per match,
+        -- now odds_extra_fetches), odds_live (only the last fetch, now odds_live_points), live_events (now
+        -- live_timeline), goal_badges
+        DROP TABLE IF EXISTS saved;
+        DELETE FROM refreshes WHERE name = 'old-files-imported';
+        DROP TABLE IF EXISTS odds_extras;
+        DROP TABLE IF EXISTS odds_live;
+        DROP TABLE IF EXISTS live_events;
+        DROP TABLE IF EXISTS goal_badges;
         -- once, when stats moved from football-data.org to GOAL API: its saved stats go (team ids differ)
         DELETE FROM competition_teams WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
         DELETE FROM squads WHERE NOT EXISTS (SELECT 1 FROM settings WHERE name = 'stats-source');
@@ -182,6 +190,16 @@ public class Store implements AutoCloseable {
     }
 
     /** Opens (or creates) a database file and brings its tables up to date; null: a database in memory. */
+    /** Runs each statement of a script, skipping pieces that are only comments (a ';' in a comment splits it too). */
+    private static void run(Statement s, String script) throws SQLException {
+        for (String sql : script.split(";")) {
+            String code = sql.lines().filter(l -> !l.strip().startsWith("--")).reduce("", (a, b) -> a + b + "\n");
+            if (!code.isBlank()) {
+                s.execute(sql);
+            }
+        }
+    }
+
     private static Connection open(Path file) {
         try {
             if (file != null && file.toAbsolutePath().getParent() != null) {
@@ -191,13 +209,7 @@ public class Store implements AutoCloseable {
             try (Statement s = db.createStatement()) {
                 s.execute("PRAGMA journal_mode=WAL");     // readers don't block the writer
                 s.execute("PRAGMA busy_timeout=5000");
-                for (String sql : SCHEMA.split(";")) {
-                    // skip pieces that are only comments (a ';' inside a comment would otherwise run as SQL)
-                    String code = sql.lines().filter(l -> !l.strip().startsWith("--")).reduce("", (a, b) -> a + b + "\n");
-                    if (!code.isBlank()) {
-                        s.execute(sql);
-                    }
-                }
+                run(s, SCHEMA);
                 for (String sql : NEW_COLUMNS) {
                     try {
                         s.execute(sql);
@@ -205,6 +217,7 @@ public class Store implements AutoCloseable {
                         // a database made after the column was added already has it
                     }
                 }
+                run(s, LEGACY_CLEANUP);
             }
             return db;
         } catch (SQLException | IOException e) {
