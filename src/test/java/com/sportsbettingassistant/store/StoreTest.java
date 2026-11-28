@@ -27,7 +27,7 @@ class StoreTest {
                     .contains("teams", "games", "game_sources", "team_names", "players", "player_sources", "team_players",
                             "player_season_stats", "scorers", "head_to_head", "odds_events",
                             "odds_prices", "live_state", "live_points", "live_point_stats", "live_events", "favourites", "refreshes", "api_usage")
-                    .contains("setting_values", "odds_fetch_markets", "odds_live_prices", "prediction_numbers", "prediction_bets",
+                    .contains("setting_values", "bookmakers", "head_to_head_games", "odds_fetch_markets", "odds_live_prices", "prediction_numbers", "prediction_bets",
                             "prediction_lines")
                     .doesNotContain("saved", "matches", "squads", "live_games", "live_snapshots");
             assertThat(s.file()).isEqualTo(tmp.resolve("data/test.db"));
@@ -75,15 +75,36 @@ class StoreTest {
     }
 
     @Test
-    void trueFalseAndTimesAreStoredAsNumbers() {
+    void trueFalseAreNumbersAndTimesAreIsoText() {
         try (Store s = open()) {
             Instant when = Instant.parse("2026-11-19T12:00:00Z");
             s.update("INSERT INTO live_state (game_id, live, updated_at, ticked) VALUES (?, ?, ?, ?)", 1, true, null, null);
-            s.update("INSERT INTO refreshes (name, finished_at) VALUES (?, ?)", "x", when);
+            s.markRefreshed("x", when);
             assertThat(s.first("SELECT live FROM live_state", rs -> rs.getInt(1))).contains(1);
-            assertThat(s.first("SELECT finished_at FROM refreshes WHERE name = 'x'", rs -> rs.getLong(1))).contains(when.toEpochMilli());
+            assertThat(s.first("SELECT finished_at FROM refreshes WHERE name = 'x'", rs -> rs.getString(1))).contains("2026-11-19T12:00:00Z");
+            assertThat(s.refreshedAt("x")).contains(when);
             assertThat(s.first("SELECT ticked FROM live_state", rs -> Store.longOrNull(rs, "ticked"))).isEmpty();
             assertThat(s.first("SELECT ticked FROM live_state", rs -> Store.doubleOrNull(rs, "ticked"))).isEmpty();
+        }
+        assertThat(Store.instant("1795823756484")).isEqualTo(Instant.ofEpochMilli(1795823756484L));   // (before schema 7)
+    }
+
+    @Test
+    void schema7KeepsRefreshTimesAndFavouritesAsTeams() {
+        Path db = tmp.resolve("data/test.db");
+        java.util.List<Store.Migration> upTo6 = Store.MIGRATIONS.subList(0, 5);
+        try (Store s = new Store(db, upTo6)) {
+            s.update("INSERT INTO refreshes (name, finished_at) VALUES ('x', 1795823756484)");
+            s.update("INSERT INTO teams (id, name, short_name) VALUES (7, 'Tottenham Hotspur', 'Tottenham')");
+            s.update("INSERT INTO favourites (position, name, short_name) VALUES (0, 'Tottenham', 'Tottenham'), (1, 'Wales', 'Wales')");
+            s.update("INSERT INTO standings (competition, team_id, team_name, position) VALUES ('PL', 8, 'Ipswich Town', 1)");
+        }
+        try (Store s = new Store(db)) {
+            assertThat(s.refreshedAt("x")).contains(Instant.ofEpochMilli(1795823756484L));
+            assertThat(s.query("SELECT COALESCE(team_id, name) FROM favourites ORDER BY position", rs -> rs.getString(1)))
+                    .containsExactly("7", "Wales");
+            assertThat(s.first("SELECT name FROM teams WHERE id = 8", rs -> rs.getString(1))).contains("Ipswich Town");
+            assertThat(s.query("SELECT name FROM pragma_table_info('standings')", rs -> rs.getString(1))).doesNotContain("team_name");
         }
     }
 

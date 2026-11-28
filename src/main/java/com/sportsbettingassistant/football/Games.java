@@ -199,7 +199,7 @@ public class Games {
      */
     public int linkOddsEvents() {
         int n = 0;
-        for (String[] e : store.query("SELECT id, sport, kickoff, home_team, away_team FROM odds_events e "
+        for (String[] e : store.query("SELECT id, sport, kickoff_at, home_team, away_team FROM odds_events e "
                 + "WHERE NOT EXISTS (SELECT 1 FROM game_sources s WHERE s.source = 'odds' AND s.source_id = e.id)",
                 rs -> new String[] {rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4), rs.getString(5)})) {
             String code = Competitions.CODES.get(e[1].startsWith("soccer_") ? e[1].substring("soccer_".length()) : e[1]);

@@ -88,7 +88,7 @@ class GamesTest {
 
     @Test
     void savedOddsEventsAreLinkedOnce() {
-        store.update("INSERT INTO odds_events (id, sport, kickoff, home_team, away_team) VALUES "
+        store.update("INSERT INTO odds_events (id, sport, kickoff_at, home_team, away_team) VALUES "
                 + "('e1', 'soccer_epl', '2026-11-27T20:00:00Z', 'Nottingham Forest', 'Chelsea'), "
                 + "('e2', 'soccer_epl', '2026-11-28T15:00:00Z', 'Arsenal', 'Chelsea'), "
                 + "('e3', 'soccer_bundesliga', '2026-11-28T15:00:00Z', 'Bayern', 'Chelsea')");   // not one of ours

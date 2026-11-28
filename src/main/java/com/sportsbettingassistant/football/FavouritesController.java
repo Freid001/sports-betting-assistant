@@ -59,17 +59,22 @@ public class FavouritesController {
     public ResponseEntity<String> save(@RequestBody String body) {
         List<Map<String, Object>> teams = new ArrayList<>();
         for (Map<String, Object> t : Json.maps(Json.parse(body).get("teams"))) {
-            if (Json.text(t.get("name")) != null) {
-                teams.add(team(Json.text(t.get("name")), Json.text(t.get("shortName")), Json.text(t.get("tla")),
-                        Json.text(t.get("crest")), Json.text(t.get("type"))));
+            long id = Json.number(t.get("id"));
+            boolean known = id >= 0 && store.first("SELECT 1 FROM teams WHERE id = ?", rs -> 1, id).isPresent();
+            if (known || Json.text(t.get("name")) != null) {
+                Map<String, Object> f = new LinkedHashMap<>();
+                f.put("teamId", known ? id : null);                       // a saved team: by its id
+                f.put("name", known ? null : Json.text(t.get("name")));   // a nation with no saved team: by name
+                f.put("type", Json.text(t.get("type")));
+                teams.add(f);
             }
         }
         store.transaction(() -> {
             store.update("DELETE FROM favourites");
             int position = 0;
             for (Map<String, Object> t : teams) {
-                store.update("INSERT OR REPLACE INTO favourites (position, name, short_name, tla, crest, type) VALUES (?, ?, ?, ?, ?, ?)",
-                        position++, t.get("name"), t.get("shortName"), t.get("tla"), t.get("crest"), t.get("type"));
+                store.update("INSERT OR IGNORE INTO favourites (position, team_id, name, type) VALUES (?, ?, ?, ?)",
+                        position++, t.get("teamId"), t.get("name"), t.get("type"));
             }
         });
         return get();
@@ -91,7 +96,7 @@ public class FavouritesController {
         nations.addAll(teamsIn("WC", "international", seen));
         for (String n : NATIONS) {
             if (!seen.containsKey(key(n))) {
-                Map<String, Object> t = team(n, n, null, null, "international");
+                Map<String, Object> t = team(null, n, n, null, null, "international");
                 seen.put(key(n), t);
                 nations.add(t);
             }
@@ -101,9 +106,39 @@ public class FavouritesController {
         return Json.ok(Map.of("groups", groups));
     }
 
+    /**
+     * Favourites kept by name (saved before favourites had team ids, or a nation with no saved team then) that are
+     * clearly one saved team now: kept by its id from then on.
+     */
+    private void matchNames() {
+        for (Object[] f : store.query("SELECT position, name FROM favourites WHERE team_id IS NULL",
+                rs -> new Object[] {rs.getInt(1), rs.getString(2)})) {
+            Long best = null;
+            int bestScore = 1, alike = 0;
+            for (Object[] t : store.query("SELECT id, name, short_name FROM teams", rs -> new Object[] {rs.getLong(1), rs.getString(2), rs.getString(3)})) {
+                int score = Math.max(com.sportsbettingassistant.football.live.TeamNames.similar(f[1], t[1]),
+                        com.sportsbettingassistant.football.live.TeamNames.similar(f[1], t[2]));
+                if (score > bestScore) {
+                    best = (Long) t[0];
+                    bestScore = score;
+                    alike = 1;
+                } else if (score == bestScore && best != null) {
+                    alike++;
+                }
+            }
+            if (best != null && alike == 1
+                    && store.first("SELECT 1 FROM favourites WHERE team_id = ?", rs -> 1, best).isEmpty()) {
+                store.update("UPDATE favourites SET team_id = ?, name = NULL WHERE position = ?", best, f[0]);
+            }
+        }
+    }
+
     private List<Map<String, Object>> favourites() {
-        return store.query("SELECT * FROM favourites ORDER BY position", rs -> team(rs.getString("name"),
-                rs.getString("short_name"), rs.getString("tla"), rs.getString("crest"), rs.getString("type")));
+        matchNames();
+        return store.query("SELECT f.team_id, f.type, COALESCE(t.name, f.name) AS name, COALESCE(t.short_name, f.name) AS short_name, "
+                + "t.tla, t.crest FROM favourites f LEFT JOIN teams t ON t.id = f.team_id ORDER BY f.position",
+                rs -> team(Store.longOrNull(rs, "team_id"), rs.getString("name"), rs.getString("short_name"), rs.getString("tla"),
+                        rs.getString("crest"), rs.getString("type")));
     }
 
     /** Teams that played in a competition and aren't already listed under another group. */
@@ -114,7 +149,7 @@ public class FavouritesController {
             if (name == null || seen.containsKey(key(name))) {
                 continue;
             }
-            Map<String, Object> team = team(name, Json.text(t.get("shortName")), Json.text(t.get("tla")),
+            Map<String, Object> team = team((Long) t.get("id"), name, Json.text(t.get("shortName")), Json.text(t.get("tla")),
                     Json.text(t.get("crest")), type);
             seen.put(key(name), team);
             out.add(team);
@@ -122,8 +157,9 @@ public class FavouritesController {
         return out;
     }
 
-    private static Map<String, Object> team(String name, String shortName, String tla, String crest, String type) {
+    private static Map<String, Object> team(Long id, String name, String shortName, String tla, String crest, String type) {
         Map<String, Object> t = new LinkedHashMap<>();
+        t.put("id", id);   // our team id (null: a nation with no saved team)
         t.put("name", name);
         t.put("shortName", shortName);
         t.put("tla", tla);

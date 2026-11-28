@@ -94,8 +94,12 @@ class FavouritesControllerTest {
 
     @Test
     void favouritesAreSavedAndSurviveARestart() {
-        controller().save("{\"teams\":[{\"name\":\"Tottenham Hotspur FC\",\"shortName\":\"Tottenham\",\"tla\":\"TOT\"},"
+        long spurs = Math.abs("Tottenham Hotspur FC".hashCode());
+        controller().save("{\"teams\":[{\"id\":" + spurs + ",\"name\":\"Tottenham Hotspur FC\",\"shortName\":\"Tottenham\",\"tla\":\"TOT\"},"
                 + "{\"name\":\"Wales\",\"shortName\":\"Wales\",\"crest\":null},{\"nameless\":true}]}");
+        // a saved team by its id (its name and crest come from teams), a nation with no saved team by its name
+        assertThat(store.query("SELECT COALESCE(team_id, name) FROM favourites ORDER BY position", rs -> rs.getString(1)))
+                .containsExactly(String.valueOf(spurs), "Wales");
 
         store.close();                                   // restart: reopen the same database file
         store = TempStore.in(tmp);
@@ -104,6 +108,7 @@ class FavouritesControllerTest {
         @SuppressWarnings("unchecked")
         List<Map<String, Object>> teams = (List<Map<String, Object>>) new BasicJsonParser().parseMap(after).get("teams");
         assertThat(teams).extracting(t -> t.get("name")).containsExactly("Tottenham Hotspur FC", "Wales");
+        assertThat(teams.get(0)).containsEntry("crest", "https://crests.example/TOT.png");
     }
 
     @Test

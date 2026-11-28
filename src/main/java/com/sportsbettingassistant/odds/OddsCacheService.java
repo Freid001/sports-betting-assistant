@@ -171,9 +171,9 @@ public class OddsCacheService {
                 if (id == null) {
                     continue;
                 }
-                store.update("INSERT INTO odds_events (id, sport, sport_title, kickoff, home_team, away_team) VALUES (?, ?, ?, ?, ?, ?) "
+                store.update("INSERT INTO odds_events (id, sport, sport_title, kickoff_at, home_team, away_team) VALUES (?, ?, ?, ?, ?, ?) "
                         + "ON CONFLICT(id) DO UPDATE SET sport = excluded.sport, sport_title = excluded.sport_title, "
-                        + "kickoff = excluded.kickoff, home_team = excluded.home_team, away_team = excluded.away_team",
+                        + "kickoff_at = excluded.kickoff_at, home_team = excluded.home_team, away_team = excluded.away_team",
                         id, sport, Json.text(e.get("sport_title")), Json.text(e.get("commence_time")),
                         Json.text(e.get("home_team")), Json.text(e.get("away_team")));
                 savePrices(id, Json.maps(e.get("bookmakers")), replaced, replacedBooks);
@@ -208,11 +208,15 @@ public class OddsCacheService {
         int position = store.first("SELECT COALESCE(MAX(position) + 1, 0) FROM odds_prices WHERE event_id = ?",
                 rs -> rs.getInt(1), eventId).orElse(0);
         for (Map<String, Object> b : bookmakers) {
+            if (Json.text(b.get("key")) != null) {   // its name, once
+                store.update("INSERT INTO bookmakers (key, title) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET "
+                        + "title = COALESCE(excluded.title, title)", Json.text(b.get("key")), Json.text(b.get("title")));
+            }
             for (Map<String, Object> m : Json.maps(b.get("markets"))) {
                 for (Map<String, Object> o : Json.maps(m.get("outcomes"))) {
-                    store.update("INSERT INTO odds_prices (event_id, position, bookmaker, bookmaker_title, market, "
-                            + "outcome, description, point, price, last_update) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            eventId, position++, Json.text(b.get("key")), Json.text(b.get("title")), Json.text(m.get("key")),
+                    store.update("INSERT INTO odds_prices (event_id, position, bookmaker, market, "
+                            + "outcome, description, line, price, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            eventId, position++, Json.text(b.get("key")), Json.text(m.get("key")),
                             Json.text(o.get("name")), Json.text(o.get("description")), decimal(o.get("point")),
                             decimal(o.get("price")), Json.text(m.get("last_update")));
                 }
@@ -308,7 +312,7 @@ public class OddsCacheService {
             throw new IllegalArgumentException("days must be between 1 and 60");
         }
         Instant now = Instant.now().truncatedTo(ChronoUnit.SECONDS);
-        List<String> ids = store.query("SELECT id FROM odds_events WHERE sport = ? AND kickoff >= ? AND kickoff <= ? ORDER BY kickoff",
+        List<String> ids = store.query("SELECT id FROM odds_events WHERE sport = ? AND kickoff_at >= ? AND kickoff_at <= ? ORDER BY kickoff_at",
                 rs -> rs.getString(1), sport, now.toString(), now.plus(days, ChronoUnit.DAYS).toString());
         if (onlyIds != null) {
             ids = ids.stream().filter(onlyIds::contains).toList();
@@ -646,7 +650,7 @@ public class OddsCacheService {
         Map<String, Map<String, Object>> events = new LinkedHashMap<>();
         for (Map<String, Object> e : store.query("SELECT e.*, g.id AS game_id, g.home_team_id, g.away_team_id FROM odds_events e "
                 + "LEFT JOIN game_sources s ON s.source = 'odds' AND s.source_id = e.id LEFT JOIN games g ON g.id = s.game_id "
-                + "WHERE e.sport = ? ORDER BY e.kickoff, e.id", rs -> {
+                + "WHERE e.sport = ? ORDER BY e.kickoff_at, e.id", rs -> {
             Map<String, Object> ev = new LinkedHashMap<>();
             ev.put("id", rs.getString("id"));
             // our game and its teams (GOAL API's, as the stats tables have them): null if the names weren't matched
@@ -655,7 +659,7 @@ public class OddsCacheService {
             ev.put("away_team_id", Store.longOrNull(rs, "away_team_id"));
             ev.put("sport_key", sport);
             ev.put("sport_title", rs.getString("sport_title"));
-            ev.put("commence_time", rs.getString("kickoff"));
+            ev.put("commence_time", rs.getString("kickoff_at"));
             ev.put("home_team", rs.getString("home_team"));
             ev.put("away_team", rs.getString("away_team"));
             ev.put("extras_fetched_at", new LinkedHashMap<String, String>());   // bookmaker -> when its extra markets were fetched
@@ -674,7 +678,8 @@ public class OddsCacheService {
                     }
                     return null;
                 }, sport);
-        store.query("SELECT p.* FROM odds_prices p JOIN odds_events e ON e.id = p.event_id WHERE e.sport = ? "
+        store.query("SELECT p.*, b.title AS bookmaker_title FROM odds_prices p JOIN odds_events e ON e.id = p.event_id "
+                + "LEFT JOIN bookmakers b ON b.key = p.bookmaker WHERE e.sport = ? "
                 + "ORDER BY p.event_id, CASE WHEN p.market IN ('h2h', 'totals', 'spreads') THEN 0 ELSE 1 END, p.position", rs -> {
                     Map<String, Object> ev = events.get(rs.getString("event_id"));
                     if (ev == null) {
@@ -690,7 +695,7 @@ public class OddsCacheService {
                     Map<String, Object> market = find(list(bookmaker, "markets"), rs.getString("market"), () -> {
                         Map<String, Object> m = new LinkedHashMap<>();
                         m.put("key", rs.getString("market"));
-                        m.put("last_update", rs.getString("last_update"));
+                        m.put("last_update", rs.getString("updated_at"));
                         m.put("outcomes", new ArrayList<Map<String, Object>>());
                         return m;
                     });
@@ -701,7 +706,7 @@ public class OddsCacheService {
                         o.put("description", description);
                     }
                     o.put("price", Store.doubleOrNull(rs, "price"));
-                    Double point = Store.doubleOrNull(rs, "point");
+                    Double point = Store.doubleOrNull(rs, "line");
                     if (point != null) {
                         o.put("point", point == Math.rint(point) ? (Object) point.longValue() : point);
                     }

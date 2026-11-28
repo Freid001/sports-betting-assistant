@@ -46,7 +46,7 @@ class LiveServiceTest {
 
     /** A Premier League game in the saved odds (The Odds API's names), linked to its game as Refresh Odds does. */
     private void odds(String eventId, Instant kickoff, String home, String away) {
-        store.update("INSERT INTO odds_events (id, sport, kickoff, home_team, away_team) VALUES (?, 'soccer_epl', ?, ?, ?)",
+        store.update("INSERT INTO odds_events (id, sport, kickoff_at, home_team, away_team) VALUES (?, 'soccer_epl', ?, ?, ?)",
                 eventId, kickoff.toString(), home, away);
         new com.sportsbettingassistant.football.Games(store).linkOddsEvents();
     }

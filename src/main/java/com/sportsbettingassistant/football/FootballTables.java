@@ -296,9 +296,12 @@ public class FootballTables {
         store.transaction(() -> {
             store.update("DELETE FROM standings WHERE competition = ?", code);
             for (Map<String, Object> r : rows) {
-                store.update("INSERT OR REPLACE INTO standings (competition, team_id, team_name, position, played, won, draw, "
-                        + "lost, goals_for, goals_against, points, grp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        code, r.get("teamId"), r.get("teamName"), r.get("position"), r.get("played"), r.get("won"),
+                // the team is in teams (its name there, not copied here)
+                store.update("INSERT OR IGNORE INTO teams (id, name) VALUES (?, ?)", r.get("teamId"),
+                        r.get("teamName") == null ? String.valueOf(r.get("teamId")) : r.get("teamName"));
+                store.update("INSERT OR REPLACE INTO standings (competition, team_id, position, played, won, draw, "
+                        + "lost, goals_for, goals_against, points, grp) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        code, r.get("teamId"), r.get("position"), r.get("played"), r.get("won"),
                         r.get("draw"), r.get("lost"), r.get("goalsFor"), r.get("goalsAgainst"), r.get("points"), r.get("group"));
             }
             store.markRefreshed("standings/" + code, Instant.now());
@@ -421,8 +424,8 @@ public class FootballTables {
                     Map<String, Object> team = new LinkedHashMap<>();
                     team.put("id", rs.getLong("team_id"));
                     String name = rs.getString("name");
-                    team.put("name", name != null ? name : rs.getString("team_name"));
-                    team.put("shortName", rs.getString("short_name") != null ? rs.getString("short_name") : rs.getString("team_name"));
+                    team.put("name", name);
+                    team.put("shortName", rs.getString("short_name") != null ? rs.getString("short_name") : name);
                     row.put("position", rs.getInt("position"));
                     row.put("team", team);
                     row.put("playedGames", rs.getInt("played"));
@@ -486,49 +489,79 @@ public class FootballTables {
 
     // ---------------------------------------------------------------- head to head
 
-    /** Saves head to head for a fixture ({"aggregates":{...},"matches":[...]}): the totals and the last few meetings. */
-    public void saveHeadToHead(long fixtureId, String apiJson) {
+    /**
+     * Saves head to head for a game ({"aggregates":{...},"matches":[...]}): the totals and the last few meetings,
+     * each meeting's teams as this game's two teams (GOAL API names them its own way).
+     */
+    public void saveHeadToHead(long gameId, String apiJson) {
         Map<String, Object> body = Json.parse(apiJson);
         Map<String, Object> agg = Json.map(body.get("aggregates"));
+        long[] teams = matchTeams(gameId).orElse(null);
         store.transaction(() -> {
-            store.update("DELETE FROM head_to_head_matches WHERE match_id = ?", fixtureId);
-            store.update("INSERT OR REPLACE INTO head_to_head (match_id, number_of_matches, total_goals, fetched_at) "
-                    + "VALUES (?, ?, ?, ?)", fixtureId, whole(agg.get("numberOfMatches")), whole(agg.get("totalGoals")), Instant.now());
+            store.update("DELETE FROM head_to_head_games WHERE game_id = ?", gameId);
+            store.update("INSERT OR REPLACE INTO head_to_head (game_id, number_of_matches, total_goals, fetched_at) "
+                    + "VALUES (?, ?, ?, ?)", gameId, whole(agg.get("numberOfMatches")), whole(agg.get("totalGoals")), Instant.now());
             int position = 0;
             for (Map<String, Object> m : Json.maps(body.get("matches"))) {
+                Long home = teams == null ? null : which(teams, shortName(Json.map(m.get("homeTeam"))));
+                Long away = home == null ? null : home == teams[0] ? teams[1] : teams[0];
+                if (home == null) {
+                    continue;   // neither of the two teams by that name
+                }
                 Map<String, Object> ft = Json.map(Json.map(m.get("score")).get("fullTime"));
-                store.update("INSERT INTO head_to_head_matches (match_id, position, utc_date, status, competition, home, away, "
-                        + "home_goals, away_goals) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", fixtureId, position++,
-                        Json.text(m.get("utcDate")), Json.text(m.get("status")), Json.text(Json.map(m.get("competition")).get("name")),
-                        shortName(Json.map(m.get("homeTeam"))), shortName(Json.map(m.get("awayTeam"))),
+                store.update("INSERT INTO head_to_head_games (game_id, position, played_at, competition_name, home_team_id, "
+                        + "away_team_id, home_goals, away_goals) VALUES (?, ?, ?, ?, ?, ?, ?, ?)", gameId, position++,
+                        Json.text(m.get("utcDate")), Json.text(Json.map(m.get("competition")).get("name")), home, away,
                         whole(ft.get("home")), whole(ft.get("away")));
             }
         });
     }
 
-    /** When head to head was last fetched for a fixture, if it has been. */
-    public Optional<Instant> headToHeadSavedAt(long fixtureId) {
-        return store.first("SELECT fetched_at FROM head_to_head WHERE match_id = ?", rs -> Instant.ofEpochMilli(rs.getLong(1)), fixtureId);
+    /** Which of a game's two teams a name is (the more alike), or null if it's like neither. */
+    private Long which(long[] teams, String name) {
+        int best = 0;
+        Long out = null;
+        for (long t : teams) {
+            int score = store.first("SELECT name, short_name, tla FROM teams WHERE id = ?", rs -> Math.max(
+                    Math.max(com.sportsbettingassistant.football.live.TeamNames.similar(name, rs.getString(1)),
+                            com.sportsbettingassistant.football.live.TeamNames.similar(name, rs.getString(2))),
+                    name != null && name.equalsIgnoreCase(rs.getString(3)) ? 3 : 0), t).orElse(0);
+            if (score > best) {
+                best = score;
+                out = t;
+            }
+        }
+        return out;
+    }
+
+    /** When head to head was last fetched for a game, if it has been. */
+    public Optional<Instant> headToHeadSavedAt(long gameId) {
+        return store.first("SELECT fetched_at FROM head_to_head WHERE game_id = ?", rs -> Store.instant(rs.getString(1)), gameId);
     }
 
     /** {"aggregates":{numberOfMatches, totalGoals}, "matches":[...]} as the match page reads it, if saved. */
-    public Optional<String> headToHeadJson(long fixtureId) {
-        return store.first("SELECT * FROM head_to_head WHERE match_id = ?", rs -> {
+    public Optional<String> headToHeadJson(long gameId) {
+        return store.first("SELECT * FROM head_to_head WHERE game_id = ?", rs -> {
             Map<String, Object> agg = new LinkedHashMap<>();
             agg.put("numberOfMatches", Store.longOrNull(rs, "number_of_matches"));
             agg.put("totalGoals", Store.longOrNull(rs, "total_goals"));
             return agg;
-        }, fixtureId).map(agg -> {
-            List<Map<String, Object>> meetings = store.query("SELECT * FROM head_to_head_matches WHERE match_id = ? ORDER BY position", rs -> {
+        }, gameId).map(agg -> {
+            List<Map<String, Object>> meetings = store.query("SELECT m.*, COALESCE(h.short_name, h.name) AS home, "
+                    + "COALESCE(a.short_name, a.name) AS away FROM head_to_head_games m LEFT JOIN teams h ON h.id = m.home_team_id "
+                    + "LEFT JOIN teams a ON a.id = m.away_team_id WHERE m.game_id = ? ORDER BY m.position", rs -> {
                 Map<String, Object> m = new LinkedHashMap<>();
-                m.put("utcDate", rs.getString("utc_date"));
-                m.put("status", rs.getString("status"));
-                m.put("competition", nameOnly(rs.getString("competition")));
-                m.put("homeTeam", nameOnly(rs.getString("home")));
-                m.put("awayTeam", nameOnly(rs.getString("away")));
+                m.put("utcDate", rs.getString("played_at"));
+                m.put("status", "FINISHED");
+                m.put("competition", nameOnly(rs.getString("competition_name")));
+                Map<String, Object> home = nameOnly(rs.getString("home")), away = nameOnly(rs.getString("away"));
+                home.put("id", Store.longOrNull(rs, "home_team_id"));
+                away.put("id", Store.longOrNull(rs, "away_team_id"));
+                m.put("homeTeam", home);
+                m.put("awayTeam", away);
                 m.put("score", Map.of("fullTime", goals(Store.longOrNull(rs, "home_goals"), Store.longOrNull(rs, "away_goals"))));
                 return m;
-            }, fixtureId);
+            }, gameId);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("aggregates", agg);
             out.put("matches", meetings);

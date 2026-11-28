@@ -411,6 +411,52 @@ public class Store implements AutoCloseable {
                         json_each(p.body, '$.recommended') b;
                 DROP TABLE predictions;
                 ALTER TABLE predictions_new RENAME TO predictions;
+                """,
+            // 7: no copied names, one time format. Standings, favourites and head to head point at teams; bookmakers'
+            // names are kept once; times are ISO-8601 UTC text ("2026-11-28T16:38:00Z") in *_at columns everywhere.
+            // Head to head is a cache: emptied here, fetched again when a match page shows it. A favourite whose name
+            // isn't exactly a team's is matched later (FavouritesController), or stays a name (a nation).
+            () -> """
+                CREATE TABLE refreshes_new (name TEXT PRIMARY KEY, finished_at TEXT NOT NULL);
+                INSERT INTO refreshes_new SELECT name, strftime('%Y-%m-%dT%H:%M:%fZ', finished_at / 1000.0, 'unixepoch')
+                    FROM refreshes;
+                DROP TABLE refreshes;
+                ALTER TABLE refreshes_new RENAME TO refreshes;
+                DROP TABLE head_to_head;
+                DROP TABLE head_to_head_matches;
+                CREATE TABLE head_to_head (game_id INTEGER PRIMARY KEY REFERENCES games (id), number_of_matches INTEGER,
+                    total_goals INTEGER, fetched_at TEXT NOT NULL);
+                CREATE TABLE head_to_head_games (game_id INTEGER NOT NULL REFERENCES games (id), position INTEGER NOT NULL,
+                    played_at TEXT, competition_name TEXT, home_team_id INTEGER REFERENCES teams (id),
+                    away_team_id INTEGER REFERENCES teams (id), home_goals INTEGER, away_goals INTEGER,
+                    PRIMARY KEY (game_id, position));
+                INSERT OR IGNORE INTO teams (id, name) SELECT team_id, team_name FROM standings WHERE team_name IS NOT NULL;
+                CREATE TABLE standings_new (competition TEXT NOT NULL, team_id INTEGER NOT NULL REFERENCES teams (id),
+                    position INTEGER, played INTEGER, won INTEGER, draw INTEGER, lost INTEGER, goals_for INTEGER,
+                    goals_against INTEGER, points INTEGER, grp TEXT, PRIMARY KEY (competition, team_id));
+                INSERT INTO standings_new SELECT competition, team_id, position, played, won, draw, lost, goals_for,
+                    goals_against, points, grp FROM standings;
+                DROP TABLE standings;
+                ALTER TABLE standings_new RENAME TO standings;
+                CREATE TABLE favourites_new (position INTEGER PRIMARY KEY, team_id INTEGER UNIQUE REFERENCES teams (id),
+                    name TEXT UNIQUE, type TEXT, CHECK (team_id IS NOT NULL OR name IS NOT NULL));
+                INSERT OR IGNORE INTO favourites_new (position, team_id, name, type)
+                    SELECT position, team_id, CASE WHEN team_id IS NULL THEN name END, type FROM (SELECT f.position, f.name,
+                        f.type, COALESCE((SELECT x.id FROM teams x WHERE x.name = f.name LIMIT 1),
+                            (SELECT x.id FROM teams x WHERE x.short_name = f.name LIMIT 1)) AS team_id FROM favourites f);
+                DROP TABLE favourites;
+                ALTER TABLE favourites_new RENAME TO favourites;
+                CREATE TABLE bookmakers (key TEXT PRIMARY KEY, title TEXT);
+                INSERT OR IGNORE INTO bookmakers (key, title)
+                    SELECT bookmaker, MAX(bookmaker_title) FROM odds_prices WHERE bookmaker IS NOT NULL GROUP BY bookmaker;
+                CREATE TABLE odds_prices_new (event_id TEXT NOT NULL, position INTEGER NOT NULL,
+                    bookmaker TEXT REFERENCES bookmakers (key), market TEXT, outcome TEXT, description TEXT, line REAL,
+                    price REAL, updated_at TEXT, PRIMARY KEY (event_id, position));
+                INSERT INTO odds_prices_new SELECT event_id, position, bookmaker, market, outcome, description, point, price,
+                    last_update FROM odds_prices;
+                DROP TABLE odds_prices;
+                ALTER TABLE odds_prices_new RENAME TO odds_prices;
+                ALTER TABLE odds_events RENAME COLUMN kickoff TO kickoff_at;
                 """);
 
     /** One schema change: its SQL (statements separated by ';'), and Java for anything SQL can't do. */
@@ -693,7 +739,7 @@ public class Store implements AutoCloseable {
         PreparedStatement ps = db.prepareStatement(sql);
         for (int i = 0; i < args.length; i++) {
             Object a = args[i];
-            ps.setObject(i + 1, a instanceof Boolean b ? (b ? 1 : 0) : a instanceof Instant t ? t.toEpochMilli() : a);
+            ps.setObject(i + 1, a instanceof Boolean b ? (b ? 1 : 0) : a instanceof Instant t ? t.toString() : a);   // times: ISO-8601 UTC
         }
         return ps;
     }
@@ -718,8 +764,16 @@ public class Store implements AutoCloseable {
                 + "ON CONFLICT(name) DO UPDATE SET finished_at = excluded.finished_at", name, when);
     }
 
+    /** A time column's value: ISO-8601 text (or epoch milliseconds, from a database before schema 7). */
+    public static Instant instant(String v) {
+        if (v == null || v.isBlank()) {
+            return null;
+        }
+        return v.chars().allMatch(Character::isDigit) ? Instant.ofEpochMilli(Long.parseLong(v)) : Instant.parse(v);
+    }
+
     public Optional<Instant> refreshedAt(String name) {
-        return first("SELECT finished_at FROM refreshes WHERE name = ?", rs -> Instant.ofEpochMilli(rs.getLong(1)), name);
+        return first("SELECT finished_at FROM refreshes WHERE name = ?", rs -> instant(rs.getString(1)), name);
     }
 
     /** Saves an API's calls-left numbers (limit, remaining, reset, checkedAt). */
