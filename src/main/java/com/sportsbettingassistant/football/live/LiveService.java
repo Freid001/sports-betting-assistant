@@ -72,6 +72,13 @@ public class LiveService {
     /** Games whose official goals and cards were already asked for this run (finished games: once). */
     private final Set<String> officialTried = new LinkedHashSet<>();
     private final Map<String, Instant> lastOfficial = new java.util.HashMap<>();   // when a game's official feeds were last read
+    /**
+     * The match minute a game was picked up at, if it was already being played (0: before kick-off). A bet window
+     * it had already passed isn't saved: its stats and odds would be from now, not from then.
+     */
+    private final Map<String, Integer> followedFrom = new java.util.HashMap<>();
+    /** How long after a bet window's minute it's still saved (a refresh can come a few minutes late). */
+    static final int WINDOW_GRACE = 5;
     private final Map<String, String[]> keepers = new java.util.HashMap<>();       // each game's goalkeepers [home, away]
     static final Duration OFFICIAL_EVERY = Duration.ofMinutes(5);
     /** Every player with a shot in the last refresh (side -> players), to see who scored or hit the target since. */
@@ -213,10 +220,14 @@ public class LiveService {
     public Map<String, Object> track(List<String> ids) {
         boolean refreshNow;
         synchronized (this) {
+            List<String> before = new ArrayList<>(tracked);
             tracked.clear();
             for (String id : ids) {
                 if (fixtures.containsKey(id) && tracked.size() < maxGames) {
                     tracked.add(id);
+                    if (!before.contains(id)) {
+                        pickedUp(id);
+                    }
                 }
             }
             refreshNow = !active(Instant.now()).isEmpty();
@@ -262,9 +273,33 @@ public class LiveService {
     }
 
     private void addTracked(String id) {
-        if (tracked.size() < maxGames) {
-            tracked.add(id);
+        if (tracked.size() < maxGames && tracked.add(id)) {
+            pickedUp(id);
         }
+    }
+
+    /** Notes the minute a game is picked up at (0 if it hasn't kicked off). */
+    private void pickedUp(String id) {
+        Map<String, Object> f = fixtures.get(id);
+        followedFrom.put(id, f == null || !Json.yes(f.get("live")) ? 0 : matchMinute(f));
+    }
+
+    /** The match minute: elapsed (45 at the break), 0 if unknown. */
+    static int matchMinute(Map<String, Object> f) {
+        if ("HT".equalsIgnoreCase(String.valueOf(f.get("minute")))) {
+            return 45;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(f.get("elapsed")).trim());
+        } catch (NumberFormatException e) {
+            return 0;
+        }
+    }
+
+    /** Whether a bet window ("30", "HT", "60", "80") was reached while the game was followed (with some grace). */
+    boolean followedBy(String id, String point) {
+        int window = "HT".equals(point) ? 45 : Integer.parseInt(point);
+        return followedFrom.getOrDefault(id, 0) <= window + WINDOW_GRACE;
     }
 
     /** The game (games.id) an odds event is, for a competition GOAL API has; else a message saying why not. */
@@ -631,7 +666,7 @@ public class LiveService {
         Map<String, Object> htStats = atTheBreak ? s : firstHalf.isEmpty() ? null : GoalData.statsFromRows(firstHalf);
         boolean fuller = atTheBreak && have.containsKey("HT") && htStats != null
                 && GoalData.rowCount(htStats) > GoalData.rowCount(have.get("HT"));
-        if (pastHalfTime && htStats != null && f.get("htHome") != null && (!have.containsKey("HT") || fuller)) {
+        if (pastHalfTime && htStats != null && f.get("htHome") != null && (!have.containsKey("HT") || fuller) && followedBy(id, "HT")) {
             boolean first = !have.containsKey("HT");
             putSnapshot(id, "HT", f.get("htHome"), f.get("htAway"), htStats);
             if (atTheBreak && first) {
@@ -643,7 +678,7 @@ public class LiveService {
             saveResult(id, f);
         }
         String point = MatchTimeline.pointFor(f);
-        if (point != null && !snapshots.getOrDefault(id, Map.of()).containsKey(point)) {
+        if (point != null && !snapshots.getOrDefault(id, Map.of()).containsKey(point) && followedBy(id, point)) {
             putSnapshot(id, point, f.get("homeScore"), f.get("awayScore"), s);
             announce(id, point, f);
         }

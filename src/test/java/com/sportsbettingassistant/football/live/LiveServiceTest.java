@@ -858,6 +858,45 @@ class LiveServiceTest {
 
     @Test
     @SuppressWarnings("unchecked")
+    void aGamePickedUpLateDoesntSaveTheBetWindowsItHadAlreadyPassed() throws InterruptedException {
+        FakeApi api = new FakeApi();
+        Map<String, Object> f = fixture("g1", Instant.now().minus(Duration.ofMinutes(100)), "LIVE", true);
+        f.put("matchMinute", "88");
+        f.put("matchElapsed", "88");
+        f.put("matchPeriod", "SECOND_HALF");
+        f.put("homeTeamHalftimeScore", "1");
+        f.put("awayTeamHalftimeScore", "0");
+        api.answers.put("/leagues/" + LEAGUE + "/fixtures", data(f));
+        api.answers.put("/fixtures/date/" + f.get("matchDate"), data(f));
+        api.answers.put("/fixtures/g1/statistics", statsWithHalves());   // has a first-half block: HT could be saved
+        LiveService live = service(api, 20);
+        live.loadFixtures(true);
+        live.track(List.of("g1"));                                     // picked up at 88'
+        waitFor(() -> api.callsTo("/statistics") == 1);
+        waitFor(() -> live.match("g1").get("stats") != null);
+
+        // its stats are the latest (LIVE), but HT and 80' weren't reached while it was followed: not saved
+        assertThat((List<Object>) live.match("g1").get("snapshots")).isEmpty();
+        assertThat(live.followedBy("g1", "80")).isFalse();
+        assertThat(live.followedBy("g1", "HT")).isFalse();
+    }
+
+    @Test
+    void aBetWindowIsStillSavedIfTheGameWasPickedUpJustAfterIt() {
+        FakeApi api = new FakeApi();
+        Map<String, Object> f = fixture("g1", Instant.now().minus(Duration.ofMinutes(40)), "LIVE", true);
+        f.put("matchElapsed", "33");                                    // a refresh can come a few minutes late
+        api.answers.put("/leagues/" + LEAGUE + "/fixtures", data(f));
+        LiveService live = service(api, 20);
+        live.loadFixtures(true);
+        live.track(List.of("g1"));
+        assertThat(live.followedBy("g1", "30")).isTrue();
+        assertThat(live.followedBy("g1", "60")).isTrue();
+        assertThat(live.followedBy("g1", "HT")).isTrue();
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
     void postMatchLoadsEveryFinishedGameWithOneListCallPerDayAndSkipsOnesAlreadyLoaded() {
         FakeApi api = new FakeApi();
         Instant ko = Instant.now().minus(Duration.ofDays(2));
