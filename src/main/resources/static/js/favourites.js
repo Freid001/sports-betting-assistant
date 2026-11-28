@@ -1,6 +1,6 @@
 /**
  * Favourite teams: the Favourites pop-up, and checking whether a team is a favourite.
- * Saved on the server in data/favourites.json, so they survive restarts.
+ * Saved on the server (by team id, or by name for a nation with no saved team), so they survive restarts.
  */
 window.Favourites = (function () {
   var F = window.Football;
@@ -10,8 +10,13 @@ window.Favourites = (function () {
     return F.getJson('/api/football/favourites').then(function (d) { return d.teams || []; });
   }
 
-  /** The favourite matching a team name from any source (Odds API, GOAL API...), or null. */
-  function find(favs, name) { return favs && favs.length ? F.findTeam(favs, name) : null; }
+  /**
+   * The favourite for a team, or null: by its id when the server matched it to a saved team (favourites carry the
+   * team's id), else by name (a nation with no saved team).
+   */
+  function find(favs, name, id) { return favs && favs.length ? F.findTeam(favs, name, id) : null; }
+  /** Is a favourite team playing in this match (an Odds API event: home_team(_id) / away_team(_id))? */
+  function playing(favs, m) { return !!(find(favs, m.home_team, m.home_team_id) || find(favs, m.away_team, m.away_team_id)); }
 
   function crestOrFlag(t, size) {
     return F.logo(t.crest ? [t] : [], t.name, size);
@@ -30,9 +35,10 @@ window.Favourites = (function () {
     var q = frame.q, modal = frame.modal;
 
     var chosen = [], groups = [];
-    function isChosen(t) { return chosen.some(function (c) { return c.name === t.name; }); }
+    function same(a, b) { return a.id != null || b.id != null ? a.id === b.id : a.name === b.name; }
+    function isChosen(t) { return chosen.some(function (c) { return same(c, t); }); }
     function toggle(t, on) {
-      chosen = chosen.filter(function (c) { return c.name !== t.name; });
+      chosen = chosen.filter(function (c) { return !same(c, t); });
       if (on) chosen.push(t);
       drawChips();
     }
@@ -99,5 +105,5 @@ window.Favourites = (function () {
     });
   }
 
-  return { load: load, find: find, openModal: openModal };
+  return { load: load, find: find, playing: playing, openModal: openModal };
 })();

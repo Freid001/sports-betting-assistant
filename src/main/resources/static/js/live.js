@@ -40,26 +40,10 @@ window.Live = (function () {
 
   function getState() { return F.getJson('/api/football/live'); }
 
-  // ---- matching a GOAL API game to an Odds API match: same kick-off (±30 min) and similar team names ----
-  function sim(a, b) {
-    a = F.norm(a); b = F.norm(b);
-    if (!a || !b) return 0;
-    if (a === b) return 3;
-    if (a.indexOf(b) >= 0 || b.indexOf(a) >= 0) return 2;
-    var ta = a.split(' '), tb = b.split(' ');
-    if (ta[0] === tb[0] && ta[0].length >= 4) return 1;
-    if (a.slice(0, 4) === b.slice(0, 4)) return 1;
-    return 0;
-  }
+  // ---- a GOAL API game for an Odds API match: the server links both to one game (eventId on each listed game) ----
   function findFor(state, ev) {
-    if (!state || !state.fixtures) return null;
-    var t = new Date(ev.commence_time).getTime(), best = null, bestScore = 1;
-    state.fixtures.forEach(function (fx) {
-      if (Math.abs(new Date(fx.kickoff).getTime() - t) > 30 * 60000) return;
-      var s = sim(fx.home, ev.home_team) + sim(fx.away, ev.away_team);
-      if (s > bestScore) { best = fx; bestScore = s; }
-    });
-    return best;
+    if (!state || !state.fixtures || !ev) return null;
+    return state.fixtures.find(function (fx) { return fx.eventId != null && fx.eventId === ev.id; }) || null;
   }
   function isTracked(state, fx) { return !!(fx && state && state.tracked.indexOf(fx.id) >= 0); }
   /** Monitoring is on while a ticked game hasn't finished. */
@@ -182,7 +166,7 @@ window.Live = (function () {
     btn.onclick = function () {
       btn.disabled = true;
       F.sendJson('/api/football/live/post-match', { games: games.map(function (g) {
-        return { tournament: g.tournament, kickoff: g.kickoff, home: g.home, away: g.away };
+        return { eventId: g.eventId, home: g.home, away: g.away };
       }) }).then(function (r) {
         var msg = 'Post-Match: stats loaded for ' + r.loaded + ' game(s) (' + r.calls + ' GOAL API calls).';
         if (r.missing && r.missing.length) msg += ' Not found or not finished: ' + r.missing.join(', ') + '.';
@@ -298,8 +282,8 @@ window.Live = (function () {
     if (!fx || !isLive(fx)) return null;
     if (minute(fx) === 'HT') return 'HT';
     var e = parseInt(fx.elapsed, 10);
-    if (isNaN(e) || e < 10) return null;
-    return e < 25 ? '10' : e < 45 ? '25' : e < 60 ? 'HT' : e < 80 ? '60' : '80';
+    if (isNaN(e) || e < 30) return null;   // the first window is 30'
+    return e < 45 ? '30' : e < 60 ? 'HT' : e < 80 ? '60' : '80';
   }
   /** Is the checklist leader winning, drawing or losing? (null without a leader or a score) */
   function setup(check, homeScore, awayScore) {
@@ -346,11 +330,8 @@ window.Live = (function () {
   // ---- Live Match Stats card (match page) ----
   /** A game picked with the play button that GOAL API doesn't list yet (it's looked up on match day). */
   function followingFor(state, ev) {
-    if (!state || !state.following) return null;
-    var t = new Date(ev.commence_time).getTime();
-    return state.following.find(function (w) {
-      return Math.abs(new Date(w.kickoff).getTime() - t) <= 30 * 60000 && sim(w.home, ev.home_team) + sim(w.away, ev.away_team) > 1;
-    }) || null;
+    if (!state || !state.following || !ev) return null;
+    return state.following.find(function (w) { return w.eventId === ev.id; }) || null;
   }
   function tournamentOf(ev) { return String(ev.sport_key || '').replace(/^soccer_/, ''); }
 
@@ -368,10 +349,8 @@ window.Live = (function () {
 
   /** Follow (on) or stop following this game live, then redraw the card. */
   function follow(box, footLeft, ev, on) {
-    var q = 'tournament=' + encodeURIComponent(tournamentOf(ev)) + '&kickoff=' + encodeURIComponent(ev.commence_time) +
-      '&home=' + encodeURIComponent(ev.home_team) + '&away=' + encodeURIComponent(ev.away_team) + '&on=' + on;
-    return F.sendJson('/api/football/live/follow?' + q).then(function (state) {
-      notify(on ? 'Following ' + ev.home_team + ' v ' + ev.away_team + ' live: its stats are saved at 10\', 25\', HT, 60\', 80\' and FT.'
+    return F.sendJson('/api/football/live/follow?eventId=' + encodeURIComponent(ev.id) + '&on=' + on).then(function (state) {
+      notify(on ? 'Following ' + ev.home_team + ' v ' + ev.away_team + ' live: its stats are saved at 30\', HT, 60\', 80\' and FT.'
                 : 'Stopped following ' + ev.home_team + ' v ' + ev.away_team + '.', 'success');
       return renderCard(box, footLeft, state, ev);
     }).catch(function (e) { notify('Couldn\'t ' + (on ? 'follow' : 'stop following') + ' the game: ' + e.message, 'danger'); });
@@ -381,7 +360,7 @@ window.Live = (function () {
     var btn = el('button', 'btn btn-sm btn-outline-theme', on ? '▶' : '■');
     btn.type = 'button';
     btn.setAttribute('data-follow', on ? 'on' : 'off');
-    btn.title = on ? 'Follow live: the stats are refreshed during the game and saved at 10\', 25\', HT, 60\', 80\' and FT'
+    btn.title = on ? 'Follow live: the stats are refreshed during the game and saved at 30\', HT, 60\', 80\' and FT'
                    : 'Stop following this game';
     btn.onclick = function () { btn.disabled = true; follow(box, footLeft, ev, on); };
     return btn;
@@ -401,17 +380,19 @@ window.Live = (function () {
   }
 
   /**
-   * Not followed: before kick-off, Pre-Match and a ▶ button to follow it live; a game already played offers to load
-   * its stats once (Post-Match, 2 GOAL API calls).
+   * Not followed: before kick-off or while it's being played, Pre-Match and a ▶ button to follow it live (a game in
+   * progress is picked up straight away); a game already played offers to load its stats once (Post-Match, 2 GOAL
+   * API calls).
    */
   function notFollowed(box, footLeft, ev, state) {
     var started = new Date(ev.commence_time).getTime() <= Date.now();
+    var played = new Date(ev.commence_time).getTime() < Date.now() - 2 * 3600000;
     cards(started);
     box.replaceChildren(el('div', 'text-muted', started ? 'No Live Stats' : 'Match Not Started'));
     hostsSay(started ? 'No Live Stats' : 'Match Not Started');
     footLeft.textContent = '';
     var tournament = tournamentOf(ev);
-    if (!started && tournament && timelineHost) {
+    if (!played && tournament && timelineHost) {
       var bar = el('div', 'd-flex justify-content-center flex-wrap gap-1 mb-2 live-timeline');
       var pre = el('button', 'btn btn-sm btn-outline-theme active', periodLabel('PRE'));
       pre.type = 'button';
@@ -421,14 +402,13 @@ window.Live = (function () {
       timelineHost.replaceChildren(bar);
       return Promise.resolve(null);
     }
-    var played = new Date(ev.commence_time).getTime() < Date.now() - 2 * 3600000;
     if (played && tournament) {
       var btn = el('button', 'btn btn-sm btn-outline-theme' + (timelineHost ? '' : ' d-block mx-auto mt-2'), 'Post-Match');
       btn.type = 'button';
       btn.title = 'Fetches this game\'s half-time and full-time stats once: 2 GOAL API calls';
       btn.onclick = function () {
         btn.disabled = true;
-        replay(ev, tournament).then(function (m) {
+        replay(ev).then(function (m) {
           drawCard(box, footLeft, m, m.fixture, ev);
           notify('Loaded the stats for ' + ev.home_team + ' v ' + ev.away_team + '.', 'success');
         }).catch(function (e) {
@@ -443,11 +423,8 @@ window.Live = (function () {
     return Promise.resolve(null);
   }
 
-  function replay(ev, tournament) {
-    var q = 'tournament=' + encodeURIComponent(tournament) + '&date=' + ukDate(ev.commence_time) +
-      '&kickoff=' + encodeURIComponent(ev.commence_time) + '&home=' + encodeURIComponent(ev.home_team) +
-      '&away=' + encodeURIComponent(ev.away_team);
-    return F.sendJson('/api/football/live/replay?' + q);
+  function replay(ev) {
+    return F.sendJson('/api/football/live/replay?eventId=' + encodeURIComponent(ev.id));
   }
 
   /**
@@ -465,8 +442,9 @@ window.Live = (function () {
     var view = el('div');
     var before = function (snap) { var i = snaps.indexOf(snap); return i > 0 ? snaps[i - 1] : null; };
     var e = parseInt(f.elapsed, 10);
-    var live = isLive(f) && s && s.rows && s.rows.length ? { period: windowFor(f), point: pointFor(f), live: true,
-      label: 'LIVE ' + minute(f), minute: isNaN(e) ? null : e, xg: s.xg, rows: s.rows, homeScore: f.homeScore, awayScore: f.awayScore } : null;
+    // LIVE as soon as it kicks off, even before GOAL API has any stats (the first few minutes)
+    var live = isLive(f) ? { period: windowFor(f), point: pointFor(f), live: true,
+      label: 'LIVE ' + minute(f), minute: isNaN(e) ? null : e, xg: s && s.xg, rows: (s && s.rows) || [], homeScore: f.homeScore, awayScore: f.awayScore } : null;
     var pick = function (snap) {
       drawView(view, snap, ev, snap.live || snap.period === 'FT' ? s : null, snap.live ? snaps[snaps.length - 1] || null : before(snap));
     };
@@ -482,7 +460,7 @@ window.Live = (function () {
   }
 
   /** Minute each timeline point is reached at (HT just after 45'). */
-  var POINT_MINUTE = { '10': 10, '25': 25, HT: 45.5, '60': 60, '80': 80, FT: Infinity };
+  var POINT_MINUTE = { '10': 10, '25': 25, '30': 30, HT: 45.5, '60': 60, '80': 80, FT: Infinity };
   /** Is this point still to come (it can still be saved)? Before kick-off they all are. */
   function ahead(p, fx) {
     if (!fx || finished(fx) || isOff(fx)) return false;
@@ -515,8 +493,8 @@ window.Live = (function () {
       buttons.push(btn);
       bar.appendChild(btn);
     }
-    // Only the points reached so far: each appears (10', 25', HT...) as the game gets there, with LIVE after them
-    ['PRE', '10', '25', 'HT', '60', '80', 'FT'].forEach(function (p) {
+    // Only the points reached so far: each appears (30', HT, 60'...) as the game gets there, with LIVE after them
+    ['PRE', '30', 'HT', '60', '80', 'FT'].forEach(function (p) {
       if (!by[p]) return;   // not reached yet, or missed (the API has no stats for past points in a game)
       var btn = el('button', 'btn btn-sm btn-outline-theme', periodLabel(p));
       btn.setAttribute('data-period', p);
@@ -544,6 +522,13 @@ window.Live = (function () {
       if (window.onLiveView) window.onLiveView(snap);
       return;
     }
+    if (snap.live && !(snap.rows && snap.rows.length)) {   // kicked off, but no stats from GOAL API yet
+      view.appendChild(el('div', 'text-muted', 'Kicked off · no stats from GOAL API yet (they usually appear a few minutes in).'));
+      hostsSay('No Live Stats yet');
+      cards(false);
+      if (window.onLiveView) window.onLiveView(snap);
+      return;
+    }
     cards(true);
     var mo = momentumBox(snap, prev, ev);
     if (mo) view.appendChild(mo);
@@ -558,7 +543,7 @@ window.Live = (function () {
     var upTo = eventsUpTo(gameEvents, snap);
     if (playersHost) {
       playersHost.replaceChildren(upTo.length ? timelineBox(upTo, ev) : el('div', 'text-muted', gameEvents.length
-        ? 'Nothing yet: goals, shots on target, cards and penalties show here as they happen.'
+        ? 'Nothing yet: goals, shots, cards, substitutions and penalties show here as they happen.'
         : 'No timeline for this game: it\'s built while a game is followed live, so start following before kick-off.'));
     } else if (upTo.length) {
       view.appendChild(timelineBox(upTo, ev));
@@ -660,21 +645,47 @@ window.Live = (function () {
   }
 
   // Each event's tag: text, colour (Bootstrap badge classes) and what it means (hover)
+  // Solid = changed the game (goal, card, sub, penalty); outline = a chance or set piece; faint = general play;
+  // the match's phases all dark grey
+  var OUTLINE = 'bg-transparent border ';
   var EVENT_TAGS = {
-    goal:    ['GOAL',   'text-bg-success', 'Goal'],
-    shot:    ['SOT',    'text-bg-light border', 'Shot on target'],
-    yellow:  ['YELLOW', 'text-bg-warning', 'Yellow card'],
-    red:     ['RED',    'text-bg-danger', 'Red card'],
-    penalty: ['PEN',    'text-bg-primary', 'Penalty'],
-    kickoff: ['KO',     'text-bg-secondary', 'Kick-off'],
-    ht:      ['HT',     'text-bg-secondary', 'Half time'],
-    second:  ['2H',     'text-bg-secondary', 'Second half'],
-    ft:      ['FT',     'text-bg-dark', 'Full time']
+    goal:     ['GOAL',    'text-bg-success', 'Goal'],
+    penalty:  ['PEN',     'tl-pen', 'Penalty'],
+    yellow:   ['YELLOW',  'text-bg-warning', 'Yellow card'],
+    red:      ['RED',     'text-bg-danger', 'Red card'],
+    sub:      ['SUB',     'text-bg-info', 'Substitution: the player on, for the player off'],
+    shot:     ['SOT',     OUTLINE + 'border-success text-success', 'Shot on target'],
+    miss:     ['SHOT',    OUTLINE + 'text-secondary', 'Shot off target or blocked'],
+    save:     ['SAVE',    OUTLINE + 'border-primary text-primary', 'Save by this team\'s keeper'],
+    danger:   ['DANGER',  OUTLINE + 'border-danger text-danger', 'Dangerous attack (GOAL API\'s commentary: some, not all)'],
+    corner:   ['CORNER',  OUTLINE + 'text-secondary', 'Corner (GOAL API has no player for it)'],
+    freekick: ['FK',      OUTLINE + 'text-secondary', 'Free kick won (GOAL API\'s commentary: some, not all)'],
+    offside:  ['OFFSIDE', OUTLINE + 'text-secondary', 'Offside (GOAL API has no player for it)'],
+    goalkick: ['GK',      OUTLINE + 'text-secondary', 'Goal kick (GOAL API\'s commentary: some, not all)'],
+    attack:   ['ATTACK',  'bg-transparent text-body-tertiary fw-normal', 'Attack (GOAL API\'s commentary: some, not all)'],
+    possession: ['BALL',  'bg-transparent text-body-tertiary fw-normal', 'In possession (GOAL API\'s commentary: some, not all)'],
+    kickoff:  ['KO',      'text-bg-secondary', 'Kick-off'],
+    ht:       ['HT',      'text-bg-secondary', 'Half time'],
+    second:   ['2H',      'text-bg-secondary', 'Second half'],
+    ft:       ['FT',      'text-bg-secondary', 'Full time']
   };
   /**
-   * Timeline: newest at the top, one row per event: Time | Event (GOAL, SOT, YELLOW...) | Team | Player.
+   * Timeline: newest at the top, one row per event: Time | Event (GOAL, SOT, SHOT, YELLOW...) | Team | Player.
    * Goals show the new score; HT and FT the score then. Cards and penalties have no player (GOAL API only counts them).
    */
+  /** The small stuff (grey): hidden when the Timeline is set to Key events. */
+  var MINOR = ['shot', 'miss', 'save', 'corner', 'offside', 'freekick', 'danger', 'attack', 'possession', 'goalkick'];
+  var timelineKeyOnly = false;
+  try { timelineKeyOnly = localStorage.getItem('timelineKeyOnly') === '1'; } catch (e) { /* All */ }
+  /**
+   * Where an event goes in the Timeline: its minute, except half time after every first-half event (stoppage time
+   * included) and full time after everything (a 90+3' substitution came before FT, not after it).
+   */
+  function orderOf(e) {
+    if (e.kind === 'ft') return 1e9;
+    if (e.kind === 'ht') return 199998;
+    return (e.order || 0) + (e.sec != null ? e.sec / 100 : 0.6);   // within a minute, by the second (no seconds: last)
+  }
   function timelineBox(events, ev) {
     var names = namesOf(ev);
     var table = el('table', 'table table-sm align-middle mb-0 event-timeline');
@@ -684,26 +695,57 @@ window.Live = (function () {
     var tb = el('tbody');
     // newest first; events in the same minute in reverse too (the later one in the list happened after: yellow, then red)
     events.map(function (e, i) { return { e: e, i: i }; })
-      .sort(function (a, b) { return (b.e.order || 0) - (a.e.order || 0) || b.i - a.i; })
+      .sort(function (a, b) { return orderOf(b.e) - orderOf(a.e) || b.i - a.i; })
       .map(function (x) { return x.e; }).forEach(function (e) {
       var tag = EVENT_TAGS[e.kind] || [String(e.kind).toUpperCase(), 'text-bg-secondary', ''];
-      var tr = el('tr', e.kind === 'shot' ? 'text-muted' : e.kind === 'goal' ? 'fw-semibold' : '');
-      tr.appendChild(el('td', 'text-nowrap', e.minute || ''));
+      var minor = MINOR.indexOf(e.kind) >= 0;   // the small stuff in grey
+      var tr = el('tr', minor ? 'text-muted tl-minor' : e.kind === 'goal' ? 'fw-semibold' : '');
+      var time = el('td', 'text-nowrap', e.clock || e.minute || '');   // the exact time where GOAL API gives it (53:09)
+      if (e.clock) time.title = 'Match minute ' + e.minute;
+      tr.appendChild(time);
       var badge = el('span', 'badge ' + tag[1], tag[0]);
       badge.title = tag[2];
       var what = el('td', 'text-nowrap'); what.appendChild(badge);
       if (e.score && ['goal', 'ht', 'ft'].indexOf(e.kind) >= 0) what.appendChild(el('span', 'ms-1', e.score));
       tr.appendChild(what);
-      tr.appendChild(el('td', 'text-nowrap', e.side === 'home' ? names[0] : e.side === 'away' ? names[1] : ''));
+      var team = e.side === 'home' ? names[0] : e.side === 'away' ? names[1] : '';
+      if (['ht', 'second', 'ft'].indexOf(e.kind) >= 0) {   // who's winning then, or Draw
+        var sc = /(\d+)\s*[–-]\s*(\d+)/.exec(e.score || '');
+        if (sc) team = +sc[1] > +sc[2] ? names[0] : +sc[2] > +sc[1] ? names[1] : 'Draw';
+      }
+      tr.appendChild(el('td', 'text-nowrap', team));
       var who = el('td');
-      who.appendChild(document.createTextNode(e.player || (e.kind === 'goal' ? 'Scorer not known yet' : '')));
-      if (e.info) who.appendChild(el('span', 'ms-1 text-muted fw-normal', /^penalty$/i.test(e.info) ? '(pen)' : '(' + e.info + ')'));
+      who.appendChild(document.createTextNode(e.player || (e.kind === 'goal' ? 'Scorer not known yet' : '-')));
+      // (pen), (for D. Welbeck); "commentary" just marks where it came from, no note
+      if (e.info && e.info !== 'commentary') who.appendChild(el('span', 'ms-1 text-muted fw-normal', /^penalty$/i.test(e.info) ? '(pen)' : '(' + e.info + ')'));
       if (e.assist) who.appendChild(el('div', 'small text-muted fw-normal', 'Assist: ' + e.assist));
       tr.appendChild(who);
       tb.appendChild(tr);
     });
     table.appendChild(tb);
-    return table;
+    // All / Key events (goals, cards, subs, penalties, kick-off, HT, FT): the choice is remembered
+    var box = el('div', timelineKeyOnly ? 'tl-key-only' : '');
+    if (document.head && !document.getElementById('tl-style')) {
+      var css = el('style'); css.id = 'tl-style';
+      css.textContent = '.tl-key-only .tl-minor { display: none; } .tl-pen { background: #6f42c1; color: #fff; }';
+      document.head.appendChild(css);
+    }
+    // the card's header has a place for the tabs (like the other cards' tabs); else above the table
+    var host = document.getElementById && document.getElementById('timelineFilter');
+    var pick = host ? el('ul', 'nav nav-pills small') : el('div', 'btn-group btn-group-sm mb-2');
+    [['All', false], ['Key events', true]].forEach(function (o) {
+      var b = el('button', (host ? 'nav-link py-0 px-2' : 'btn btn-outline-theme') + (o[1] === timelineKeyOnly ? ' active' : ''), o[0]);
+      b.type = 'button';
+      b.onclick = function () {
+        timelineKeyOnly = o[1];
+        try { localStorage.setItem('timelineKeyOnly', o[1] ? '1' : '0'); } catch (e) { /* this page only */ }
+        box.classList.toggle('tl-key-only', o[1]);
+        pick.querySelectorAll('button').forEach(function (x) { x.classList.toggle('active', x === b); });
+      };
+      if (host) { var li = el('li', 'nav-item'); li.appendChild(b); pick.appendChild(li); } else pick.appendChild(b);
+    });
+    if (host) { host.replaceChildren(pick); box.appendChild(table); } else box.append(pick, table);
+    return box;
   }
 
   /** Players with shots on target (live, or full time). */

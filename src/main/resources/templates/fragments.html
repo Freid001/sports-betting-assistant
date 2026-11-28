@@ -3,6 +3,8 @@
 <head th:fragment="pageHead">
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!-- Narrower than 770px the tables don't fit: a small phone shows the 770px page zoomed out to fit instead -->
+    <script>if (screen.width < 770) document.querySelector('meta[name=viewport]').setAttribute('content', 'width=770');</script>
     <title>Sports Betting Assistant</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%E2%9A%BD%3C/text%3E%3C/svg%3E">
     <link rel="stylesheet" href="/vendor/bootstrap/bootstrap.min.css">
@@ -28,6 +30,10 @@
       /* ===== Base theme colour: change it here to restyle the banner, card and pop-up headers, and main buttons ===== */
       :root { --theme:#1f2326; --theme-hover:#3a3f45; --theme-rgb:31,35,38; --theme-text:#fff; --theme-text-rgb:255,255,255; }   /* Black (Settings can change it) */
       .theme-bg { background:var(--theme) !important; color:var(--theme-text); }
+      /* pills inside a card (e.g. Top Players' Scorers / Foulers / Defenders): the theme colour, not Bootstrap blue */
+      .card-header .nav-pills { --bs-nav-link-color:rgba(var(--theme-text-rgb),.8); --bs-nav-link-hover-color:var(--theme-text);
+        --bs-nav-pills-link-active-bg:rgba(var(--theme-text-rgb),.2); --bs-nav-pills-link-active-color:var(--theme-text); }
+      .card-header .nav-pills .nav-link:not(.active):hover { background:rgba(var(--theme-text-rgb),.1); }
       .btn-theme { --bs-btn-color:var(--theme-text); --bs-btn-bg:var(--theme); --bs-btn-border-color:var(--theme);
                    --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
                    --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme-hover); --bs-btn-active-border-color:var(--theme-hover);
@@ -36,8 +42,21 @@
       .btn-outline-theme { --bs-btn-color:var(--theme-ink, var(--theme)); --bs-btn-bg:transparent; --bs-btn-border-color:var(--theme);
                    --bs-btn-hover-color:var(--theme-text); --bs-btn-hover-bg:var(--theme-hover); --bs-btn-hover-border-color:var(--theme-hover);
                    --bs-btn-active-color:var(--theme-text); --bs-btn-active-bg:var(--theme); --bs-btn-active-border-color:var(--theme); }
-      /* Live Match Stats timeline: 25' HT 60' 80' FT */
+      /* Live Match Stats timeline: 30' HT 60' 80' FT */
       .live-timeline .btn { min-width:3rem; }
+      /* A fixed page from 770px down: a narrower window scrolls sideways instead of squeezing the layout (narrower,
+         the tables break up). Bootstrap's layout switches on the window's width, not the page's, so under 768px it
+         would still shrink the container and stack the columns: these keep its 770px (md) layout there. */
+      html, body { min-width:770px; }
+      @media (max-width:767.98px) {
+        .container { max-width:720px; }
+        .col-sm-6, .col-md-6 { flex:0 0 auto; width:50%; }
+        .row-cols-md-2 > * { flex:0 0 auto; width:50%; }
+        .row-cols-md-3 > * { flex:0 0 auto; width:33.33333333%; }
+      }
+      /* the top bar's stake buttons only fit on wide screens: under 1200px they'd wrap onto a second line, so
+         they're hidden there even when Stake Bar is On */
+      @media (max-width:1199.98px) { #navStake { display:none !important; } }
       /* The top bar stays at the top when scrolling (above cards, below pop-ups), with a soft shadow to lift it */
       .site-bar { z-index:1030; box-shadow:0 2px 6px rgba(0,0,0,.15); }
       /* Match pages, while a followed game is live: fills up until the next refresh of its stats */
@@ -46,7 +65,7 @@
       /* The Football page's button row (Guide, Favourites, Refresh Odds...): small and compact */
       .btn-bar { font-size:.8rem; padding:0 .5rem; }
       /* The Football list: one table per day, all with the same column widths */
-      .match-list { table-layout:fixed; min-width:640px; }
+      .match-list { table-layout:fixed; min-width:740px; }
       .momentum-bar { height:.6rem; }
       /* Match status labels, the same on every page and in the app's colours: Pre-Match white, a minute red,
          HT yellow, FT dark green (pills, like every other badge) */
@@ -70,6 +89,7 @@
       .card { background:#fff; border-color:#e3e5e8; }
       .card-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
       .card-header .text-muted { color:rgba(var(--theme-text-rgb),.65) !important; }
+      .modal-header .text-muted { color:rgba(var(--theme-text-rgb),.75) !important; }   /* readable on every theme */
       .card-header a { color:var(--theme-text); }
       /* Pop-ups (e.g. Refresh Odds) match the cards: dark header, white title and close button */
       .modal-header { background:var(--theme); color:var(--theme-text); border-bottom:0; }
@@ -129,6 +149,10 @@
       .section-label { font-weight:700; text-align:center; color:var(--bs-body-color); margin:0 0 .25rem; }
       .section-label:not(:first-child) { margin-top:1rem; }
       .tooltip-inner { white-space:pre-line; }
+      /* Goals Profile / Discipline Profile: home | label | away with the label truly centred, whatever the team names */
+      .profile-table { table-layout:fixed; width:100%; }
+      .profile-table tr > :first-child, .profile-table tr > :last-child { width:30%; overflow:hidden; text-overflow:ellipsis; }
+      .profile-table tr > :nth-child(2) { width:40%; white-space:normal; }
       .odds-tip .tooltip-inner { white-space:pre-line; text-align:left; max-width:260px; }
     </style>
     <!-- Stake Bar switched off in Settings: no stake is used (odds show as fractions) -->

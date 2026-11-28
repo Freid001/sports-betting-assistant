@@ -1,0 +1,237 @@
+// The Bets page (templates/bets.html): Recommended Bets across matches, Suggested Stake, Model Accuracy.
+// Needs football-data.js, value-check.js, match-stats.js and favourites.js loaded first.
+(function () {
+  var F = window.Football, el = F.el;
+  var $ = function (id) { return document.getElementById(id); };
+  var matches = [], teamsByComp = {}, results = {}, favs = [];   // results: match id -> analysis, or 'none'
+
+  /**
+   * The page works on plain bets, the same for every sport (football now, horse racing later):
+   *   { sport, time (ISO), event ("Forest v Chelsea"), where ("Premier League"), selection ("Draw"), market
+   *     ("Match Result"), price, fair (bookmaker's chance), chance (ours), tag, verdict, ret, confidence, player, url,
+   *     and optionally home / away / compKey: the two teams, shown with their badges, and fav: a favourite is playing }
+   */
+  /** A football match's recommended bets: the same as its match page's Best Bets (ValueCheck.recommend). */
+  function footballBets(m, a) {
+    var out = [];
+    var add = function (market, rows, key) {
+      rows.forEach(function (r) {
+        out.push({ key: key, sport: 'Football', time: m.commence_time, event: m.home_team + ' v ' + m.away_team, where: m.comp,
+                   home: m.home_team, away: m.away_team, compKey: m.compKey, fav: isFav(m),
+                   selection: r.name, market: market, price: r.price, fair: r.fair, chance: r.ours, tag: r.tag,
+                   verdict: r.verdict, ret: r.ret, confidence: a.level.name, player: key.indexOf('player_') === 0,
+                   url: '/football/match/' + encodeURIComponent(m.id) });
+      });
+    };
+    add('Match Result', a.rows || [], 'h2h');
+    (a.markets || []).forEach(function (mk) { add(F.MARKET_NAMES[mk.key] || mk.key, mk.rows, mk.key); });
+    return ValueCheck.recommend(out);
+  }
+
+
+  function isFav(m) { return Favourites.playing(favs, m); }
+
+  /** Recommended stake: the Betting Framework's §2 rule, shared with the match page (ValueCheck.stakeFor). */
+  function stakeFor(b) { return ValueCheck.stakeFor(b); }
+
+  /** Same column widths in every day's card (like the Football list). */
+  var COLS = ['1.5rem', '3.5rem', 'auto', '10rem', '7.25rem', '5.5rem', '6rem', '7rem'];   // ★, Time, Event, Bet, Stake, Odds, Chance, Verdict
+
+  function render() {
+    var list = $('list'), comp = $('filterComp').value, onlyFavs = $('filterFav').checked;
+    var shown = matches.filter(function (m) { return (!comp || m.comp === comp) && (!onlyFavs || isFav(m)); });
+    var pending = shown.filter(function (m) { return results[m.id] === undefined; }).length;
+    var unchecked = shown.filter(function (m) { return results[m.id] === 'none'; }).length;
+    var bets = [];
+    shown.forEach(function (m) { var a = results[m.id]; if (a && a !== 'none') bets = bets.concat(footballBets(m, a)); });
+    list.replaceChildren();
+    if (!bets.length) {
+      list.appendChild(el('div', 'text-muted small mb-3', pending ? 'Checking the upcoming games…' : 'No Bet'));
+    }
+    // One card per day: the day's bets, best verdict first
+    var days = {};
+    bets.forEach(function (b) { var d = F.day(b.time); (days[d] = days[d] || []).push(b); });
+    Object.keys(days).forEach(function (d) {
+      // Same order as the match page's markets: best verdict first, then the more likely chance label, then bigger odds
+      var dayBets = days[d].sort(ValueCheck.byRecommendation);
+      var card = el('div', 'card shadow-sm mb-3');
+      card.appendChild(el('div', 'card-header', d));
+      var wrap = el('div', 'table-responsive');
+      var t = el('table', 'table table-sm table-hover align-middle mb-0 small match-list');
+      var cg = el('colgroup');
+      COLS.forEach(function (w) { var c = el('col'); if (w !== 'auto') c.style.width = w; cg.appendChild(c); });
+      t.appendChild(cg);
+      var hr = el('tr', 'text-muted');
+      ['', 'Time', 'Event', 'Bet', 'Suggested Stake', 'Odds', 'Chance', 'Verdict'].forEach(function (h, i) {
+        var th = el('th', i >= 4 ? 'text-center text-nowrap' : null, h);
+        if (h === 'Suggested Stake') th.title = 'The stake the Betting Framework suggests for it: not a bet placed';
+        hr.appendChild(th);
+      });
+      var thead = el('thead'); thead.appendChild(hr); t.appendChild(thead);
+      var tb = el('tbody');
+      dayBets.forEach(function (b) {
+        var tr = el('tr');
+        tr.style.cursor = 'pointer';
+        tr.title = 'Open ' + b.event;
+        tr.addEventListener('click', function () { location.href = b.url; });
+        // ★ when a favourite team is playing, as on the Football list
+        var star = el('td', b.fav ? 'text-dark' : 'text-muted', b.fav ? '★' : '☆');
+        star.title = b.fav ? 'Favourite team playing' : 'No favourite team playing (set them in Favourites on the Football page)';
+        tr.appendChild(star);
+        tr.appendChild(el('td', 'text-nowrap', F.time(b.time)));
+        // Event: what it is and where (any sport), e.g. "Forest v Chelsea" / "Football · Premier League"
+        var event = el('td');
+        if (b.home && b.away) {
+          // the two teams with their badges, as on the Football list
+          var teams = teamsByComp[b.compKey] || [];
+          var line = el('div', 'fw-semibold d-flex flex-wrap align-items-center column-gap-1');
+          var side = function (name) {   // badge and name stay together if the line wraps
+            var t = el('span', 'd-inline-flex align-items-center gap-1 text-nowrap');
+            t.appendChild(F.logo(teams, name, 20));
+            t.appendChild(el('span', null, name));
+            return t;
+          };
+          line.appendChild(side(b.home));
+          line.appendChild(el('span', 'text-muted fw-normal mx-1', 'v'));
+          line.appendChild(side(b.away));
+          event.appendChild(line);
+        } else {
+          event.appendChild(el('div', 'fw-semibold', b.event));
+        }
+        event.appendChild(el('div', 'text-muted', b.sport + ' · ' + b.where));
+        tr.appendChild(event);
+        // Bet: the selection and its market, e.g. "Draw" / "Match Result"
+        var bet = el('td');
+        bet.appendChild(el('div', 'fw-semibold', b.selection));
+        bet.appendChild(el('div', 'text-muted', b.market));
+        tr.appendChild(bet);
+        // Recommended stake, with the framework's rule on hover
+        var st = stakeFor(b), sc = el('td', 'text-center fw-semibold', '£' + st.amount);
+        sc.setAttribute('data-bs-toggle', 'tooltip');
+        sc.setAttribute('data-bs-title', st.why + '. Daily limit £20 and 5 bets.');   // why this amount
+        sc.style.cursor = 'help';
+        tr.appendChild(sc);
+        var odds = el('td', 'text-center'); odds.appendChild(F.oddsBadge(b.price, b.fair)); tr.appendChild(odds);
+        var ch = el('td', 'text-center'); ch.appendChild(ValueCheck.tagBadge(b.tag, b.chance)); tr.appendChild(ch);
+        var vd = el('td', 'text-center');
+        vd.appendChild(ValueCheck.verdictBadge(b.verdict, b.confidence)); tr.appendChild(vd);
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      wrap.appendChild(t);
+      card.appendChild(wrap);
+      // Sources, linked like every other card's footer
+      var foot = el('div', 'card-footer bg-transparent py-1 small text-muted text-end');
+      foot.appendChild(document.createTextNode('Source: '));
+      [['https://the-odds-api.com', 'the-odds-api.com'], ['https://goal-api.com', 'goal-api.com']].forEach(function (l, i) {
+        if (i) foot.appendChild(document.createTextNode(' · '));
+        var a = el('a', 'text-muted', l[1]);
+        a.href = l[0]; a.target = '_blank'; a.rel = 'noopener noreferrer';
+        foot.appendChild(a);
+      });
+      card.appendChild(foot);
+      list.appendChild(card);
+    });
+    if (unchecked) {
+      list.appendChild(el('div', 'text-muted small', unchecked + ' game(s) couldn\'t be checked: not enough results saved (Refresh Stats on the Football page).'));
+    }
+  }
+
+  /** Works out the value check for each upcoming game (saved odds and results: no API calls), then redraws. */
+  function check() {
+    var todo = matches.filter(function (m) { return results[m.id] === undefined && teamsByComp[m.compKey]; });
+    return Promise.all(todo.map(function (m) {
+      var teams = teamsByComp[m.compKey];
+      var ht = F.findTeam(teams, m.home_team, m.home_team_id), at = F.findTeam(teams, m.away_team, m.away_team_id);
+      if (!ht || !at || ht.id == null || at.id == null) { results[m.id] = 'none'; return null; }   // badge only: no results
+      return MatchStats.loadViews(ht, at).then(function (v) {
+        results[m.id] = ValueCheck.analyse(m, v.homeVenue, v.awayVenue, F.stake() || ValueCheck.DEFAULT_STAKE) || 'none';
+        // the prediction log (before kick-off only): scored against the result later, for the accuracy report
+        if (results[m.id] !== 'none' && new Date(m.commence_time) > new Date()) ValueCheck.log(ValueCheck.record(m, results[m.id], ht.id, at.id));
+      }).catch(function () { results[m.id] = 'none'; });
+    })).then(render);
+  }
+
+  $('filterComp').addEventListener('change', render);
+  $('filterFav').addEventListener('change', render);
+  document.getElementById('navStake').appendChild(F.stakeInput(function () { results = {}; check(); }));   // returns at the new stake
+
+  /**
+   * Model Accuracy: every logged prediction with a result, scored (ValueCheck.report). For each point (Pre-Match,
+   * and each bet window): games, how often the most likely result happened, and log loss, ours v the bookmaker's
+   * (lower is better: it rewards being confident and right, and punishes confident and wrong). Then calibration
+   * (when we said ~X%, how often it happened) and the Recommended Bets' profit at £1 each.
+   */
+  function accuracy() {
+    $('modelVersion').textContent = ValueCheck.MODEL_VERSION;
+    F.getJson('/api/predictions').then(function (d) {
+      var rep = ValueCheck.report(d.predictions || []), box = $('accuracy');
+      box.replaceChildren();
+      if (!rep.points.length) {
+        box.appendChild(el('span', 'text-muted', (rep.pending ? rep.pending + ' prediction(s) logged, waiting for results. ' : 'Nothing logged yet. ') +
+          'Predictions are saved when this page or a match page works them out before kick-off, and at each bet window of a ' +
+          'followed game. Once games are played and Refresh Stats brings in the results, they\'re scored here.'));
+        return;
+      }
+      var pc = function (x) { return x === null ? '–' : Math.round(x * 100) + '%'; };
+      var NAMES = { PRE: 'Pre-Match', HT: 'Half time' };
+      var t = el('table', 'table table-sm align-middle mb-3 stats-table'), hr = el('tr');
+      ['When', 'Games', 'Right (ours)', 'Right (bookie)', 'Log loss (ours)', 'Log loss (bookie)', ''].forEach(function (h, i) {
+        hr.appendChild(el('th', 'text-nowrap' + (i ? ' text-end' : ''), h));
+      });
+      var th = el('thead'); th.appendChild(hr); t.appendChild(th);
+      var tb = el('tbody');
+      rep.points.forEach(function (p) {
+        var tr = el('tr');
+        tr.appendChild(el('td', 'text-nowrap', NAMES[p.point] || p.point + '\''));
+        tr.appendChild(el('td', 'text-end', String(p.games)));
+        tr.appendChild(el('td', 'text-end', pc(p.right)));
+        tr.appendChild(el('td', 'text-end', pc(p.bookRight)));
+        tr.appendChild(el('td', 'text-end', p.logLoss.toFixed(3)));
+        tr.appendChild(el('td', 'text-end', p.bookLogLoss === null ? '–' : p.bookLogLoss.toFixed(3)));
+        var who = p.bookLogLoss === null ? '' : p.logLoss < p.bookLogLoss ? 'Ours better' : 'Bookie better';
+        tr.appendChild(el('td', 'text-end text-nowrap ' + (who === 'Ours better' ? 'text-success' : 'text-muted'), who));
+        tb.appendChild(tr);
+      });
+      t.appendChild(tb);
+      box.appendChild(el('div', 'section-label', 'Match result'));
+      box.appendChild(t);
+      if (rep.calibration.length) {
+        box.appendChild(el('div', 'section-label', 'Calibration (pre-match): when we said…'));
+        var c = el('table', 'table table-sm mb-3 stats-table'), ch = el('tr');
+        ['Our chance', 'Outcomes', 'Average we said', 'Happened'].forEach(function (h, i) { ch.appendChild(el('th', i ? 'text-end' : '', h)); });
+        var cth = el('thead'); cth.appendChild(ch); c.appendChild(cth);
+        var cb = el('tbody');
+        rep.calibration.forEach(function (b) {
+          var tr = el('tr');
+          tr.appendChild(el('td', null, Math.round(b.from * 100) + '–' + Math.round(b.to * 100) + '%'));
+          tr.appendChild(el('td', 'text-end', String(b.n)));
+          tr.appendChild(el('td', 'text-end', pc(b.said)));
+          tr.appendChild(el('td', 'text-end', pc(b.happened)));
+          cb.appendChild(tr);
+        });
+        c.appendChild(cb);
+        box.appendChild(c);
+      }
+      var b = rep.bets;
+      box.appendChild(el('div', 'section-label', 'Recommended Bets (pre-match, £1 each)'));
+      box.appendChild(el('div', null, b.n ? b.n + ' settled · ' + b.won + ' won · ' + (b.profit >= 0 ? '+' : '−') + '£' + Math.abs(b.profit).toFixed(2) +
+        ' (' + (b.profit >= 0 ? '+' : '') + Math.round(100 * b.profit / b.n) + '% return)' +
+        (b.unsettled ? ' · ' + b.unsettled + ' can\'t be settled from the score (e.g. goalscorers)' : '') : 'None settled yet.'));
+      if (rep.pending) box.appendChild(el('div', 'text-muted mt-2', rep.pending + ' more prediction(s) waiting for results.'));
+      box.appendChild(el('div', 'text-muted mt-2', 'A handful of games proves little: give it a few weekends (100+ games) before reading much into it.'));
+    }).catch(function (e) { $('accuracy').replaceChildren(el('span', 'text-danger', 'Couldn\'t load the log: ' + e.message)); });
+  }
+  accuracy();
+
+  F.loadAll().then(function (data) {
+    // Upcoming games only: bets are placed before kick-off
+    matches = data.matches.filter(function (m) { return new Date(m.commence_time) > new Date(); });
+    var sel = $('filterComp');
+    data.tournaments.forEach(function (t) { var o = el('option', null, F.title(t.name)); o.value = F.title(t.name); sel.appendChild(o); });
+    return Promise.all(data.tournaments.filter(function (t) { return t.cached; }).map(function (t) {
+      return F.loadTeams(t.name).then(function (teams) { teamsByComp[t.name] = teams; });
+    }));
+  }).then(check).catch(function (e) { $('list').textContent = 'Could not load: ' + e.message; });
+  Favourites.load().then(function (f) { favs = f; render(); }).catch(function () { /* no favourites yet */ });
+})();

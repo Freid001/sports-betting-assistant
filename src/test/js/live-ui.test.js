@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { load, settle, plain } = require('./load-scripts');
 
 const NOW = new Date().toISOString();
-const fx = (id, extra) => Object.assign({ id, home: 'Tottenham', away: 'Ipswich', tournament: 'epl', leagueId: 'L1',
+const fx = (id, extra) => Object.assign({ id, eventId: 'e1', home: 'Tottenham', away: 'Ipswich', tournament: 'epl', leagueId: 'L1',
   date: NOW.slice(0, 10), kickoff: NOW, status: 'SCHEDULED', live: false, homeScore: null, awayScore: null }, extra);
 const state = (extra) => Object.assign({ configured: true, refreshMinutes: 5, maxGames: 2, warning: null, lastRefresh: null,
   usage: { limit: '1000', remaining: '973', reset: '1795132800' }, tracked: [], fixtures: [] }, extra);
@@ -42,7 +42,7 @@ function card(routes, st) {
   const w = load(['football-data.js', 'live.js'], { routes });
   const box = w.document.createElement('div');
   const foot = w.document.createElement('span');
-  const ev = { home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town', commence_time: NOW };
+  const ev = { id: 'e1', home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town', commence_time: NOW };
   return { w, box, foot, run: () => w.Live.renderCard(box, foot, st, ev) };
 }
 
@@ -139,7 +139,7 @@ test('match card: a played game not followed offers to load its stats once', asy
     snapshots: [{ period: 'FT', homeScore: '2', awayScore: '0', rows: ROWS_FT }] };
   const w = load(['football-data.js', 'live.js'], { routes: { '/api/football/live/replay*': replayed } });
   const box = w.document.createElement('div'), foot = w.document.createElement('span');
-  const ev = { sport_key: 'soccer_epl', home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town', commence_time: past };
+  const ev = { id: 'e9', sport_key: 'soccer_epl', home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town', commence_time: past };
   await w.Live.renderCard(box, foot, state(), ev);
   const btn = box.querySelector('button');
   assert.equal(btn.textContent, 'Post-Match');
@@ -147,7 +147,7 @@ test('match card: a played game not followed offers to load its stats once', asy
   await settle();
   const call = w.calls.find(c => c.url.startsWith('/api/football/live/replay'));
   assert.equal(call.method, 'POST');
-  assert.match(call.url, /tournament=epl&date=2026-11-21&kickoff=.*&home=Tottenham%20Hotspur&away=Ipswich%20Town/);
+  assert.equal(call.url, '/api/football/live/replay?eventId=e9');
   assert.ok(box.querySelector('.live-timeline'), 'the timeline is shown');
   assert.equal(w.notes[0].type, 'success');
 });
@@ -305,8 +305,9 @@ test('pointFor: the last timeline point a live game has passed', () => {
   const { Live } = load(['football-data.js', 'live.js']);
   const at = (elapsed, extra) => Object.assign(fx('a', { live: true, status: 'LIVE', elapsed }), extra || {});
   assert.equal(Live.pointFor(at('5')), null);
-  assert.equal(Live.pointFor(at('12')), '10');
-  assert.equal(Live.pointFor(at('30')), '25');
+  assert.equal(Live.pointFor(at('12')), null);   // no 10' window
+  assert.equal(Live.pointFor(at('27')), null);
+  assert.equal(Live.pointFor(at('30')), '30');
   assert.equal(Live.pointFor(at(null, { minute: 'Half Time' })), 'HT');
   assert.equal(Live.pointFor(at('52')), 'HT');
   assert.equal(Live.pointFor(at('65')), '60');
@@ -316,8 +317,8 @@ test('pointFor: the last timeline point a live game has passed', () => {
 
 test('match card: an upcoming game not followed shows Pre-Match and a play button that follows it', async () => {
   const ko = new Date(Date.now() + 3 * 86400000).toISOString();
-  const ev = { sport_key: 'soccer_epl', home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town', commence_time: ko };
-  const following = { following: [{ tournament: 'epl', kickoff: ko, home: 'Tottenham Hotspur', away: 'Ipswich Town' }] };
+  const ev = { id: 'e7', sport_key: 'soccer_epl', home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town', commence_time: ko };
+  const following = { following: [{ gameId: 7, eventId: 'e7', tournament: 'epl', kickoff: ko, home: 'Tottenham', away: 'Ipswich' }] };
   const w = load(['football-data.js', 'live.js'], { routes: { '/api/football/live/follow*': state(following) } });
   const box = w.document.createElement('div'), foot = w.document.createElement('span'), host = w.document.createElement('div');
   w.Live.setTimelineHost(host);
@@ -329,9 +330,23 @@ test('match card: an upcoming game not followed shows Pre-Match and a play butto
   await settle();
   const call = w.calls.find(c => c.url.startsWith('/api/football/live/follow'));
   assert.equal(call.method, 'POST');
-  assert.match(call.url, /tournament=epl&kickoff=.*&home=Tottenham%20Hotspur&away=Ipswich%20Town&on=true/);
+  assert.equal(call.url, '/api/football/live/follow?eventId=e7&on=true');
   assert.deepEqual(host.querySelectorAll('button').map(b => b.textContent), ['Pre-Match', '■']);
   assert.equal(w.notes[0].type, 'success');
+});
+
+test('match card: a game being played that isn\'t followed still offers the play button', async () => {
+  const ko = new Date(Date.now() - 80 * 60000).toISOString();   // kicked off 80 minutes ago
+  const ev = { id: 'e8', sport_key: 'soccer_epl', home_team: 'Leeds United', away_team: 'Coventry City', commence_time: ko };
+  const w = load(['football-data.js', 'live.js'], { routes: { '/api/football/live/follow*': state() } });
+  const box = w.document.createElement('div'), foot = w.document.createElement('span'), host = w.document.createElement('div');
+  w.Live.setTimelineHost(host);
+  await w.Live.renderCard(box, foot, state(), ev);
+  assert.deepEqual(host.querySelectorAll('button').map(b => b.textContent), ['Pre-Match', '▶']);
+  assert.equal(box.textContent, 'No Live Stats');
+  host.querySelector('button[data-follow="on"]').click();
+  await settle();
+  assert.ok(w.calls.some(c => c.url === '/api/football/live/follow?eventId=e8&on=true'));
 });
 
 test('match card: a point picked by hand stays picked when the stats are re-read', async () => {

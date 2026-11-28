@@ -41,19 +41,24 @@ class FootballTablesTest {
                 + "\"score\":{\"fullTime\":{\"home\":" + hg + ",\"away\":" + ag + "},\"halfTime\":{\"home\":0,\"away\":0}}}";
     }
 
+    /** Our id for the game GOAL API numbers apiId (games have ids of their own). */
+    private long gameId(long apiId) {
+        return new Games(store).game(Games.GOAL_NUMBER, String.valueOf(apiId)).orElseThrow();
+    }
+
     @Test
     void aResultCanBecomeAFixtureAndBackAndIsStoredOnce() {
         String comp = "{\"competition\":{\"name\":\"Premier League\",\"type\":\"LEAGUE\"},\"matches\":[";
         tables.saveMatches("PL", "SCHEDULED", comp + result(1, "TIMED", "2026-11-22T16:30:00Z", ARSENAL, SPURS, null, null) + "]}");
-        assertThat(tables.matchesJson("PL", "SCHEDULED").orElseThrow()).contains("\"id\":1");
+        assertThat(tables.matchesJson("PL", "SCHEDULED").orElseThrow()).contains("\"id\":" + gameId(1));
         assertThat(tables.matchesJson("PL", "FINISHED")).isEmpty();   // never fetched
 
         tables.saveMatches("PL", "FINISHED", comp + result(1, "FINISHED", "2026-11-22T16:30:00Z", ARSENAL, SPURS, 2, 1) + "]}");
         assertThat(tables.matchesJson("PL", "SCHEDULED").orElseThrow()).isEqualTo("{\"matches\":[]}");
         String done = tables.matchesJson("PL", "FINISHED").orElseThrow();
         assertThat(done).contains("\"fullTime\":{\"home\":2,\"away\":1}").contains("\"matchday\":3").doesNotContain("referees");
-        assertThat(store.query("SELECT COUNT(*) FROM matches", rs -> rs.getLong(1))).containsExactly(1L);
-        assertThat(tables.teamResults(73).orElseThrow()).contains("\"id\":1");
+        assertThat(store.query("SELECT COUNT(*) FROM games", rs -> rs.getLong(1))).containsExactly(1L);
+        assertThat(tables.teamResults(73).orElseThrow()).contains("\"id\":" + gameId(1));
     }
 
     @Test

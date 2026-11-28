@@ -28,8 +28,9 @@ import com.sportsbettingassistant.odds.OddsApiClient;
  * POST /api/settings/animations?on=false  the match page's banners (GOAL!, cards, kick-off / HT / FT...) on or off
  * POST /api/settings/sounds?on=false      the match page's sounds (crowd, whistles, chime) on or off
  * POST /api/settings/refresh              {"matchResult":true,"scope":"favs","markets":["btts"]}: what Refresh Odds fetches
- * POST /api/settings/live-refresh?minutes=2   how often followed games are refreshed (1, 2, 5 or 10)
+ * POST /api/settings/live-refresh?minutes=2   how often followed games are refreshed (1, 2, 5 or 10; 0: off)
  * POST /api/settings/live-odds?on=false   in-play odds at each timeline point of a followed game, or not
+ * POST /api/settings/bet-windows?windows=30,HT   which bet windows fetch them (none: empty)
  */
 @Controller
 public class SettingsController {
@@ -98,6 +99,7 @@ public class SettingsController {
         out.put("refresh", settings.refreshOptions());
         out.put("liveRefresh", settings.liveRefreshMinutes());
         out.put("liveOdds", settings.liveOdds());
+        out.put("betWindows", settings.betWindows());
         List<Map<String, Object>> themes = new ArrayList<>();
         SettingsService.THEMES.forEach(t -> themes.add(t.toMap()));   // as maps: Json.write doesn't write records
         out.put("themes", themes);
@@ -177,6 +179,14 @@ public class SettingsController {
     public ResponseEntity<String> liveOdds(@RequestParam boolean on) {
         settings.setLiveOdds(on);
         return Json.ok(Map.of("liveOdds", on));
+    }
+
+    @PostMapping("/api/settings/bet-windows")
+    @ResponseBody
+    public ResponseEntity<String> betWindows(@RequestParam(defaultValue = "") String windows) {
+        List<String> picked = windows.isBlank() ? List.of() : List.of(windows.split(","));
+        settings.setBetWindows(picked);
+        return Json.ok(Map.of("betWindows", settings.betWindows()));
     }
 
     @PostMapping("/api/settings/refresh")

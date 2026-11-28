@@ -123,32 +123,61 @@ window.MatchStats = (function () {
     // The team's squad (saved by Refresh Stats) fills in positions the scorer tables leave out, and gives the
     // odds a team and position for players who haven't scored yet
     var squad = getJson('/api/football/data/teams/' + team.id + '/squad').then(function (d) {
-      return (d.squad || []).map(function (p) { return { name: p.name, position: F.positionName(p.position) }; });
+      return (d.squad || []).map(function (p) {
+        // games / goals: his season so far (GOAL API's squad list; null in squads saved before these were kept)
+        // id: our player id, the same as in the scorer tables (so a scorer and his squad entry are one player)
+        return { id: p.id, name: p.name, position: F.positionName(p.position), games: p.games, goals: p.goals, assists: p.assists,
+                 stats: p.stats };   // stats: his season stats, for the player pop-up
+      });
     }).catch(function () { return []; });
+    // The team's games this season (league tables): GOAL API's scorer lists have no games played, so a scorer's
+    // goals per game uses his team's games (a little low for players who've missed games, which the value check's
+    // blend with his position's typical rate evens out)
+    var played = Promise.all(comps.map(function (c) {
+      return getJson('/api/football/data/competitions/' + c.code + '/standings').then(function (st) {
+        var row = position(st, team.id);
+        return row && row.played ? row.played : 0;
+      }).catch(function () { return 0; });
+    })).then(function (n) { return n.reduce(function (a, b) { return a + b; }, 0); });
     Promise.all(comps.map(function (c) {
       return getJson('/api/football/data/competitions/' + c.code + '/scorers').then(function (d) {
         return (d.scorers || []).filter(function (s) { return s.team && s.team.id === team.id; });
       }).catch(function () { return []; });
-    }).concat([squad])).then(function (lists) {
+    }).concat([squad, played])).then(function (lists) {
+      var teamGames = lists.pop();
       var squadList = lists.pop();
-      var squadPosition = function (name) {
-        var p = squadList.find(function (x) { return F.samePlayer(x.name, name); });
+      var squadPosition = function (id) {
+        var p = squadList.find(function (x) { return x.id === id; });
         return p ? p.position : null;
       };
       // One row per player, goals and assists added up across competitions
       var players = {};
       [].concat.apply([], lists).forEach(function (s) {
-        var p = players[s.player.id] = players[s.player.id] || { name: s.player.name, position: s.player.position, goals: 0, assists: 0, games: 0 };
+        var p = players[s.player.id] = players[s.player.id] || { id: s.player.id, name: s.player.name, position: s.player.position, goals: 0, assists: 0, games: 0 };
         p.goals += s.goals || 0;
         p.assists += s.assists || 0;
         p.games += s.playedMatches || 0;
       });
+      // GOAL API's scorer lists only have the league's top 20: the squad list has every player's goals and games
+      // so far, so anyone else who's played gets a goals per game (and a goalscorer verdict) too
+      squadList.forEach(function (sp) {
+        if (!sp.games) return;
+        var have = players[sp.id] ? sp.id : null;
+        if (have) {
+          if (!players[have].games) players[have].games = sp.games;   // his own games, rather than the team's
+          players[have].stats = sp.stats;
+        } else {
+          players[sp.id] = { id: sp.id, name: sp.name, position: sp.position, goals: sp.goals || 0, assists: sp.assists || 0,
+                                          games: sp.games, stats: sp.stats };
+        }
+      });
       Object.keys(players).forEach(function (k) {   // no position in the scorer tables: the squad's
-        if (!players[k].position) players[k].position = squadPosition(players[k].name);
+        if (!players[k].position) players[k].position = squadPosition(players[k].id);
+        if (!players[k].games) players[k].games = teamGames;   // still no games played: the team's
       });
       var everyone = Object.keys(players).map(function (k) { return players[k]; })
         .sort(function (a, b) { return b.goals - a.goals || b.assists - a.assists; });
-      var top = everyone.slice(0, 5);   // top 5 per team on the card
+      var top = everyone.filter(function (p) { return p.goals > 0; }).slice(0, 5);   // top 5 scorers per team on the card
       list.replaceChildren();
       list.className = '';
       // Share these players with the odds card, so its goalscorer markets show the same players in the same order
@@ -156,7 +185,12 @@ window.MatchStats = (function () {
       // scorers: every player of this team in the scorer tables, for the Value check's goalscorer markets
       window.TopScorers[side] = { team: team.shortName || team.name, players: top.map(function (p) { return p.name; }),
                                   scorers: everyone.map(function (p) {
-                                    return { name: p.name, goals: p.goals, assists: p.assists, games: p.games, position: F.positionName(p.position) };
+                                    // shots, penalties scored and the games they're over (his season stats), for goalRate
+                                    var st = p.stats || {}, n = function (k) { var v = parseInt(st[k], 10); return isNaN(v) ? null : v; };
+                                    // fewer shots than goals: those aren't his club season's (e.g. his England record)
+                                    var club = n('shotsTotal') === null || n('shotsTotal') >= (p.goals || 0);
+                                    return { id: p.id, name: p.name, goals: p.goals, assists: p.assists, games: p.games, position: F.positionName(p.position),
+                                             shots: club ? n('shotsTotal') : null, shotGames: club ? n('matchPlayed') : null, pens: club ? n('penScored') : null };
                                   }),
                                   squad: squadList };
       if (window.ValueCheck) window.ValueCheck.rerender();
@@ -202,20 +236,24 @@ window.MatchStats = (function () {
 
     Promise.all([
       getJson('/api/football/data/teams/' + homeTeam.id + '/matches'),
-      getJson('/api/football/data/teams/' + awayTeam.id + '/matches')
+      getJson('/api/football/data/teams/' + awayTeam.id + '/matches'),
+      profileOf(homeTeam), profileOf(awayTeam)
     ]).then(function (lists) {
       var homeAll = finished(lists[0], homeTeam.id), awayAll = finished(lists[1], awayTeam.id);
       var homeVenue = homeAll.filter(function (v) { return v.home; }).slice(0, 10);
       var awayVenue = awayAll.filter(function (v) { return !v.home; }).slice(0, 10);
+      var profiles = [lists[2], lists[3]];
       // Too few home/away games? Fall back to all venues.
       var venueNote = '';
       if (homeVenue.length < 5 || awayVenue.length < 5) {
         homeVenue = homeAll.slice(0, 10); awayVenue = awayAll.slice(0, 10);
+        homeVenue.anyVenue = true;   // the model adds home advantage back
         venueNote = 'last ' + Math.min(homeVenue.length, awayVenue.length) + ' games, any venue';
       } else {
         venueNote = 'last ' + homeVenue.length + ' home games for ' + (homeTeam.shortName || homeTeam.name) +
                     ', last ' + awayVenue.length + ' away games for ' + (awayTeam.shortName || awayTeam.name);
       }
+      homeVenue.profile = profiles[0]; awayVenue.profile = profiles[1];   // season shots, keepers, injuries
       var hp = profile(homeVenue), ap = profile(awayVenue);
       if (window.ValueCheck) {
         ValueCheck.render(document.getElementById('valueCheck'), ev, homeVenue, awayVenue);
@@ -281,15 +319,9 @@ window.MatchStats = (function () {
       keyPlayers(kpHome, homeTeam, comps(hl), 'home');
       keyPlayers(kpAway, awayTeam, comps(al), 'away');
 
-      // Head to head: find this fixture's saved id, then its previous meetings.
-      (code ? getJson('/api/football/data/competitions/' + code + '/matches?status=SCHEDULED')
-            : Promise.reject(new Error('no competition'))).then(function (up) {
-        var fx = (up.matches || []).find(function (m) {
-          return m.homeTeam.id === homeTeam.id && m.awayTeam.id === awayTeam.id;
-        });
-        if (!fx) throw new Error('fixture not found');
-        return getJson('/api/football/data/matches/' + fx.id + '/head2head');
-      }).then(function (h) {
+      // Head to head: this game's previous meetings (the server linked the odds to the game: ev.game_id)
+      (ev.game_id != null ? getJson('/api/football/data/matches/' + ev.game_id + '/head2head')
+                          : Promise.reject(new Error('game not matched'))).then(function (h) {
         h2hBox.replaceChildren();
         var past = (h.matches || []).filter(function (m) { return m.status === 'FINISHED'; })
           .sort(function (a, b) { return b.utcDate.localeCompare(a.utcDate); }).slice(0, 5);
@@ -335,15 +367,31 @@ window.MatchStats = (function () {
   function loadViews(homeTeam, awayTeam) {
     return Promise.all([
       getJson('/api/football/data/teams/' + homeTeam.id + '/matches'),
-      getJson('/api/football/data/teams/' + awayTeam.id + '/matches')
+      getJson('/api/football/data/teams/' + awayTeam.id + '/matches'),
+      profileOf(homeTeam), profileOf(awayTeam)
     ]).then(function (lists) {
       var homeAll = finished(lists[0], homeTeam.id), awayAll = finished(lists[1], awayTeam.id);
       var homeVenue = homeAll.filter(function (v) { return v.home; }).slice(0, 10);
       var awayVenue = awayAll.filter(function (v) { return !v.home; }).slice(0, 10);
       var anyVenue = homeVenue.length < 5 || awayVenue.length < 5;
       if (anyVenue) { homeVenue = homeAll.slice(0, 10); awayVenue = awayAll.slice(0, 10); }
+      homeVenue.profile = lists[2]; awayVenue.profile = lists[3];
+      homeVenue.anyVenue = anyVenue;   // the model adds home advantage back
       return { homeAll: homeAll, awayAll: awayAll, homeVenue: homeVenue, awayVenue: awayVenue, anyVenue: anyVenue };
     });
+  }
+
+  /**
+   * A team's season profile for the goals model (ValueCheck.teamProfile): shots per game, keepers' shots faced,
+   * injured players, from its saved squad. Null without one (the model then uses recent goals only).
+   */
+  function profileOf(team) {
+    if (!window.ValueCheck || !ValueCheck.teamProfile) return Promise.resolve(null);
+    return getJson('/api/football/data/teams/' + team.id + '/squad').then(function (d) {
+      return ValueCheck.teamProfile((d.squad || []).map(function (p) {
+        return { name: p.name, position: F.positionName(p.position), stats: p.stats };
+      }));
+    }).catch(function () { return null; });
   }
 
   return { render: render, loadViews: loadViews };

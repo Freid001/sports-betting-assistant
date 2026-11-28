@@ -171,7 +171,10 @@ public class GoalStats {
         tables.saveScorers(code, Json.write(Map.of("competition", competition(code), "scorers", scorers)));
     }
 
-    /** A team's squad: every player and his position (1 call). False if we don't know the team's GOAL API id. */
+    /**
+     * A team's squad: every player, his position and his season so far (games, goals, shots) (1 call). False if we
+     * don't know the team's GOAL API id.
+     */
     public boolean saveSquad(long teamId) {
         Optional<String> goalId = tables.goalId(teamId);
         if (goalId.isEmpty()) {
@@ -188,10 +191,110 @@ public class GoalStats {
             player.put("id", id);
             player.put("name", name);
             player.put("position", Json.text(p.get("type")));   // "Forwards", "Midfielders"...
+            player.put("games", whole(p.get("matchPlayed")));   // this season so far, for goals per game
+            player.put("goals", whole(p.get("goals")));
+            player.put("shots", whole(p.get("shotsTotal")));
+            player.put("stats", playerStats(p));
             squad.add(player);
         }
         tables.saveSquad(teamId, Json.write(Map.of("squad", squad)));
         return true;
+    }
+
+    /** The season stats GOAL API gives for a player (the ones it filled in), for the match page's player pop-up. */
+    static final List<String> PLAYER_STATS = List.of("number", "age", "isCaptain", "injured", "matchPlayed", "minutes",
+            "rating", "goals", "assists", "shotsTotal", "penScored", "penMissed", "penWon", "woodworks", "keyPasses", "passes",
+            "passesAccuracy", "crossesTotal", "dribbleAttempts", "dribbleSucc", "duelsTotal", "duelsWon", "tackles",
+            "interceptions", "blocks", "clearances", "foulsCommitted", "dispossessed", "penCommitted", "yellowCards",
+            "redCards", "substituteOut", "substitutesOnBench", "saves", "insideBoxSaves", "goalsConceded");
+
+    static Map<String, Object> playerStats(Map<String, Object> p) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        for (String k : PLAYER_STATS) {
+            String v = Json.text(p.get(k));
+            if (v != null && !v.isBlank()) {
+                out.put(k, v);
+            }
+        }
+        String team = Json.text(Json.map(p.get("team")).get("name"));
+        if (team != null) {
+            out.put("filedUnder", team);   // the team GOAL API has him at (e.g. England for some internationals)
+        }
+        String image = Json.text(p.get("image"));
+        if (image != null && image.startsWith("https://media.goal-api.com/")) {
+            out.put("image", image);       // his photo on GOAL API's image server, for the player pop-up
+        }
+        return out;
+    }
+
+    /**
+     * A top scorer missing from his club's squad (GOAL API files some players under another team, e.g. Cole Palmer
+     * under England): finds him by name (1 call) and adds his position, games, goals and shots to the club's squad.
+     * Prefers a result at that club; else the one with that exact name, but then only who he is (position, photo,
+     * age), not that team's numbers. True if he was found.
+     */
+    public boolean findPlayer(long teamId, String teamName, String name) {
+        String want = FootballTables.plainName(name), club = FootballTables.plainName(teamName);
+        // the search takes plain letters only (no accents: "Z. Tripić" is refused), and an initial ("Z. Tripic")
+        // finds nothing, so a name with one is looked up by surname
+        String[] parts = want.split(" ");
+        boolean initial = parts.length > 1 && parts[0].matches("[a-z]\\.?");
+        String query = (initial ? want.substring(want.indexOf(' ') + 1) : want).replaceAll("[^a-z0-9' -]", " ").trim();
+        if (query.isEmpty()) {
+            tables.addToSquad(teamId, name, null);
+            return false;
+        }
+        List<Map<String, Object>> found = data(get("/players/search", Map.of("q", query)));
+        Map<String, Object> best = null;
+        for (Map<String, Object> p : found) {
+            if (!sameName(want, FootballTables.plainName(Json.text(p.get("name"))))) {
+                continue;
+            }
+            String team = FootballTables.plainName(Json.text(Json.map(p.get("team")).get("name")));
+            if (best == null || (!club.isEmpty() && (team.contains(club) || club.contains(team)))) {
+                best = p;
+            }
+        }
+        Map<String, Object> player = null;
+        Long id = best == null ? null : whole(best.get("apiId"));
+        if (id != null) {
+            String team = FootballTables.plainName(Json.text(Json.map(best.get("team")).get("name")));
+            boolean atClub = !club.isEmpty() && !team.isEmpty() && (team.contains(club) || club.contains(team));
+            player = new LinkedHashMap<>();
+            player.put("id", id);
+            player.put("name", name);   // the scorer list's spelling, so the page matches him
+            player.put("position", Json.text(best.get("type")));
+            Map<String, Object> stats = playerStats(best);
+            if (atClub) {
+                player.put("games", whole(best.get("matchPlayed")));
+                player.put("goals", whole(best.get("goals")));
+                player.put("shots", whole(best.get("shotsTotal")));
+            } else {
+                // filed under another team (e.g. England): those numbers are his games for them, not his club season
+                // (Morgan Rogers: 7 games, 1 shot for England, 5 goals for Chelsea), so keep only who he is
+                stats.keySet().retainAll(java.util.Set.of("number", "age", "isCaptain", "injured", "filedUnder", "image"));
+            }
+            player.put("stats", stats);
+        }
+        tables.addToSquad(teamId, name, player);
+        return player != null;
+    }
+
+    /**
+     * Same player name, plain (see FootballTables.plainName): exactly, or an initial for the first name ("z. tripic" and
+     * "zan tripic", "z tripic" either way round).
+     */
+    static boolean sameName(String a, String b) {
+        if (a.equals(b)) {
+            return true;
+        }
+        String[] x = a.split(" "), y = b.split(" ");
+        if (x.length < 2 || y.length < 2) {
+            return false;
+        }
+        String restX = a.substring(a.indexOf(' ') + 1), restY = b.substring(b.indexOf(' ') + 1);
+        boolean initialX = x[0].matches("[a-z]\\.?"), initialY = y[0].matches("[a-z]\\.?");
+        return restX.equals(restY) && (initialX || initialY) && x[0].charAt(0) == y[0].charAt(0);
     }
 
     /**
@@ -253,6 +356,7 @@ public class GoalStats {
             score.put("halfTime", goals(whole(m.get("homeTeamHalftimeScore")), whole(m.get("awayTeamHalftimeScore"))));
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("id", id);
+            out.put("goalId", Json.text(m.get("id")));   // GOAL API's fixture id (its live calls use it)
             out.put("utcDate", utc);
             out.put("status", status);
             out.put("matchday", whole(m.get("matchRound")));

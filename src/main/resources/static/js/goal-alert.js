@@ -5,7 +5,7 @@
 // that goes down (a goal ruled out by VAR) is just remembered too. The 🔊 button by the score mutes it (per browser).
 // Several at once (a goal and a card between two polls) show one after another.
 // Also: KICK-OFF / HALF TIME / SECOND HALF / FULL TIME with the referee's whistle, PENALTY! (when GOAL API sends a
-// penalty count), and a chime + small note when a bet window's odds (10', 25', HT, 60', 80') come in.
+// penalty count), and a chime + small note when a bet window's odds (30', HT, 60', 80') come in.
 window.GoalAlert = (function () {
   var last = null, lastCards = null, ctx = null, queue = [], showing = false, phase = null, points = null;
 
@@ -189,7 +189,7 @@ window.GoalAlert = (function () {
     if (!ctx || ctx.state !== 'running') return;   // no click on the page yet: the banner still shows
     var master = ctx.createGain();
     master.gain.value = 0.7;
-    master.connect(ctx.destination);
+    master.connect(ctx.destination); playing.push(master);
     var t = ctx.currentTime;
     crowd(master, t, { dur: 5, attack: 0.4, glide: 0.15, voices: 50, peak: 0.7, hiss: 0.35 });
     crowd(master, t + 1.2, { dur: 4, attack: 0.6, glide: 0.08, voices: 30, peak: 0.45, hiss: 0.2 });   // the second wave
@@ -203,7 +203,7 @@ window.GoalAlert = (function () {
     if (!ctx || ctx.state !== 'running') return;
     var t = ctx.currentTime, master = ctx.createGain();
     master.gain.value = 0.35;
-    master.connect(ctx.destination);
+    master.connect(ctx.destination); playing.push(master);
     var blasts = kind === 'red' ? [[0, 0.25], [0.35, 0.9]] : [[0, 0.45]];
     blasts.forEach(function (b) {
       var o = ctx.createOscillator(), lfo = ctx.createOscillator(), depth = ctx.createGain(), g = ctx.createGain();
@@ -237,7 +237,7 @@ window.GoalAlert = (function () {
     if (!ctx || ctx.state !== 'running') return;
     var t = ctx.currentTime, master = ctx.createGain();
     master.gain.value = vol || 0.35;
-    master.connect(ctx.destination);
+    master.connect(ctx.destination); playing.push(master);
     list.forEach(function (b) {
       var o = ctx.createOscillator(), lfo = ctx.createOscillator(), depth = ctx.createGain(), g = ctx.createGain();
       o.type = 'sine'; o.frequency.value = 2900;
@@ -275,7 +275,7 @@ window.GoalAlert = (function () {
       g.gain.setValueAtTime(0.0001, t + n[1]);
       g.gain.exponentialRampToValueAtTime(0.25, t + n[1] + 0.01);
       g.gain.exponentialRampToValueAtTime(0.0001, t + n[1] + 1.2);
-      o.connect(g); g.connect(ctx.destination);
+      o.connect(g); g.connect(ctx.destination); playing.push(g);
       o.start(t + n[1]); o.stop(t + n[1] + 1.25);
     });
   }
@@ -380,10 +380,26 @@ window.GoalAlert = (function () {
     queue.push(fn);
     if (!showing) next();
   }
+  var round = 0;   // bumped by stop(): a banner from before it finishing doesn't start the next one
   function next() {
-    var fn = queue.shift();
+    var fn = queue.shift(), mine = round;
     showing = !!fn;
-    if (fn) fn(function () { next(); });
+    if (fn) fn(function () { if (mine === round) next(); });
+  }
+  var playing = [];   // sounds started (their output), so stop() can cut them off
+  /**
+   * Clears everything showing or waiting: banners, the bet window note and their sounds. The Settings "Try them"
+   * buttons call it first, so clicking again restarts the animation instead of queueing or stacking another.
+   */
+  function stop() {
+    round++;
+    queue = [];
+    showing = false;
+    if (typeof document !== 'undefined' && document.querySelectorAll) {
+      [].forEach.call(document.querySelectorAll('.goal-overlay, .window-note'), function (n) { n.remove(); });
+    }
+    playing.forEach(function (g) { try { g.disconnect(); } catch (e) { /* already done */ } });
+    playing = [];
   }
   function teamLine(team, badge) {
     var who = document.createElement('div');
@@ -439,23 +455,9 @@ window.GoalAlert = (function () {
     setTimeout(function () { box.remove(); bits.forEach(function (x) { x.remove(); }); done(); }, 5000);
   }
 
-  /** The 🔊 / 🔇 button by the score: Sounds on or off (the same switch as in Settings). */
-  function muteButton() {
-    var b = document.createElement('button');
-    b.type = 'button';
-    b.className = 'btn btn-sm btn-link text-decoration-none p-0 ms-2 align-baseline';
-    var draw = function () {
-      b.textContent = soundOn() ? '🔊' : '🔇';
-      b.title = soundOn() ? 'Match sounds on (click to mute)' : 'Match sounds muted (click to turn on)';
-    };
-    b.addEventListener('click', function () { setSound(!soundOn()); draw(); if (soundOn()) unlock(); });
-    draw();
-    return b;
-  }
-
   return { parse: parse, check: check, checkCards: checkCards, checkStatus: checkStatus, checkPoints: checkPoints,
            phaseBanner: phaseBanner, windowOpen: windowOpen, chime: chime,
-           reset: reset, celebrate: celebrate, card: card,
-           play: play, whistle: whistle, muteButton: muteButton,
+           reset: reset, stop: stop, celebrate: celebrate, card: card,
+           play: play, whistle: whistle,
            soundOn: soundOn, setSound: setSound, animationsOn: animationsOn, setAnimations: setAnimations };
 })();

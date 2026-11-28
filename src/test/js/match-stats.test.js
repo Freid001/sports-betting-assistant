@@ -29,7 +29,7 @@ function page(routes, ev, home, away) {
   return { w, box, $ };
 }
 
-const event = (compKey, comp) => ({ compKey, comp, home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town',
+const event = (compKey, comp, gameId) => ({ compKey, comp, game_id: gameId, home_team: 'Tottenham Hotspur', away_team: 'Ipswich Town',
   bookmakers: [{ key: 'skybet', markets: [{ key: 'h2h', outcomes: [
     { name: 'Tottenham Hotspur', price: 1.6 }, { name: 'Draw', price: 4.2 }, { name: 'Ipswich Town', price: 5.5 }] }] }] });
 
@@ -39,16 +39,15 @@ const scorers = { competition: { name: 'Premier League' }, scorers: [
   { player: { id: 12, name: 'Delap' }, team: { id: 2 }, goals: 6 }] };
 
 test('league match: form, one league row, goals profile from home/away games, key players, head-to-head totals', async () => {
-  const { box, $ } = page({
+  const { box, $, w } = page({
     '/api/football/data/teams/1/matches': { matches: homeGames(6) },
     '/api/football/data/teams/2/matches': { matches: awayGames(6) },
     '/api/football/data/competitions/PL/standings': table([
       { position: 1, points: 28, playedGames: 12, goalDifference: 15, team: { id: 1 } },
       { position: 18, points: 9, playedGames: 12, goalDifference: -10, team: { id: 2 } }]),
     '/api/football/data/competitions/PL/scorers': scorers,
-    '/api/football/data/competitions/PL/matches?status=SCHEDULED': { matches: [{ id: 77, homeTeam: SPURS, awayTeam: IPSWICH }] },
     '/api/football/data/matches/77/head2head': { aggregates: { numberOfMatches: 4, totalGoals: 10 }, matches: [] }
-  }, event('epl', 'Premier League'), SPURS, IPSWICH);
+  }, event('epl', 'Premier League', 77), SPURS, IPSWICH);
   await settle();
 
   const formRows = $('form').querySelectorAll('tbody tr').map(r => r.children[1].textContent);
@@ -67,6 +66,26 @@ test('league match: form, one league row, goals profile from home/away games, ke
   assert.equal($('keyPlayers').querySelectorAll('[data-bs-toggle]').length, 0);
   assert.match($('h2h').textContent, /4 previous meetings, 10 goals \(2\.5 per game\)/);
   assert.match($('valueCheck').textContent, /Match Result/);
+  // GOAL API's scorer lists have no games played: the team's games from the league table (12) stand in
+  const ts = w.TopScorers;
+  assert.deepEqual(plain(ts.home.scorers.map(p => [p.name, p.games])), [['Kane', 10], ['Son', 12]]);
+  assert.deepEqual(plain(ts.away.scorers.map(p => [p.name, p.games])), [['Delap', 12]]);
+});
+
+test('squad players outside the top-scorer list get their own goals and games, for goalscorer verdicts', async () => {
+  const { $, w } = page({
+    '/api/football/data/teams/1/matches': { matches: homeGames(6) },
+    '/api/football/data/teams/2/matches': { matches: awayGames(6) },
+    // the server gives a player the same id in the squad and the scorer tables (Kane: 10)
+    '/api/football/data/teams/1/squad': { squad: [{ id: 10, name: 'H. Kane', position: 'Forwards', games: 9, goals: 9 },
+      { id: 11, name: 'Richarlison', position: 'Forwards', games: 8, goals: 3 }, { id: 12, name: 'Bench', position: 'Defenders', games: 0, goals: 0 }] },
+    '/api/football/data/competitions/PL/standings': table([{ position: 1, points: 28, playedGames: 12, goalDifference: 15, team: { id: 1 } }]),
+    '/api/football/data/competitions/PL/scorers': { scorers: [{ player: { id: 10, name: 'Kane' }, team: { id: 1 }, goals: 9 }] }
+  }, event('epl', 'Premier League'), SPURS, IPSWICH);
+  await settle();
+  const ts = w.TopScorers.home.scorers.map(p => [p.name, p.goals, p.games, p.position]);
+  assert.deepEqual(plain(ts), [['Kane', 9, 9, 'Forward'], ['Richarlison', 3, 8, 'Forward']]);   // not Bench: no games
+  assert.match($('keyPlayers').textContent, /Richarlison/);   // in Top Scorers now too
 });
 
 test('cup match with few home/away games: any-venue note, a cup row, and individual head-to-head results', async () => {
@@ -79,9 +98,8 @@ test('cup match with few home/away games: any-venue note, a cup row, and individ
       standings: [{ type: 'TOTAL', group: 'GROUP_B', table: [{ position: 2, points: 7, playedGames: 4, goalDifference: 3, team: { id: 1 } }] }] },
     '/api/football/data/competitions/CL/scorers': { scorers: [{ player: { id: 10, name: 'Kane' }, team: { id: 1 }, goals: 3 }] },
     '/api/football/data/competitions/PL/scorers': scorers,
-    '/api/football/data/competitions/CL/matches?status=SCHEDULED': { matches: [{ id: 88, homeTeam: SPURS, awayTeam: IPSWICH }] },
     '/api/football/data/matches/88/head2head': { matches: meetings }
-  }, event('uefa_champs_league', 'Champions League'), SPURS, IPSWICH);
+  }, event('uefa_champs_league', 'Champions League', 88), SPURS, IPSWICH);
   await settle();
 
   assert.match($('goalsNote').textContent, /games, any venue/);
@@ -138,22 +156,20 @@ test('head to head: fixture not found, not saved, or no meetings; and no scorers
     '/api/football/data/competitions/PL/standings': { status: 404, body: {} },
     '/api/football/data/competitions/PL/scorers': { scorers: [] }
   };
-  const noFixture = page(Object.assign({ '/api/football/data/competitions/PL/matches?status=SCHEDULED': { matches: [] } }, base),
-    event('epl', 'Premier League'), SPURS, IPSWICH);
+  const noFixture = page(base, event('epl', 'Premier League'), SPURS, IPSWICH);   // the odds not matched to a game
   await settle();
   assert.equal(noFixture.$('h2h').textContent, 'No head-to-head data found.');
   assert.match(noFixture.$('keyPlayers').textContent, /No players in the scorer tables yet/);
   assert.match(noFixture.$('form').textContent, /n\/a/);
 
-  const notSaved = page(Object.assign({ '/api/football/data/competitions/PL/matches?status=SCHEDULED': { status: 404, body: {} } }, base),
-    event('epl', 'Premier League'), SPURS, IPSWICH);
+  const notSaved = page(Object.assign({ '/api/football/data/matches/6/head2head': { status: 404, body: {} } }, base),
+    event('epl', 'Premier League', 6), SPURS, IPSWICH);
   await settle();
   assert.equal(notSaved.$('h2h').textContent, 'Refresh Stats');
 
   const none = page(Object.assign({
-    '/api/football/data/competitions/PL/matches?status=SCHEDULED': { matches: [{ id: 5, homeTeam: SPURS, awayTeam: IPSWICH }] },
     '/api/football/data/matches/5/head2head': { aggregates: { numberOfMatches: 0 } } }, base),
-    event('epl', 'Premier League'), SPURS, IPSWICH);
+    event('epl', 'Premier League', 5), SPURS, IPSWICH);
   await settle();
   assert.equal(none.$('h2h').textContent, 'No previous meetings found.');
 

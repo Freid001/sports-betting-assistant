@@ -8,21 +8,18 @@ const KO = '2026-11-21T15:00:00.000Z';
 const state = {
   tracked: ['g1'],
   fixtures: [
-    { id: 'g1', home: 'Tottenham', away: 'Ipswich', kickoff: KO, status: 'LIVE', live: true },
-    { id: 'g2', home: 'Manchester Utd', away: 'Everton', kickoff: KO, status: 'SCHEDULED', live: false },
-    { id: 'g3', home: 'Manchester City', away: 'Fulham', kickoff: '2026-11-21T12:30:00.000Z', status: 'FINISHED', live: false }
+    { id: 'g1', eventId: 'e1', home: 'Tottenham', away: 'Ipswich', kickoff: KO, status: 'LIVE', live: true },
+    { id: 'g2', eventId: 'e2', home: 'Manchester Utd', away: 'Everton', kickoff: KO, status: 'SCHEDULED', live: false },
+    { id: 'g3', eventId: null, home: 'Manchester City', away: 'Fulham', kickoff: '2026-11-21T12:30:00.000Z', status: 'FINISHED', live: false }
   ]
 };
-const odds = (home, away, time) => ({ home_team: home, away_team: away, commence_time: time || KO });
+const odds = (id) => ({ id: id, home_team: 'any', away_team: 'names', commence_time: KO });
 
-test('GOAL API games are matched to Odds API matches by kick-off and team names', () => {
-  assert.equal(Live.findFor(state, odds('Tottenham Hotspur', 'Ipswich Town')).id, 'g1');
-  assert.equal(Live.findFor(state, odds('Manchester United', 'Everton')).id, 'g2');
-  assert.equal(Live.findFor(state, odds('Manchester City', 'Fulham', '2026-11-21T12:30:00Z')).id, 'g3');
-});
-
-test('a different kick-off time is not the same game', () => {
-  assert.equal(Live.findFor(state, odds('Tottenham Hotspur', 'Ipswich Town', '2026-11-22T15:00:00Z')), null);
+test('a GOAL API game is an Odds API match when the server linked both to one game (no name guessing)', () => {
+  assert.equal(Live.findFor(state, odds('e1')).id, 'g1');
+  assert.equal(Live.findFor(state, odds('e2')).id, 'g2');
+  assert.equal(Live.findFor(state, odds('e3')), null);   // not linked: not found
+  assert.equal(Live.findFor(state, { home_team: 'Tottenham', away_team: 'Ipswich', commence_time: KO }), null);
 });
 
 test('only ticked games count as followed, and monitoring stops when they finish', () => {

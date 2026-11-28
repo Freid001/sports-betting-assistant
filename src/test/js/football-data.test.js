@@ -40,6 +40,13 @@ test('Odds API names find the saved team', () => {
   assert.equal(F.findTeam(teams, 'Arsenal'), null);
 });
 
+test('the team the server matched (the event\'s team id) wins over the name', () => {
+  const teams = [{ id: 1, name: 'Nottingham Forest', shortName: 'Nottingham' }, { id: 2, name: 'Forest Green Rovers' }];
+  assert.equal(F.findTeam(teams, 'Forest', 2).id, 2);
+  assert.equal(F.findTeam(teams, 'Nottingham Forest', 99).id, 1);   // an id not in the list: the name as before
+  assert.equal(F.findTeam(teams, 'Nottingham Forest', null).id, 1);
+});
+
 test('every saved team (competition not on the free plan) is matched strictly', () => {
   const teams = [
     { name: 'Sparta Rotterdam', shortName: 'Sparta', tla: 'SPA' },
