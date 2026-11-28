@@ -350,7 +350,7 @@ window.Live = (function () {
   /** Follow (on) or stop following this game live, then redraw the card. */
   function follow(box, footLeft, ev, on) {
     return F.sendJson('/api/football/live/follow?eventId=' + encodeURIComponent(ev.id) + '&on=' + on).then(function (state) {
-      notify(on ? 'Following ' + ev.home_team + ' v ' + ev.away_team + ' live: its stats are saved at 10\', 25\', HT, 60\', 80\' and FT.'
+      notify(on ? 'Following ' + ev.home_team + ' v ' + ev.away_team + ' live: its stats are saved at 30\', HT, 60\', 80\' and FT.'
                 : 'Stopped following ' + ev.home_team + ' v ' + ev.away_team + '.', 'success');
       return renderCard(box, footLeft, state, ev);
     }).catch(function (e) { notify('Couldn\'t ' + (on ? 'follow' : 'stop following') + ' the game: ' + e.message, 'danger'); });
@@ -360,7 +360,7 @@ window.Live = (function () {
     var btn = el('button', 'btn btn-sm btn-outline-theme', on ? '▶' : '■');
     btn.type = 'button';
     btn.setAttribute('data-follow', on ? 'on' : 'off');
-    btn.title = on ? 'Follow live: the stats are refreshed during the game and saved at 10\', 25\', HT, 60\', 80\' and FT'
+    btn.title = on ? 'Follow live: the stats are refreshed during the game and saved at 30\', HT, 60\', 80\' and FT'
                    : 'Stop following this game';
     btn.onclick = function () { btn.disabled = true; follow(box, footLeft, ev, on); };
     return btn;
@@ -380,17 +380,19 @@ window.Live = (function () {
   }
 
   /**
-   * Not followed: before kick-off, Pre-Match and a ▶ button to follow it live; a game already played offers to load
-   * its stats once (Post-Match, 2 GOAL API calls).
+   * Not followed: before kick-off or while it's being played, Pre-Match and a ▶ button to follow it live (a game in
+   * progress is picked up straight away); a game already played offers to load its stats once (Post-Match, 2 GOAL
+   * API calls).
    */
   function notFollowed(box, footLeft, ev, state) {
     var started = new Date(ev.commence_time).getTime() <= Date.now();
+    var played = new Date(ev.commence_time).getTime() < Date.now() - 2 * 3600000;
     cards(started);
     box.replaceChildren(el('div', 'text-muted', started ? 'No Live Stats' : 'Match Not Started'));
     hostsSay(started ? 'No Live Stats' : 'Match Not Started');
     footLeft.textContent = '';
     var tournament = tournamentOf(ev);
-    if (!started && tournament && timelineHost) {
+    if (!played && tournament && timelineHost) {
       var bar = el('div', 'd-flex justify-content-center flex-wrap gap-1 mb-2 live-timeline');
       var pre = el('button', 'btn btn-sm btn-outline-theme active', periodLabel('PRE'));
       pre.type = 'button';
@@ -400,7 +402,6 @@ window.Live = (function () {
       timelineHost.replaceChildren(bar);
       return Promise.resolve(null);
     }
-    var played = new Date(ev.commence_time).getTime() < Date.now() - 2 * 3600000;
     if (played && tournament) {
       var btn = el('button', 'btn btn-sm btn-outline-theme' + (timelineHost ? '' : ' d-block mx-auto mt-2'), 'Post-Match');
       btn.type = 'button';

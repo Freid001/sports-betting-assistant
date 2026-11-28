@@ -335,6 +335,20 @@ test('match card: an upcoming game not followed shows Pre-Match and a play butto
   assert.equal(w.notes[0].type, 'success');
 });
 
+test('match card: a game being played that isn\'t followed still offers the play button', async () => {
+  const ko = new Date(Date.now() - 80 * 60000).toISOString();   // kicked off 80 minutes ago
+  const ev = { id: 'e8', sport_key: 'soccer_epl', home_team: 'Leeds United', away_team: 'Coventry City', commence_time: ko };
+  const w = load(['football-data.js', 'live.js'], { routes: { '/api/football/live/follow*': state() } });
+  const box = w.document.createElement('div'), foot = w.document.createElement('span'), host = w.document.createElement('div');
+  w.Live.setTimelineHost(host);
+  await w.Live.renderCard(box, foot, state(), ev);
+  assert.deepEqual(host.querySelectorAll('button').map(b => b.textContent), ['Pre-Match', '▶']);
+  assert.equal(box.textContent, 'No Live Stats');
+  host.querySelector('button[data-follow="on"]').click();
+  await settle();
+  assert.ok(w.calls.some(c => c.url === '/api/football/live/follow?eventId=e8&on=true'));
+});
+
 test('match card: a point picked by hand stays picked when the stats are re-read', async () => {
   const live = fx('g1', { live: true, status: 'LIVE', elapsed: '50', homeScore: '1', awayScore: '0' });
   const c = card({ '/api/football/live/match/g1': { fixture: live, refreshMinutes: 5,
