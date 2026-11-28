@@ -27,6 +27,8 @@ class StoreTest {
                     .contains("teams", "games", "game_sources", "team_names", "players", "player_sources", "team_players",
                             "player_season_stats", "scorers", "head_to_head", "odds_events",
                             "odds_prices", "live_state", "live_points", "live_point_stats", "live_events", "favourites", "refreshes", "api_usage")
+                    .contains("setting_values", "odds_fetch_markets", "odds_live_prices", "prediction_numbers", "prediction_bets",
+                            "prediction_lines")
                     .doesNotContain("saved", "matches", "squads", "live_games", "live_snapshots");
             assertThat(s.file()).isEqualTo(tmp.resolve("data/test.db"));
         }

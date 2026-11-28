@@ -202,8 +202,8 @@ class OddsCacheServiceTest {
         // Match result first, then the extra markets; and when "all markets" were fetched
         assertThat(json.indexOf("\"key\":\"h2h\"")).isLessThan(json.indexOf("\"key\":\"btts\""));
         assertThat(json).contains("{\"name\":\"Over\",\"price\":1.9,\"point\":2.5}").contains("\"extras_fetched_at\":{\"skybet\":\"20");
-        assertThat(store.first("SELECT markets FROM odds_extra_fetches WHERE event_id = 'e1' AND bookmaker = 'skybet'",
-                rs -> rs.getString(1))).contains("alternate_totals,btts");
+        assertThat(store.query("SELECT market FROM odds_extra_fetch_markets WHERE event_id = 'e1' AND bookmaker = 'skybet' "
+                + "ORDER BY market", rs -> rs.getString(1))).containsExactly("alternate_totals", "btts");   // what came back
     }
 
     @Test

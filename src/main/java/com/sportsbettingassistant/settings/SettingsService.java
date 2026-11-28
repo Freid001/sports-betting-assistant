@@ -209,7 +209,7 @@ public class SettingsService {
         out.put("saved", saved("refresh-scope").isPresent());
         out.put("matchResult", isOn("refresh-match-result"));
         out.put("scope", saved("refresh-scope").filter(SCOPES::contains).orElse("off"));
-        out.put("markets", saved("refresh-markets").map(m -> List.of(m.split(","))).orElse(List.of()));
+        out.put("markets", values("refresh-markets"));
         return out;
     }
 
@@ -225,7 +225,7 @@ public class SettingsService {
         store.transaction(() -> {
             saveOn("refresh-match-result", matchResult);
             save("refresh-scope", scope);
-            save("refresh-markets", String.join(",", markets));
+            saveValues("refresh-markets", markets);
         });
     }
 
@@ -264,11 +264,10 @@ public class SettingsService {
 
     /** Bet Windows: which of them fetch the in-play odds (Refresh Odds Live); all of them until picked. */
     public List<String> betWindows() {
-        String v = saved("bet-windows").orElse(null);
-        if (v == null) {
+        if (saved("bet-windows-picked").isEmpty()) {
             return BET_WINDOWS;
         }
-        List<String> picked = List.of(v.split(","));
+        List<String> picked = values("bet-windows");
         return BET_WINDOWS.stream().filter(picked::contains).toList();
     }
 
@@ -278,8 +277,10 @@ public class SettingsService {
                 throw new IllegalArgumentException("Bet windows are 30, HT, 60 and 80: not " + w);
             }
         }
-        save("bet-windows",
-                String.join(",", BET_WINDOWS.stream().filter(windows::contains).toList()));
+        store.transaction(() -> {
+            saveValues("bet-windows", BET_WINDOWS.stream().filter(windows::contains).toList());
+            save("bet-windows-picked", "on");
+        });
     }
 
     // ---------------------------------------------------------------- top bar
@@ -319,6 +320,21 @@ public class SettingsService {
     }
 
     /** An On / Off setting: on unless it's been switched off. */
+    /** A setting that's a list: its values in order (rows in setting_values). */
+    private List<String> values(String setting) {
+        return store.query("SELECT value FROM setting_values WHERE setting = ? ORDER BY position", rs -> rs.getString(1), setting);
+    }
+
+    private void saveValues(String setting, List<String> values) {
+        store.transaction(() -> {
+            store.update("DELETE FROM setting_values WHERE setting = ?", setting);
+            int i = 0;
+            for (String v : new java.util.LinkedHashSet<>(values)) {
+                store.update("INSERT INTO setting_values (setting, position, value) VALUES (?, ?, ?)", setting, i++, v);
+            }
+        });
+    }
+
     private boolean isOn(String name) {
         return !"off".equals(saved(name).orElse("on"));
     }

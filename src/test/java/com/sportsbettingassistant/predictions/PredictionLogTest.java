@@ -80,13 +80,53 @@ class PredictionLogTest {
     }
 
     @Test
-    void predictionsSavedBeforeGamesExistedAreLinkedOnce() {
-        store.update("INSERT INTO predictions (match_id, point, kickoff, competition, home_team_id, away_team_id, body) "
-                + "VALUES ('e7', 'PRE', ?, 'epl', 1, 2, '{}'), ('e7', 'HT', ?, 'epl', 1, 2, '{}')", KO.toString(), KO.toString());
-        assertThat(log.linkGames()).isEqualTo(1);                                // one game, both points
-        assertThat(log.linkGames()).isZero();                                    // done: nothing the next time
-        assertThat(store.query("SELECT competition || ' ' || home_team_id || ' ' || away_team_id FROM games", rs -> rs.getString(1)))
-                .containsExactly("PL 1 2");
+    @SuppressWarnings("unchecked")
+    void aPredictionIsKeptAsRowsAndComesBackAsItWasSent() {
+        store.update("INSERT INTO teams (id, name) VALUES (1, 'Nottingham Forest'), (2, 'Chelsea')");
+        store.update("INSERT INTO team_names (source, name, team_id) VALUES ('odds', 'Nottingham Forest', 1), ('odds', 'Chelsea', 2)");
+        Map<String, Object> pre = prediction("PRE", 0.40);
+        pre.put("version", "2026-11-27");
+        pre.put("confidence", "Low");
+        pre.put("odds", Map.of("home", 2.5, "draw", 3.4, "away", 2.9));
+        pre.put("recommended", List.of(Map.of("key", "h2h", "name", "Chelsea", "price", 2.9, "chance", 0.38)));
+        pre.put("predictionRows", List.of(List.of("FT Score", "Forest 1 – 1 Chelsea"), List.of("Result", "Draw (30%)")));
+        log.save(pre, KO.minusSeconds(7200));
+        Map<String, Object> again = prediction("PRE", 0.41);                  // the Bets page: no Prediction card lines
+        again.put("recommended", List.of());
+        log.save(again, KO.minusSeconds(60));
+
+        Map<String, Object> window = prediction("60", 0.55);
+        window.put("minute", 60);
+        window.put("score", List.of(1, 0));
+        window.put("recommended", List.of(Map.of("label", "★ Forest · Match Result", "o", Map.of("price", 1.4), "chance", 0.83,
+                "fits", true, "hint", "a hint", "r", Map.of("ours", 0.83, "fair", 0.71, "ret", 0.16,
+                        "verdict", Map.of("text", "Possible Value", "cls", "verdict-possible")))));
+        log.save(window, KO.plusSeconds(3900));
+
+        List<Map<String, Object>> all = log.all();
+        Map<String, Object> p = all.stream().filter(x -> "PRE".equals(x.get("point"))).findFirst().orElseThrow();
+        assertThat(p).containsEntry("matchId", "e1").containsEntry("home", "Nottingham Forest").containsEntry("competition", "epl")
+                .containsEntry("kickoff", KO.toString()).containsEntry("recommended", List.of());
+        assertThat((Map<String, Object>) p.get("chances")).containsEntry("home", 0.41);
+        assertThat((List<List<String>>) p.get("predictionRows")).containsExactly(               // kept from the first save
+                List.of("FT Score", "Forest 1 – 1 Chelsea"), List.of("Result", "Draw (30%)"));
+
+        Map<String, Object> w = all.stream().filter(x -> "60".equals(x.get("point"))).findFirst().orElseThrow();
+        assertThat(w).containsEntry("minute", 60L).containsEntry("score", List.of(1L, 0L));
+        Map<String, Object> bet = ((List<Map<String, Object>>) w.get("recommended")).get(0);
+        assertThat(bet).containsEntry("label", "★ Forest · Match Result").containsEntry("o", Map.of("price", 1.4))
+                .containsEntry("fits", true).containsEntry("hint", "a hint");
+        assertThat(String.valueOf(bet.get("r"))).contains("ret=0.16").contains("text=Possible Value").contains("cls=verdict-possible");
+        assertThat(store.query("SELECT kind FROM prediction_numbers WHERE point = 'PRE' ORDER BY kind", rs -> rs.getString(1)))
+                .containsExactly("chances");                                   // the second PRE replaced the first's numbers
+    }
+
+    @Test
+    void aGameWhoseTeamsArentKnownIsntKept() {
+        Map<String, Object> p = prediction("PRE", 0.4);
+        p.remove("homeTeamId");
+        assertThat(log.save(p, KO.minusSeconds(60))).isFalse();
+        assertThat(log.all()).isEmpty();
     }
 
     @Test

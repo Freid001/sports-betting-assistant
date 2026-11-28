@@ -288,6 +288,129 @@ public class Store implements AutoCloseable {
                 DROP TABLE live_players;
                 DROP TABLE live_timeline;
                 DROP TABLE live_videos;
+                """,
+            // 5: no comma-separated lists or JSON in the odds and settings. A setting that's a list (Refresh Odds'
+            // markets, the bet windows) is rows in setting_values; what a fetch asked for and got (markets, bookmakers)
+            // is rows next to the fetch; the in-play prices at each bet window are rows in odds_live_prices.
+            () -> """
+                CREATE TABLE setting_values (setting TEXT NOT NULL, position INTEGER NOT NULL, value TEXT NOT NULL,
+                    PRIMARY KEY (setting, value));
+                WITH RECURSIVE split (setting, rest, item, pos) AS (
+                        SELECT name, value || ',', '', -1 FROM settings WHERE name IN ('refresh-markets', 'bet-windows')
+                        UNION ALL SELECT setting, substr(rest, instr(rest, ',') + 1), trim(substr(rest, 1, instr(rest, ',') - 1)), pos + 1
+                        FROM split WHERE rest <> '')
+                    INSERT INTO setting_values (setting, position, value) SELECT setting, pos, item FROM split WHERE pos >= 0 AND item <> '';
+                INSERT INTO settings (name, value) SELECT 'bet-windows-picked', 'on' FROM settings WHERE name = 'bet-windows';
+                DELETE FROM settings WHERE name IN ('refresh-markets', 'bet-windows');
+                CREATE TABLE odds_fetch_markets (sport TEXT NOT NULL REFERENCES odds_fetches (sport), market TEXT NOT NULL,
+                    PRIMARY KEY (sport, market));
+                WITH RECURSIVE split (sport, rest, item, pos) AS (
+                        SELECT sport, COALESCE(markets, '') || ',', '', -1 FROM odds_fetches
+                        UNION ALL SELECT sport, substr(rest, instr(rest, ',') + 1), trim(substr(rest, 1, instr(rest, ',') - 1)), pos + 1
+                        FROM split WHERE rest <> '')
+                    INSERT OR IGNORE INTO odds_fetch_markets (sport, market) SELECT sport, item FROM split WHERE pos >= 0 AND item <> '';
+                CREATE TABLE odds_fetch_bookmakers (sport TEXT NOT NULL REFERENCES odds_fetches (sport), bookmaker TEXT NOT NULL,
+                    PRIMARY KEY (sport, bookmaker));
+                WITH RECURSIVE split (sport, rest, item, pos) AS (
+                        SELECT sport, COALESCE(bookmakers, '') || ',', '', -1 FROM odds_fetches
+                        UNION ALL SELECT sport, substr(rest, instr(rest, ',') + 1), trim(substr(rest, 1, instr(rest, ',') - 1)), pos + 1
+                        FROM split WHERE rest <> '')
+                    INSERT OR IGNORE INTO odds_fetch_bookmakers (sport, bookmaker) SELECT sport, item FROM split WHERE pos >= 0 AND item <> '';
+                CREATE TABLE odds_fetches_new (sport TEXT PRIMARY KEY, fetched_at TEXT NOT NULL, days INTEGER, credits INTEGER);
+                INSERT INTO odds_fetches_new SELECT sport, fetched_at_iso, days,
+                    CASE WHEN TRIM(credits) GLOB '[0-9]*' THEN CAST(TRIM(credits) AS INTEGER) END FROM odds_fetches;
+                DROP TABLE odds_fetches;
+                ALTER TABLE odds_fetches_new RENAME TO odds_fetches;
+                CREATE TABLE odds_extra_fetch_markets (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, market TEXT NOT NULL,
+                    PRIMARY KEY (event_id, bookmaker, market));
+                WITH RECURSIVE split (event_id, bookmaker, rest, item, pos) AS (
+                        SELECT event_id, bookmaker, COALESCE(markets, '') || ',', '', -1 FROM odds_extra_fetches
+                        UNION ALL SELECT event_id, bookmaker, substr(rest, instr(rest, ',') + 1), trim(substr(rest, 1, instr(rest, ',') - 1)), pos + 1
+                        FROM split WHERE rest <> '')
+                    INSERT OR IGNORE INTO odds_extra_fetch_markets (event_id, bookmaker, market)
+                    SELECT event_id, bookmaker, item FROM split WHERE pos >= 0 AND item <> '';
+                CREATE TABLE odds_extra_fetches_new (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, fetched_at TEXT NOT NULL,
+                    credits INTEGER, PRIMARY KEY (event_id, bookmaker));
+                INSERT INTO odds_extra_fetches_new SELECT event_id, bookmaker, fetched_at_iso, credits FROM odds_extra_fetches;
+                DROP TABLE odds_extra_fetches;
+                ALTER TABLE odds_extra_fetches_new RENAME TO odds_extra_fetches;
+                CREATE TABLE odds_live_prices (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, point TEXT NOT NULL,
+                    position INTEGER NOT NULL, market TEXT NOT NULL, outcome TEXT, description TEXT, line REAL, price REAL,
+                    PRIMARY KEY (event_id, bookmaker, point, position));
+                INSERT INTO odds_live_prices (event_id, bookmaker, point, position, market, outcome, description, line, price)
+                    SELECT p.event_id, p.bookmaker, p.point, m.key * 1000 + o.key, json_extract(m.value, '$.key'),
+                        json_extract(o.value, '$.name'), json_extract(o.value, '$.description'),
+                        json_extract(o.value, '$.point'), json_extract(o.value, '$.price')
+                    FROM odds_live_points p, json_each(p.markets) m, json_each(m.value, '$.outcomes') o;
+                CREATE TABLE odds_live_points_new (event_id TEXT NOT NULL, bookmaker TEXT NOT NULL, point TEXT NOT NULL,
+                    fetched_at TEXT, credits INTEGER, PRIMARY KEY (event_id, bookmaker, point));
+                INSERT INTO odds_live_points_new SELECT event_id, bookmaker, point, fetched_at_iso, credits FROM odds_live_points;
+                DROP TABLE odds_live_points;
+                ALTER TABLE odds_live_points_new RENAME TO odds_live_points;
+                """,
+            // 6: predictions by game (games.id) and as rows, not a JSON body: the model's numbers (chances, its view,
+            // ours after the nudge, the bookmaker's, the odds) in prediction_numbers, the Prediction card's lines in
+            // prediction_lines, the recommended bets in prediction_bets. Names, kick-off and competition from games.
+            () -> """
+                CREATE TABLE predictions_new (game_id INTEGER NOT NULL REFERENCES games (id), point TEXT NOT NULL,
+                    saved_at TEXT, model_version TEXT, confidence TEXT, minute INTEGER, home_goals INTEGER, away_goals INTEGER,
+                    has_bets INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (game_id, point));
+                INSERT OR IGNORE INTO predictions_new (game_id, point, saved_at, model_version, confidence, minute, home_goals,
+                    away_goals, has_bets)
+                    SELECT s.game_id, p.point, p.saved_at, p.version, json_extract(p.body, '$.confidence'),
+                        json_extract(p.body, '$.minute'), json_extract(p.body, '$.score[0]'), json_extract(p.body, '$.score[1]'),
+                        json_type(p.body, '$.recommended') IS 'array'
+                    FROM predictions p JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id
+                    ORDER BY p.saved_at DESC;
+                CREATE TABLE prediction_numbers (game_id INTEGER NOT NULL, point TEXT NOT NULL, kind TEXT NOT NULL,
+                    name TEXT NOT NULL, value REAL NOT NULL, PRIMARY KEY (game_id, point, kind, name),
+                    FOREIGN KEY (game_id, point) REFERENCES predictions (game_id, point));
+                INSERT OR IGNORE INTO prediction_numbers (game_id, point, kind, name, value)
+                    SELECT s.game_id, p.point, 'chances', j.key, j.value FROM predictions p
+                    JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id, json_each(p.body, '$.chances') j
+                    WHERE j.type IN ('integer', 'real');
+                INSERT OR IGNORE INTO prediction_numbers (game_id, point, kind, name, value)
+                    SELECT s.game_id, p.point, 'view', j.key, j.value FROM predictions p
+                    JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id, json_each(p.body, '$.view') j
+                    WHERE j.type IN ('integer', 'real');
+                INSERT OR IGNORE INTO prediction_numbers (game_id, point, kind, name, value)
+                    SELECT s.game_id, p.point, 'ours', j.key, j.value FROM predictions p
+                    JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id, json_each(p.body, '$.ours') j
+                    WHERE j.type IN ('integer', 'real');
+                INSERT OR IGNORE INTO prediction_numbers (game_id, point, kind, name, value)
+                    SELECT s.game_id, p.point, 'bookmaker', j.key, j.value FROM predictions p
+                    JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id, json_each(p.body, '$.bookmaker') j
+                    WHERE j.type IN ('integer', 'real');
+                INSERT OR IGNORE INTO prediction_numbers (game_id, point, kind, name, value)
+                    SELECT s.game_id, p.point, 'odds', j.key, j.value FROM predictions p
+                    JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id, json_each(p.body, '$.odds') j
+                    WHERE j.type IN ('integer', 'real');
+                CREATE TABLE prediction_lines (game_id INTEGER NOT NULL, point TEXT NOT NULL, line_no INTEGER NOT NULL,
+                    label TEXT, text TEXT, PRIMARY KEY (game_id, point, line_no),
+                    FOREIGN KEY (game_id, point) REFERENCES predictions (game_id, point));
+                INSERT OR IGNORE INTO prediction_lines (game_id, point, line_no, label, text)
+                    SELECT s.game_id, p.point, r.key, json_extract(r.value, '$[0]'), json_extract(r.value, '$[1]')
+                    FROM predictions p JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id,
+                        json_each(p.body, '$.predictionRows') r;
+                CREATE TABLE prediction_bets (game_id INTEGER NOT NULL, point TEXT NOT NULL, rank INTEGER NOT NULL,
+                    market TEXT, label TEXT, price REAL, chance REAL, fits INTEGER, hint TEXT, ours REAL, fair REAL, ret REAL,
+                    verdict TEXT, verdict_class TEXT, PRIMARY KEY (game_id, point, rank),
+                    FOREIGN KEY (game_id, point) REFERENCES predictions (game_id, point));
+                INSERT OR IGNORE INTO prediction_bets (game_id, point, rank, market, label, price, chance, fits, hint, ours,
+                    fair, ret, verdict, verdict_class)
+                    SELECT s.game_id, p.point, b.key, json_extract(b.value, '$.key'),
+                        COALESCE(json_extract(b.value, '$.name'), json_extract(b.value, '$.label')),
+                        COALESCE(json_extract(b.value, '$.price'), json_extract(b.value, '$.o.price')),
+                        json_extract(b.value, '$.chance'),
+                        CASE WHEN json_extract(b.value, '$.fits') IN (1, 'true') THEN 1
+                            WHEN json_extract(b.value, '$.fits') IN (0, 'false') THEN 0 END,
+                        json_extract(b.value, '$.hint'), json_extract(b.value, '$.r.ours'), json_extract(b.value, '$.r.fair'),
+                        json_extract(b.value, '$.r.ret'), json_extract(b.value, '$.r.verdict.text'),
+                        json_extract(b.value, '$.r.verdict.cls')
+                    FROM predictions p JOIN game_sources s ON s.source = 'odds' AND s.source_id = p.match_id,
+                        json_each(p.body, '$.recommended') b;
+                DROP TABLE predictions;
+                ALTER TABLE predictions_new RENAME TO predictions;
                 """);
 
     /** One schema change: its SQL (statements separated by ';'), and Java for anything SQL can't do. */
