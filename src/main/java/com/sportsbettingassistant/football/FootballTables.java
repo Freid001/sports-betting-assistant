@@ -26,10 +26,12 @@ public class FootballTables {
 
     private final Store store;
     private final Games games;
+    private final Players players;
 
     public FootballTables(Store store) {
         this.store = store;
         this.games = new Games(store);
+        this.players = new Players(store);
     }
 
     // ---------------------------------------------------------------- saving API answers
@@ -83,69 +85,56 @@ public class FootballTables {
                     continue;
                 }
                 saveTeam(team, null);
-                store.update("INSERT OR REPLACE INTO scorers (competition, player_id, player, team_id, goals, assists, "
-                        + "penalties, games, position) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                        code, playerId, Json.text(player.get("name")), whole(team.get("id")), whole(s.get("goals")),
-                        whole(s.get("assists")), whole(s.get("penalties")), whole(s.get("playedMatches")),
-                        position(player));
+                String name = Json.text(player.get("name"));
+                if (name == null) {
+                    continue;
+                }
+                long id = players.link(Players.GOAL_SCORER, String.valueOf(playerId), whole(team.get("id")), name);
+                store.update("UPDATE players SET position = COALESCE(position, ?) WHERE id = ?", position(player), id);
+                store.update("INSERT OR REPLACE INTO scorers (competition, player_id, team_id, goals, assists, penalties, games) "
+                        + "VALUES (?, ?, ?, ?, ?, ?, ?)", code, id, whole(team.get("id")), whole(s.get("goals")),
+                        whole(s.get("assists")), whole(s.get("penalties")), whole(s.get("playedMatches")));
             }
             store.markRefreshed("scorers/" + code, Instant.now());
         });
     }
 
     /**
-     * Saves a /teams/{id} answer's squad: every player and his position (replaces that team's squad, but keeps the
-     * players we found elsewhere in GOAL API, see addToSquad, unless the squad now has them itself).
+     * Saves a /teams/{id} answer's squad: every player, his position and season (replaces that team's squad, but keeps
+     * the players we found elsewhere in GOAL API, see addToSquad; one the squad now lists is the same player).
      */
     public void saveSquad(long teamId, String apiJson) {
         Map<String, Object> body = Json.parse(apiJson);
         store.transaction(() -> {
-            store.update("DELETE FROM squads WHERE team_id = ? AND COALESCE(added, 0) = 0", teamId);
+            store.update("DELETE FROM player_season_stats WHERE team_id = ? AND player_id IN "
+                    + "(SELECT player_id FROM team_players WHERE team_id = ? AND looked_up = 0)", teamId, teamId);
+            store.update("DELETE FROM team_players WHERE team_id = ? AND looked_up = 0", teamId);
             for (Map<String, Object> p : Json.maps(body.get("squad"))) {
-                long playerId = Json.number(p.get("id"));
+                long apiId = Json.number(p.get("id"));
                 String name = Json.text(p.get("name"));
-                if (playerId < 0 || name == null) {
+                if (apiId < 0 || name == null) {
                     continue;
                 }
-                store.update("INSERT OR REPLACE INTO squads (team_id, player_id, name, position, games, goals, shots, stats) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?)", teamId, playerId, name, position(p),
-                        count(p.get("games")), count(p.get("goals")), count(p.get("shots")),
-                        p.get("stats") == null ? null : Json.write(p.get("stats")));
+                long id = players.link(Players.GOAL, String.valueOf(apiId), teamId, name);
+                players.saveAtTeam(teamId, id, name, position(p), Json.map(p.get("stats")), false);
             }
-            // an added player the squad now lists itself (under another id): keep the squad's own entry
-            store.update("DELETE FROM squads WHERE team_id = ? AND added = 1 AND lower(name) IN "
-                    + "(SELECT lower(name) FROM squads WHERE team_id = ? AND COALESCE(added, 0) = 0)", teamId, teamId);
             store.markRefreshed("squad/" + teamId, Instant.now());
             store.markRefreshed("squad-photos/" + teamId, Instant.now());
         });
     }
 
-    /** {"squad":[{"id","name","position","games","goals","shots"}]} by name, if saved. */
+    /** {"squad":[{"id","name","position","games","goals","shots","stats"}]} by name, if saved (id: our player id). */
     public Optional<String> squadJson(long teamId) {
         if (store.refreshedAt("squad/" + teamId).isEmpty()) {
             return Optional.empty();
         }
-        List<Map<String, Object>> list = store.query("SELECT player_id, name, position, games, goals, shots, stats FROM squads "
-                + "WHERE team_id = ? ORDER BY name", rs -> {
-            Map<String, Object> p = new LinkedHashMap<>();
-            p.put("id", rs.getLong(1));
-            p.put("name", rs.getString(2));
-            p.put("position", rs.getString(3));
-            p.put("games", Store.longOrNull(rs, "games"));   // null: saved before these were kept
-            p.put("goals", Store.longOrNull(rs, "goals"));
-            p.put("shots", Store.longOrNull(rs, "shots"));
-            String stats = rs.getString("stats");
-            p.put("stats", stats == null ? null : Json.parse(stats));   // his season stats, for the player pop-up
-            return p;
-        }, teamId);
-        return Optional.of(Json.write(Map.of("squad", list)));
+        return Optional.of(Json.write(Map.of("squad", players.squad(teamId))));
     }
 
     /**
      * Top scorers (in the saved scorer lists) of these teams who aren't in their team's saved squad: GOAL API files
      * some players (often internationals, e.g. Cole Palmer under England) under another team. [{teamId, teamName,
-     * name}], skipping ones looked up in the last 3 days (since the squad was last saved: a squad saved before
-     * looked-up players were kept could have dropped them).
+     * name}], skipping ones looked up in the last 3 days (since the squad was last saved).
      */
     public List<Map<String, Object>> scorersMissingFromSquads(List<Long> teamIds) {
         List<Map<String, Object>> out = new ArrayList<>();
@@ -154,22 +143,14 @@ public class FootballTables {
             if (store.refreshedAt("squad/" + teamId).isEmpty()) {
                 continue;
             }
-            // a player added by an older lookup (before LOOKUP's version) is looked up again: those could carry
-            // another team's numbers (his England games) as his club season
-            List<String> squad = new ArrayList<>();
-            for (Map.Entry<String, Boolean> row : store.query("SELECT name, COALESCE(added, 0) FROM squads WHERE team_id = ?",
-                    rs -> Map.entry(rs.getString(1), rs.getInt(2) == 1), teamId)) {
-                if (!row.getValue() || store.refreshedAt(lookupName(teamId, row.getKey())).isPresent()) {
-                    squad.add(plainName(row.getKey()));
-                }
-            }
+            Instant saved = store.refreshedAt("squad/" + teamId).orElse(Instant.EPOCH);
             String teamName = store.first("SELECT name FROM teams WHERE id = ?", rs -> rs.getString(1), teamId).orElse(null);
-            for (String name : store.query("SELECT DISTINCT player FROM scorers WHERE team_id = ? AND player IS NOT NULL",
-                    rs -> rs.getString(1), teamId)) {
-                Instant saved = store.refreshedAt("squad/" + teamId).orElse(Instant.EPOCH);
+            for (String name : store.query("SELECT DISTINCT p.name FROM scorers s JOIN players p ON p.id = s.player_id "
+                    + "WHERE s.team_id = ? AND NOT EXISTS (SELECT 1 FROM team_players t WHERE t.team_id = s.team_id "
+                    + "AND t.player_id = s.player_id)", rs -> rs.getString(1), teamId)) {
                 boolean looked = store.refreshedAt(lookupName(teamId, name))
                         .map(t -> t.isAfter(recently) && !t.isBefore(saved)).orElse(false);
-                if (!squad.contains(plainName(name)) && !looked) {
+                if (!looked) {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("teamId", teamId);
                     m.put("teamName", teamName);
@@ -182,16 +163,14 @@ public class FootballTables {
     }
 
     /**
-     * Adds a player found elsewhere in GOAL API to a team's saved squad (position, games, goals, shots), and notes
-     * that he was looked up (found or not) so he isn't looked up again for 3 days.
+     * Adds a player found elsewhere in GOAL API to a team's saved squad (position, season stats if they're his club
+     * season), and notes that he was looked up (found or not) so he isn't looked up again for 3 days.
      */
     public void addToSquad(long teamId, String scorerName, Map<String, Object> player) {
         store.transaction(() -> {
             if (player != null) {
-                store.update("INSERT OR REPLACE INTO squads (team_id, player_id, name, position, games, goals, shots, stats, added) "
-                        + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)", teamId, Json.number(player.get("id")), Json.text(player.get("name")),
-                        Json.text(player.get("position")), count(player.get("games")), count(player.get("goals")),
-                        count(player.get("shots")), player.get("stats") == null ? null : Json.write(player.get("stats")));
+                long id = players.link(Players.GOAL, String.valueOf(Json.number(player.get("id"))), teamId, scorerName);
+                players.saveAtTeam(teamId, id, scorerName, Json.text(player.get("position")), Json.map(player.get("stats")), true);
             }
             store.markRefreshed(lookupName(teamId, scorerName), Instant.now());
         });
@@ -476,11 +455,12 @@ public class FootballTables {
         if (store.refreshedAt("scorers/" + code).isEmpty()) {
             return Optional.empty();
         }
-        List<Map<String, Object>> list = store.query("SELECT s.*, t.name AS team_name, t.short_name AS team_short FROM scorers s "
-                + "LEFT JOIN teams t ON t.id = s.team_id WHERE s.competition = ? ORDER BY s.goals DESC, s.player", rs -> {
+        List<Map<String, Object>> list = store.query("SELECT s.*, p.name AS player, p.position, t.name AS team_name, "
+                + "t.short_name AS team_short FROM scorers s JOIN players p ON p.id = s.player_id "
+                + "LEFT JOIN teams t ON t.id = s.team_id WHERE s.competition = ? ORDER BY s.goals DESC, p.name", rs -> {
                     Map<String, Object> s = new LinkedHashMap<>();
                     Map<String, Object> player = new LinkedHashMap<>();
-                    player.put("id", rs.getLong("player_id"));
+                    player.put("id", rs.getLong("player_id"));   // our player id: the same in the squads
                     player.put("name", rs.getString("player"));
                     player.put("position", rs.getString("position"));   // null until the next Refresh Stats
                     s.put("player", player);

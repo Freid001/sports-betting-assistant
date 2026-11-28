@@ -24,9 +24,10 @@ class StoreTest {
     void allTablesAreCreatedInANewFile() {
         try (Store s = open()) {
             assertThat(s.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name", rs -> rs.getString(1)))
-                    .contains("teams", "games", "game_sources", "team_names", "scorers", "head_to_head", "odds_events",
+                    .contains("teams", "games", "game_sources", "team_names", "players", "player_sources", "team_players",
+                            "player_season_stats", "scorers", "head_to_head", "odds_events",
                             "odds_prices", "live_games", "favourites", "refreshes", "api_usage")
-                    .doesNotContain("saved", "matches");
+                    .doesNotContain("saved", "matches", "squads");
             assertThat(s.file()).isEqualTo(tmp.resolve("data/test.db"));
         }
         assertThat(tmp.resolve("data/test.db")).exists();
@@ -41,10 +42,11 @@ class StoreTest {
             st.execute("CREATE TABLE scorers (competition TEXT NOT NULL, player_id INTEGER NOT NULL, player TEXT, team_id INTEGER, "
                     + "goals INTEGER, assists INTEGER, penalties INTEGER, games INTEGER, PRIMARY KEY (competition, player_id))");
         }
-        try (Store s = open()) {
+        // (schema 1 only: schema 3 replaces scorers)
+        try (Store s = new Store(tmp.resolve("data/test.db"), java.util.List.of())) {
             assertThat(s.query("SELECT name FROM pragma_table_info('scorers')", rs -> rs.getString(1))).contains("position");
         }
-        try (Store s = open()) {   // opening again: the column is already there, no error
+        try (Store s = new Store(tmp.resolve("data/test.db"), java.util.List.of())) {   // again: already there, no error
             assertThat(s.query("SELECT name FROM pragma_table_info('scorers')", rs -> rs.getString(1))).contains("position");
         }
     }
@@ -177,7 +179,7 @@ class StoreTest {
             s.update("INSERT INTO live_follow (tournament, kickoff, home, away) VALUES ('epl', 'k', 'A', 'B')");
         }
         try (Store s = new Store(db)) {
-            assertThat(version(s)).isEqualTo(2);
+            assertThat(version(s)).isEqualTo(Store.currentVersion());
             assertThat(s.query("SELECT id || ' ' || kickoff_at || ' ' || home_goals FROM games", rs -> rs.getString(1)))
                     .containsExactly("812812 2026-12-27T19:00:00Z 2");
             assertThat(s.query("SELECT source || ' ' || source_id || ' ' || game_id FROM game_sources", rs -> rs.getString(1)))

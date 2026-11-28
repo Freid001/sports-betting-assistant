@@ -76,8 +76,9 @@ test('squad players outside the top-scorer list get their own goals and games, f
   const { $, w } = page({
     '/api/football/data/teams/1/matches': { matches: homeGames(6) },
     '/api/football/data/teams/2/matches': { matches: awayGames(6) },
-    '/api/football/data/teams/1/squad': { squad: [{ name: 'Kane', position: 'Forwards', games: 9, goals: 9 },
-      { name: 'Richarlison', position: 'Forwards', games: 8, goals: 3 }, { name: 'Bench', position: 'Defenders', games: 0, goals: 0 }] },
+    // the server gives a player the same id in the squad and the scorer tables (Kane: 10)
+    '/api/football/data/teams/1/squad': { squad: [{ id: 10, name: 'H. Kane', position: 'Forwards', games: 9, goals: 9 },
+      { id: 11, name: 'Richarlison', position: 'Forwards', games: 8, goals: 3 }, { id: 12, name: 'Bench', position: 'Defenders', games: 0, goals: 0 }] },
     '/api/football/data/competitions/PL/standings': table([{ position: 1, points: 28, playedGames: 12, goalDifference: 15, team: { id: 1 } }]),
     '/api/football/data/competitions/PL/scorers': { scorers: [{ player: { id: 10, name: 'Kane' }, team: { id: 1 }, goals: 9 }] }
   }, event('epl', 'Premier League'), SPURS, IPSWICH);

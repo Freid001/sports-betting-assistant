@@ -125,7 +125,8 @@ window.MatchStats = (function () {
     var squad = getJson('/api/football/data/teams/' + team.id + '/squad').then(function (d) {
       return (d.squad || []).map(function (p) {
         // games / goals: his season so far (GOAL API's squad list; null in squads saved before these were kept)
-        return { name: p.name, position: F.positionName(p.position), games: p.games, goals: p.goals, assists: p.assists,
+        // id: our player id, the same as in the scorer tables (so a scorer and his squad entry are one player)
+        return { id: p.id, name: p.name, position: F.positionName(p.position), games: p.games, goals: p.goals, assists: p.assists,
                  stats: p.stats };   // stats: his season stats, for the player pop-up
       });
     }).catch(function () { return []; });
@@ -145,14 +146,14 @@ window.MatchStats = (function () {
     }).concat([squad, played])).then(function (lists) {
       var teamGames = lists.pop();
       var squadList = lists.pop();
-      var squadPosition = function (name) {
-        var p = squadList.find(function (x) { return F.samePlayer(x.name, name); });
+      var squadPosition = function (id) {
+        var p = squadList.find(function (x) { return x.id === id; });
         return p ? p.position : null;
       };
       // One row per player, goals and assists added up across competitions
       var players = {};
       [].concat.apply([], lists).forEach(function (s) {
-        var p = players[s.player.id] = players[s.player.id] || { name: s.player.name, position: s.player.position, goals: 0, assists: 0, games: 0 };
+        var p = players[s.player.id] = players[s.player.id] || { id: s.player.id, name: s.player.name, position: s.player.position, goals: 0, assists: 0, games: 0 };
         p.goals += s.goals || 0;
         p.assists += s.assists || 0;
         p.games += s.playedMatches || 0;
@@ -161,17 +162,17 @@ window.MatchStats = (function () {
       // so far, so anyone else who's played gets a goals per game (and a goalscorer verdict) too
       squadList.forEach(function (sp) {
         if (!sp.games) return;
-        var have = Object.keys(players).find(function (k) { return F.samePlayer(players[k].name, sp.name); });
+        var have = players[sp.id] ? sp.id : null;
         if (have) {
           if (!players[have].games) players[have].games = sp.games;   // his own games, rather than the team's
           players[have].stats = sp.stats;
         } else {
-          players['squad:' + sp.name] = { name: sp.name, position: sp.position, goals: sp.goals || 0, assists: sp.assists || 0,
+          players[sp.id] = { id: sp.id, name: sp.name, position: sp.position, goals: sp.goals || 0, assists: sp.assists || 0,
                                           games: sp.games, stats: sp.stats };
         }
       });
       Object.keys(players).forEach(function (k) {   // no position in the scorer tables: the squad's
-        if (!players[k].position) players[k].position = squadPosition(players[k].name);
+        if (!players[k].position) players[k].position = squadPosition(players[k].id);
         if (!players[k].games) players[k].games = teamGames;   // still no games played: the team's
       });
       var everyone = Object.keys(players).map(function (k) { return players[k]; })
@@ -188,7 +189,7 @@ window.MatchStats = (function () {
                                     var st = p.stats || {}, n = function (k) { var v = parseInt(st[k], 10); return isNaN(v) ? null : v; };
                                     // fewer shots than goals: those aren't his club season's (e.g. his England record)
                                     var club = n('shotsTotal') === null || n('shotsTotal') >= (p.goals || 0);
-                                    return { name: p.name, goals: p.goals, assists: p.assists, games: p.games, position: F.positionName(p.position),
+                                    return { id: p.id, name: p.name, goals: p.goals, assists: p.assists, games: p.games, position: F.positionName(p.position),
                                              shots: club ? n('shotsTotal') : null, shotGames: club ? n('matchPlayed') : null, pens: club ? n('penScored') : null };
                                   }),
                                   squad: squadList };

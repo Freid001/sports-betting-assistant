@@ -156,7 +156,8 @@ class GoalStatsTest {
                 + "{\"playerKey\":\"1\",\"playerName\":\"Someone\",\"teamName\":\"Elsewhere\",\"goals\":\"3\"}]}");
         goal.saveScorers("PL");
         assertThat(tables.scorersJson("PL").orElseThrow())
-                .contains("\"player\":{\"id\":659972248,\"name\":\"Bryan Mbeumo\"")
+                .contains("\"player\":{\"id\":" + new Players(store).player(Players.GOAL_SCORER, "659972248").orElseThrow()
+                        + ",\"name\":\"Bryan Mbeumo\"")   // our id for him (GOAL API's scorer id is kept in player_sources)
                 .contains("\"team\":{\"id\":102,\"name\":\"Manchester United\",\"shortName\":\"Manchester Utd\"}")
                 .contains("\"goals\":9").contains("\"assists\":2").contains("\"penalties\":1")
                 .contains("\"name\":\"Someone\"");
@@ -168,7 +169,8 @@ class GoalStatsTest {
         api.answer("/teams/g3086/players", 200, "{\"data\":[{\"apiId\":\"3975994970\",\"name\":\"Mark Flekken\",\"type\":\"Goalkeepers\"},"
                 + "{\"name\":\"no id\"}]}");
         assertThat(goal.saveSquad(3086)).isTrue();
-        assertThat(tables.squadJson(3086).orElseThrow()).contains("\"id\":3975994970,\"name\":\"Mark Flekken\",\"position\":\"Goalkeepers\"")
+        assertThat(tables.squadJson(3086).orElseThrow()).contains("\"id\":" + new Players(store).player(Players.GOAL, "3975994970")
+                .orElseThrow() + ",\"name\":\"Mark Flekken\",\"position\":\"Goalkeepers\"")
                 .doesNotContain("no id");
         assertThat(goal.saveSquad(999)).isFalse();
         assertThat(api.count("/teams/g3086/players")).isEqualTo(1);

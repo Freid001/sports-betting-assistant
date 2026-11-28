@@ -486,20 +486,20 @@
     // Top Scorers, with their shooting: goals and assists from the scorer tables, shots from the squads (GOAL API
     // gives total shots, not on target). Conversion only ranks players with 5+ shots, so 1 from 1 isn't top.
     var scorers = [];
-    var find = function (name, team) {
-      for (var i = 0; i < scorers.length; i++) if (scorers[i].team === team && F.samePlayer(scorers[i].name, name)) return scorers[i];
+    var find = function (id) {   // our player id: the same in the scorer tables and the squads
+      for (var i = 0; i < scorers.length; i++) if (scorers[i].id === id) return scorers[i];
       return null;
     };
     ['home', 'away'].forEach(function (side) {
       ((ts[side] || {}).scorers || []).forEach(function (p) {
-        if (p.goals > 0) scorers.push({ name: p.name, position: p.position, team: ts[side].team, goals: p.goals, assists: p.assists || 0 });
+        if (p.goals > 0) scorers.push({ id: p.id, name: p.name, position: p.position, team: ts[side].team, goals: p.goals, assists: p.assists || 0 });
       });
       ((ts[side] || {}).squad || []).forEach(function (p) {
         var st = p.stats || {}, num = function (k) { var v = parseInt(st[k], 10); return isNaN(v) ? 0 : v; };
         var shots = num('shotsTotal');
         if (!shots && !num('goals')) return;
-        var x = find(p.name, ts[side].team);
-        if (!x) { x = { name: p.name, position: p.position, team: ts[side].team, goals: num('goals'), assists: num('assists') }; scorers.push(x); }
+        var x = find(p.id);
+        if (!x) { x = { id: p.id, name: p.name, position: p.position, team: ts[side].team, goals: num('goals'), assists: num('assists') }; scorers.push(x); }
         x.position = x.position || p.position;
         // fewer shots than goals: not his club season (e.g. his England record), so no shooting numbers
         if (shots >= x.goals) { x.shots = shots; x.games = num('matchPlayed'); }

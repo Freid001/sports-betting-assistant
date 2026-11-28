@@ -196,6 +196,30 @@ public class Store implements AutoCloseable {
                     team_id INTEGER NOT NULL REFERENCES teams (id), PRIMARY KEY (source, name));
                 DROP TABLE live_follow;
                 CREATE TABLE live_follow (game_id INTEGER PRIMARY KEY REFERENCES games (id));
+                """,
+            // 3: one identity per player. GOAL API numbers a player one way in squads and another in its scorer
+            // lists: each is a row in player_sources ('goal' squad apiId, 'goal-scorer' playerKey) pointing at one
+            // players row. Who plays for whom in team_players, season stats one row per stat (no JSON), scorers
+            // by player id (no copied names). Squads and scorers come back with the next Refresh Stats.
+            () -> """
+                CREATE TABLE players (id INTEGER PRIMARY KEY, name TEXT NOT NULL, position TEXT, age INTEGER, image TEXT);
+                CREATE TABLE player_sources (source TEXT NOT NULL, source_id TEXT NOT NULL,
+                    player_id INTEGER NOT NULL REFERENCES players (id), PRIMARY KEY (source, source_id));
+                CREATE INDEX player_sources_by_player ON player_sources (player_id, source);
+                CREATE TABLE team_players (team_id INTEGER NOT NULL REFERENCES teams (id),
+                    player_id INTEGER NOT NULL REFERENCES players (id), shirt INTEGER, captain INTEGER, injured INTEGER,
+                    filed_under TEXT, looked_up INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (team_id, player_id));
+                CREATE INDEX team_players_by_player ON team_players (player_id);
+                CREATE TABLE player_season_stats (player_id INTEGER NOT NULL REFERENCES players (id),
+                    team_id INTEGER NOT NULL REFERENCES teams (id), stat TEXT NOT NULL, value REAL NOT NULL,
+                    PRIMARY KEY (player_id, team_id, stat));
+                DROP TABLE squads;
+                DROP TABLE scorers;
+                CREATE TABLE scorers (competition TEXT NOT NULL, player_id INTEGER NOT NULL REFERENCES players (id),
+                    team_id INTEGER REFERENCES teams (id), goals INTEGER, assists INTEGER, penalties INTEGER, games INTEGER,
+                    PRIMARY KEY (competition, player_id));
+                DELETE FROM refreshes WHERE name LIKE 'scorers/%' OR name LIKE 'squad/%' OR name LIKE 'squad-photos/%'
+                    OR name LIKE 'squad-full/%' OR name LIKE 'player-lookup%';
                 """);
 
     /** One schema change: its SQL (statements separated by ';'), and Java for anything SQL can't do. */
