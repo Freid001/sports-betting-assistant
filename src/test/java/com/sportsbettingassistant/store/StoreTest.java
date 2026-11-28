@@ -26,8 +26,8 @@ class StoreTest {
             assertThat(s.query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name", rs -> rs.getString(1)))
                     .contains("teams", "games", "game_sources", "team_names", "players", "player_sources", "team_players",
                             "player_season_stats", "scorers", "head_to_head", "odds_events",
-                            "odds_prices", "live_games", "favourites", "refreshes", "api_usage")
-                    .doesNotContain("saved", "matches", "squads");
+                            "odds_prices", "live_state", "live_points", "live_point_stats", "live_events", "favourites", "refreshes", "api_usage")
+                    .doesNotContain("saved", "matches", "squads", "live_games", "live_snapshots");
             assertThat(s.file()).isEqualTo(tmp.resolve("data/test.db"));
         }
         assertThat(tmp.resolve("data/test.db")).exists();
@@ -76,12 +76,12 @@ class StoreTest {
     void trueFalseAndTimesAreStoredAsNumbers() {
         try (Store s = open()) {
             Instant when = Instant.parse("2026-11-19T12:00:00Z");
-            s.update("INSERT INTO live_games (id, live, updated_at, ticked) VALUES (?, ?, ?, ?)", "g1", true, null, null);
+            s.update("INSERT INTO live_state (game_id, live, updated_at, ticked) VALUES (?, ?, ?, ?)", 1, true, null, null);
             s.update("INSERT INTO refreshes (name, finished_at) VALUES (?, ?)", "x", when);
-            assertThat(s.first("SELECT live FROM live_games", rs -> rs.getInt(1))).contains(1);
+            assertThat(s.first("SELECT live FROM live_state", rs -> rs.getInt(1))).contains(1);
             assertThat(s.first("SELECT finished_at FROM refreshes WHERE name = 'x'", rs -> rs.getLong(1))).contains(when.toEpochMilli());
-            assertThat(s.first("SELECT ticked FROM live_games", rs -> Store.longOrNull(rs, "ticked"))).isEmpty();
-            assertThat(s.first("SELECT ticked FROM live_games", rs -> Store.doubleOrNull(rs, "ticked"))).isEmpty();
+            assertThat(s.first("SELECT ticked FROM live_state", rs -> Store.longOrNull(rs, "ticked"))).isEmpty();
+            assertThat(s.first("SELECT ticked FROM live_state", rs -> Store.doubleOrNull(rs, "ticked"))).isEmpty();
         }
     }
 

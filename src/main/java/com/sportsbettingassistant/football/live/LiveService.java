@@ -436,6 +436,10 @@ public class LiveService {
                 h, a, whole(f.get("htHome")), whole(f.get("htAway")), game));
     }
 
+    private static String text(Long n) {
+        return n == null ? null : String.valueOf(n);
+    }
+
     private static Long whole(Object o) {
         try {
             return o == null ? null : Long.valueOf(String.valueOf(o).trim());
@@ -729,8 +733,10 @@ public class LiveService {
             f = fixtures.get(id);
         }
         Map<String, Object> out = new LinkedHashMap<>();
-        Optional<String[]> saved = store.first("SELECT url, title, checked_at FROM live_videos WHERE game_id = ?",
-                rs -> new String[] {rs.getString(1), rs.getString(2), rs.getString(3)}, id);
+        Long game = games.game(Games.GOAL, id).orElse(null);
+        Optional<String[]> saved = game == null ? Optional.empty()
+                : store.first("SELECT url, title, checked_at FROM game_videos WHERE game_id = ?",
+                        rs -> new String[] {rs.getString(1), rs.getString(2), rs.getString(3)}, game);
         if (saved.isPresent() && saved.get()[0] != null && !saved.get()[0].isBlank()) {
             out.put("url", saved.get()[0]);
             out.put("title", saved.get()[1]);
@@ -757,8 +763,10 @@ public class LiveService {
             log.warn("GOAL API video for {} failed: {}", id, e.getMessage());
             return out;
         }
-        store.update("INSERT OR REPLACE INTO live_videos (game_id, url, title, checked_at) VALUES (?, ?, ?, ?)",
-                id, url, title, Instant.now().toString());
+        if (game != null) {
+            store.update("INSERT OR REPLACE INTO game_videos (game_id, url, title, checked_at) VALUES (?, ?, ?, ?)",
+                    game, url, title, Instant.now().toString());
+        }
         if (url != null) {
             out.put("url", url);
             out.put("title", title);
@@ -833,60 +841,70 @@ public class LiveService {
 
     // ---------------------------------------------------------------- saved copy
 
-    /** Writes the games, ticks, latest stats and calls left to the live tables (small: rewritten each time). */
+    /**
+     * Writes the games, ticks, latest stats, saved points, timelines and calls left to the live tables (small:
+     * rewritten each time), by game (games.id). A GOAL API game not linked to a game isn't saved.
+     */
     private void save() {
         try {
             store.transaction(() -> {
-                for (String table : new String[] {"live_timeline", "live_snapshots", "live_players", "live_stat_rows", "live_stats", "live_games"}) {
+                for (String table : new String[] {"live_events", "live_point_stats", "live_points", "live_shooters", "live_state"}) {
                     store.update("DELETE FROM " + table);
+                }
+                Map<String, Long> ids = new LinkedHashMap<>();
+                for (String id : fixtures.keySet()) {
+                    games.game(Games.GOAL, id).ifPresent(g -> ids.put(id, g));
                 }
                 List<String> ticks = new ArrayList<>(tracked);
                 for (Map<String, Object> f : fixtures.values()) {
                     String id = String.valueOf(f.get("id"));
+                    if (!ids.containsKey(id)) {
+                        continue;
+                    }
                     int tick = ticks.indexOf(id);
-                    store.update("INSERT OR REPLACE INTO live_games (id, tournament, league_id, date, kickoff, home, away, "
-                            + "home_score, away_score, status, live, minute, elapsed, extra, period, updated_at, ticked) "
-                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            id, GoalData.text(f, "tournament"), GoalData.text(f, "leagueId"), GoalData.text(f, "date"), GoalData.text(f, "kickoff"),
-                            GoalData.text(f, "home"), GoalData.text(f, "away"), GoalData.text(f, "homeScore"), GoalData.text(f, "awayScore"), GoalData.text(f, "status"),
-                            Json.yes(f.get("live")), GoalData.text(f, "minute"), GoalData.text(f, "elapsed"), GoalData.text(f, "extra"),
-                            GoalData.text(f, "period"), GoalData.text(f, "updatedAt"), tick < 0 ? null : tick + 1);
+                    store.update("INSERT OR REPLACE INTO live_state (game_id, league_id, status, live, minute, elapsed, extra, "
+                            + "period, home_score, away_score, ht_home, ht_away, updated_at, ticked) "
+                            + "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                            ids.get(id), GoalData.text(f, "leagueId"), GoalData.text(f, "status"), Json.yes(f.get("live")),
+                            GoalData.text(f, "minute"), whole(f.get("elapsed")), whole(f.get("extra")), GoalData.text(f, "period"),
+                            whole(f.get("homeScore")), whole(f.get("awayScore")), whole(f.get("htHome")), whole(f.get("htAway")),
+                            GoalData.text(f, "updatedAt"), tick < 0 ? null : tick + 1);
                 }
                 stats.forEach((id, st) -> {
-                    List<?> xg = st.get("xg") instanceof List<?> l && l.size() == 2 ? l : null;
-                    store.update("INSERT OR REPLACE INTO live_stats (game_id, xg_home, xg_away, minute, final, updated_at) "
-                            + "VALUES (?, ?, ?, ?, ?, ?)", id, xg == null ? null : xg.get(0), xg == null ? null : xg.get(1),
-                            GoalData.text(st, "minute"), Json.yes(st.get("final")), GoalData.text(st, "updatedAt"));
-                    int position = 0;
-                    for (Map<String, Object> r : Json.maps(st.get("rows"))) {
-                        store.update("INSERT INTO live_stat_rows (game_id, position, label, home, away) VALUES (?, ?, ?, ?, ?)",
-                                id, position++, GoalData.text(r, "label"), GoalData.text(r, "home"), GoalData.text(r, "away"));
+                    Long game = ids.get(id);
+                    if (game == null) {
+                        return;
                     }
+                    savePoint(game, "LIVE", GoalData.text(st, "minute"), null, null, st.get("xg"), Json.yes(st.get("final")),
+                            GoalData.text(st, "updatedAt"), st.get("rows"));
                     for (String side : new String[] {"home", "away"}) {
                         int n = 0;
                         for (Map<String, Object> pl : Json.maps(st.get(side + "Players"))) {
-                            store.update("INSERT INTO live_players (game_id, side, position, name, shots, on_target, goals) "
-                                    + "VALUES (?, ?, ?, ?, ?, ?, ?)", id, side, n++, GoalData.text(pl, "name"),
+                            store.update("INSERT INTO live_shooters (game_id, side, position, name, shots, on_target, goals) "
+                                    + "VALUES (?, ?, ?, ?, ?, ?, ?)", game, side, n++, GoalData.text(pl, "name"),
                                     pl.get("shots"), pl.get("onTarget"), pl.get("goals"));
                         }
                     }
                 });
                 snapshots.forEach((id, byPeriod) -> byPeriod.forEach((period, snap) -> {
-                    Map<String, Object> body = new LinkedHashMap<>();
-                    body.put("xg", snap.get("xg"));
-                    body.put("rows", snap.get("rows"));
-                    store.update("INSERT INTO live_snapshots (game_id, period, home_score, away_score, stats, saved_at) "
-                            + "VALUES (?, ?, ?, ?, ?, ?)", id, period, GoalData.text(snap, "homeScore"), GoalData.text(snap, "awayScore"),
-                            Json.write(body), GoalData.text(snap, "savedAt"));
+                    Long game = ids.get(id);
+                    if (game != null) {
+                        savePoint(game, period, null, whole(snap.get("homeScore")), whole(snap.get("awayScore")), snap.get("xg"),
+                                null, GoalData.text(snap, "savedAt"), snap.get("rows"));
+                    }
                 }));
                 timeline.forEach((id, list) -> {
+                    Long game = ids.get(id);
+                    if (game == null) {
+                        return;
+                    }
                     int seq = 0;
                     for (Map<String, Object> e : list) {
-                        store.update("INSERT INTO live_timeline (game_id, seq, kind, side, player, assist, info, score, minute, "
-                                + "half, elapsed, sort_order, source, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", id, seq++,
-                                GoalData.text(e, "kind"), GoalData.text(e, "side"), GoalData.text(e, "player"), GoalData.text(e, "assist"), GoalData.text(e, "info"),
-                                GoalData.text(e, "score"), GoalData.text(e, "minute"), e.get("half"), e.get("elapsed"), e.get("order"),
-                                GoalData.text(e, "source"), GoalData.text(e, "at"));
+                        store.update("INSERT INTO live_events (game_id, seq, kind, side, player, assist, info, score, minute, "
+                                + "half, elapsed, sort_order, source, seen_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                game, seq++, GoalData.text(e, "kind"), GoalData.text(e, "side"), GoalData.text(e, "player"),
+                                GoalData.text(e, "assist"), GoalData.text(e, "info"), GoalData.text(e, "score"), GoalData.text(e, "minute"),
+                                e.get("half"), e.get("elapsed"), e.get("order"), GoalData.text(e, "source"), GoalData.text(e, "at"));
                     }
                 });
                 store.update("DELETE FROM live_follow");
@@ -904,6 +922,40 @@ public class LiveService {
         }
     }
 
+    /** One point's numbers (LIVE: the latest) and its stat rows: numbers as numbers, "56%" as 56 with its unit. */
+    private void savePoint(long game, String point, String minute, Long homeScore, Long awayScore, Object xg, Boolean fin,
+                           String savedAt, Object rows) {
+        List<?> x = xg instanceof List<?> l && l.size() == 2 ? l : null;
+        store.update("INSERT OR REPLACE INTO live_points (game_id, point, minute, home_score, away_score, xg_home, xg_away, "
+                + "final, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", game, point, minute, homeScore, awayScore,
+                x == null ? null : x.get(0), x == null ? null : x.get(1), fin, savedAt);
+        int position = 0;
+        for (Map<String, Object> r : Json.maps(rows)) {
+            String home = GoalData.text(r, "home"), away = GoalData.text(r, "away");
+            store.update("INSERT INTO live_point_stats (game_id, point, position, stat, home, away, unit) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    game, point, position++, GoalData.text(r, "label"), statNumber(home), statNumber(away),
+                    home != null && home.contains("%") ? "%" : null);
+        }
+    }
+
+    static Double statNumber(String v) {
+        try {
+            return v == null || v.isBlank() ? null : Double.valueOf(v.replace("%", "").trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    /** A stat as the pages show it: xG to 2 places, counts whole, the unit after ("56%"). */
+    static String statText(String label, Double v, String unit) {
+        if (v == null) {
+            return null;
+        }
+        String n = label != null && label.startsWith("xG") ? String.format(java.util.Locale.ROOT, "%.2f", v)
+                : v == Math.rint(v) ? String.valueOf(v.longValue()) : String.valueOf(v);
+        return unit == null ? n : n + unit;
+    }
+
     private void remember(String name, Instant when) {
         if (when == null) {
             store.update("DELETE FROM refreshes WHERE name = ?", name);
@@ -914,75 +966,101 @@ public class LiveService {
 
     /** Reads the live tables back (after a restart). */
     private void load() {
-        for (Map<String, Object> f : store.query("SELECT * FROM live_games ORDER BY kickoff, id", rs -> {
+        Map<Long, String> fixtureOf = new LinkedHashMap<>();   // games.id -> GOAL API's id
+        for (Map<String, Object> f : store.query("SELECT s.*, x.source_id AS fixture_id, g.competition, g.kickoff_at, "
+                + "COALESCE(h.short_name, h.name) AS home, COALESCE(a.short_name, a.name) AS away FROM live_state s "
+                + "JOIN games g ON g.id = s.game_id JOIN game_sources x ON x.game_id = s.game_id AND x.source = 'goal' "
+                + "JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id ORDER BY g.kickoff_at", rs -> {
             Map<String, Object> g = new LinkedHashMap<>();
-            g.put("id", rs.getString("id"));
-            g.put("tournament", rs.getString("tournament"));
+            g.put("gameId", rs.getLong("game_id"));
+            g.put("id", rs.getString("fixture_id"));
+            g.put("tournament", Competitions.tournament(rs.getString("competition")));
             g.put("leagueId", rs.getString("league_id"));
-            g.put("date", rs.getString("date"));
-            g.put("kickoff", rs.getString("kickoff"));
+            Instant ko = GoalData.instant(rs.getString("kickoff_at"));
+            g.put("date", ko == null ? null : LocalDate.ofInstant(ko, UK).toString());
+            g.put("kickoff", rs.getString("kickoff_at"));
             g.put("home", rs.getString("home"));
             g.put("away", rs.getString("away"));
-            g.put("homeScore", rs.getString("home_score"));
-            g.put("awayScore", rs.getString("away_score"));
+            g.put("homeScore", text(Store.longOrNull(rs, "home_score")));
+            g.put("awayScore", text(Store.longOrNull(rs, "away_score")));
             g.put("status", rs.getString("status"));
             g.put("live", rs.getInt("live") == 1);
             g.put("minute", rs.getString("minute"));
-            g.put("elapsed", rs.getString("elapsed"));
-            g.put("extra", rs.getString("extra"));
+            g.put("elapsed", text(Store.longOrNull(rs, "elapsed")));
+            g.put("extra", text(Store.longOrNull(rs, "extra")));
             g.put("period", rs.getString("period"));
+            g.put("htHome", text(Store.longOrNull(rs, "ht_home")));
+            g.put("htAway", text(Store.longOrNull(rs, "ht_away")));
             g.put("updatedAt", rs.getString("updated_at"));
+            g.put("ticked", Store.longOrNull(rs, "ticked"));
             return g;
         })) {
-            put(f);   // (linked here too: games saved before games had ids)
+            fixtureOf.put((Long) f.remove("gameId"), String.valueOf(f.get("id")));
+            fixtures.put(String.valueOf(f.get("id")), f);
         }
-        tracked.addAll(store.query("SELECT id FROM live_games WHERE ticked IS NOT NULL ORDER BY ticked", rs -> rs.getString(1)));
-        for (Map<String, Object> st : store.query("SELECT * FROM live_stats", rs -> {
+        fixtures.values().stream().filter(f -> f.get("ticked") != null)
+                .sorted(Comparator.comparingLong(f -> (Long) f.get("ticked")))
+                .forEach(f -> tracked.add(String.valueOf(f.get("id"))));
+        fixtures.values().forEach(f -> f.remove("ticked"));
+        for (Map<String, Object> p : store.query("SELECT * FROM live_points ORDER BY game_id", rs -> {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", rs.getString("game_id"));
+            m.put("game", rs.getLong("game_id"));
+            m.put("point", rs.getString("point"));
             Double h = Store.doubleOrNull(rs, "xg_home"), a = Store.doubleOrNull(rs, "xg_away");
             if (h != null && a != null) {
                 m.put("xg", List.of(h, a));
             }
             m.put("minute", rs.getString("minute"));
+            m.put("homeScore", text(Store.longOrNull(rs, "home_score")));
+            m.put("awayScore", text(Store.longOrNull(rs, "away_score")));
             m.put("final", rs.getInt("final") == 1);
-            m.put("updatedAt", rs.getString("updated_at"));
-            return m;
-        })) {
-            String id = String.valueOf(st.remove("id"));
-            st.put("rows", store.query("SELECT label, home, away FROM live_stat_rows WHERE game_id = ? ORDER BY position",
-                    rs -> GoalData.row(rs.getString(1), rs.getString(2), rs.getString(3)), id));
-            for (String side : new String[] {"home", "away"}) {
-                st.put(side + "Players", store.query("SELECT * FROM live_players WHERE game_id = ? AND side = ? ORDER BY position",
-                        rs -> {
-                            Map<String, Object> pl = new LinkedHashMap<>();
-                            pl.put("name", rs.getString("name"));
-                            pl.put("shots", rs.getInt("shots"));
-                            pl.put("onTarget", rs.getInt("on_target"));
-                            pl.put("goals", rs.getInt("goals"));
-                            return pl;
-                        }, id, side));
-            }
-            stats.put(id, st);
-        }
-        for (Map<String, Object> snap : store.query("SELECT * FROM live_snapshots", rs -> {
-            Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", rs.getString("game_id"));
-            m.put("period", rs.getString("period"));
-            m.put("homeScore", rs.getString("home_score"));
-            m.put("awayScore", rs.getString("away_score"));
-            Map<String, Object> body = Json.parse(rs.getString("stats"));
-            m.put("xg", body.get("xg"));
-            m.put("rows", body.get("rows"));
             m.put("savedAt", rs.getString("saved_at"));
             return m;
         })) {
-            String id = String.valueOf(snap.remove("id"));
-            snapshots.computeIfAbsent(id, k -> new LinkedHashMap<>()).put(String.valueOf(snap.get("period")), snap);
+            long game = (Long) p.get("game");
+            String id = fixtureOf.get(game), point = String.valueOf(p.get("point"));
+            if (id == null) {
+                continue;
+            }
+            List<Map<String, Object>> rows = store.query("SELECT stat, home, away, unit FROM live_point_stats "
+                    + "WHERE game_id = ? AND point = ? ORDER BY position", rs -> GoalData.row(rs.getString(1),
+                            statText(rs.getString(1), Store.doubleOrNull(rs, "home"), rs.getString(4)),
+                            statText(rs.getString(1), Store.doubleOrNull(rs, "away"), rs.getString(4))), game, point);
+            if ("LIVE".equals(point)) {
+                Map<String, Object> st = new LinkedHashMap<>();
+                if (p.get("xg") != null) {
+                    st.put("xg", p.get("xg"));
+                }
+                st.put("minute", p.get("minute"));
+                st.put("final", p.get("final"));
+                st.put("updatedAt", p.get("savedAt"));
+                st.put("rows", rows);
+                for (String side : new String[] {"home", "away"}) {
+                    st.put(side + "Players", store.query("SELECT * FROM live_shooters WHERE game_id = ? AND side = ? ORDER BY position",
+                            rs -> {
+                                Map<String, Object> pl = new LinkedHashMap<>();
+                                pl.put("name", rs.getString("name"));
+                                pl.put("shots", rs.getInt("shots"));
+                                pl.put("onTarget", rs.getInt("on_target"));
+                                pl.put("goals", rs.getInt("goals"));
+                                return pl;
+                            }, game, side));
+                }
+                stats.put(id, st);
+            } else {
+                Map<String, Object> snap = new LinkedHashMap<>();
+                snap.put("period", point);
+                snap.put("homeScore", p.get("homeScore"));
+                snap.put("awayScore", p.get("awayScore"));
+                snap.put("xg", p.get("xg"));
+                snap.put("rows", rows);
+                snap.put("savedAt", p.get("savedAt"));
+                snapshots.computeIfAbsent(id, k -> new LinkedHashMap<>()).put(point, snap);
+            }
         }
-        for (Map<String, Object> e : store.query("SELECT * FROM live_timeline ORDER BY game_id, seq", rs -> {
+        for (Map<String, Object> e : store.query("SELECT * FROM live_events ORDER BY game_id, seq", rs -> {
             Map<String, Object> m = new LinkedHashMap<>();
-            m.put("id", rs.getString("game_id"));
+            m.put("game", rs.getLong("game_id"));
             m.put("kind", rs.getString("kind"));
             m.put("side", rs.getString("side"));
             m.put("player", rs.getString("player"));
@@ -994,10 +1072,13 @@ public class LiveService {
             m.put("half", rs.getInt("half"));
             m.put("elapsed", rs.getInt("elapsed"));
             m.put("order", rs.getInt("sort_order"));
-            m.put("at", rs.getString("at"));
+            m.put("at", rs.getString("seen_at"));
             return m;
         })) {
-            timeline.computeIfAbsent(String.valueOf(e.remove("id")), k -> new ArrayList<>()).add(e);
+            String id = fixtureOf.get((Long) e.remove("game"));
+            if (id != null) {
+                timeline.computeIfAbsent(id, k -> new ArrayList<>()).add(e);
+            }
         }
         following.addAll(store.query("SELECT f.game_id FROM live_follow f JOIN games g ON g.id = f.game_id ORDER BY g.kickoff_at",
                 rs -> rs.getLong(1)));

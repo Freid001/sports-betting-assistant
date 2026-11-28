@@ -220,6 +220,74 @@ public class Store implements AutoCloseable {
                     PRIMARY KEY (competition, player_id));
                 DELETE FROM refreshes WHERE name LIKE 'scorers/%' OR name LIKE 'squad/%' OR name LIKE 'squad-photos/%'
                     OR name LIKE 'squad-full/%' OR name LIKE 'player-lookup%';
+                """,
+            // 4: the live tables typed and keyed by game (games.id): numbers as numbers, the stats at each point as
+            // rows (no JSON), the game's names and kick-off from games. live_points: the latest ('LIVE') and each
+            // saved point ('30', 'HT', '60', '80', 'FT'); live_point_stats: their stat rows; live_shooters: the players
+            // with shots; live_events: the Timeline.
+            // Live games are linked to their game first (GOAL API's names are its teams' short names); one that can't
+            // be isn't carried over (Post-Match loads it again).
+            () -> """
+                INSERT OR IGNORE INTO game_sources (source, source_id, game_id)
+                    SELECT 'goal', l.id, g.id FROM live_games l JOIN games g
+                        ON ABS(julianday(g.kickoff_at) - julianday(l.kickoff)) < 1.5
+                        JOIN teams h ON h.id = g.home_team_id JOIN teams a ON a.id = g.away_team_id
+                    WHERE (h.short_name = l.home OR h.name = l.home) AND (a.short_name = l.away OR a.name = l.away)
+                    ORDER BY l.id, ABS(julianday(g.kickoff_at) - julianday(l.kickoff));
+                CREATE TABLE live_state (game_id INTEGER PRIMARY KEY REFERENCES games (id), league_id TEXT, status TEXT,
+                    live INTEGER NOT NULL DEFAULT 0, minute TEXT, elapsed INTEGER, extra INTEGER, period TEXT,
+                    home_score INTEGER, away_score INTEGER, ht_home INTEGER, ht_away INTEGER, updated_at TEXT, ticked INTEGER);
+                INSERT INTO live_state (game_id, league_id, status, live, minute, elapsed, extra, period, home_score,
+                    away_score, updated_at, ticked)
+                    SELECT s.game_id, g.league_id, g.status, COALESCE(g.live, 0), g.minute, CASE WHEN TRIM(g.elapsed) GLOB '[0-9]*' THEN CAST(TRIM(g.elapsed) AS INTEGER) END,
+                        CASE WHEN TRIM(g.extra) GLOB '[0-9]*' THEN CAST(TRIM(g.extra) AS INTEGER) END, g.period, CASE WHEN TRIM(g.home_score) GLOB '[0-9]*' THEN CAST(TRIM(g.home_score) AS INTEGER) END, CASE WHEN TRIM(g.away_score) GLOB '[0-9]*' THEN CAST(TRIM(g.away_score) AS INTEGER) END,
+                        g.updated_at, g.ticked
+                    FROM live_games g JOIN game_sources s ON s.source = 'goal' AND s.source_id = g.id;
+                CREATE TABLE live_points (game_id INTEGER NOT NULL REFERENCES games (id), point TEXT NOT NULL, minute TEXT,
+                    home_score INTEGER, away_score INTEGER, xg_home REAL, xg_away REAL, final INTEGER, saved_at TEXT,
+                    PRIMARY KEY (game_id, point));
+                INSERT INTO live_points (game_id, point, minute, xg_home, xg_away, final, saved_at)
+                    SELECT s.game_id, 'LIVE', o.minute, o.xg_home, o.xg_away, o.final, o.updated_at
+                    FROM live_stats o JOIN game_sources s ON s.source = 'goal' AND s.source_id = o.game_id;
+                INSERT INTO live_points (game_id, point, home_score, away_score, xg_home, xg_away, saved_at)
+                    SELECT s.game_id, o.period, CASE WHEN TRIM(o.home_score) GLOB '[0-9]*' THEN CAST(TRIM(o.home_score) AS INTEGER) END, CASE WHEN TRIM(o.away_score) GLOB '[0-9]*' THEN CAST(TRIM(o.away_score) AS INTEGER) END,
+                        json_extract(o.stats, '$.xg[0]'), json_extract(o.stats, '$.xg[1]'), o.saved_at
+                    FROM live_snapshots o JOIN game_sources s ON s.source = 'goal' AND s.source_id = o.game_id;
+                CREATE TABLE live_point_stats (game_id INTEGER NOT NULL REFERENCES games (id), point TEXT NOT NULL,
+                    position INTEGER NOT NULL, stat TEXT NOT NULL, home REAL, away REAL, unit TEXT,
+                    PRIMARY KEY (game_id, point, position));
+                INSERT INTO live_point_stats (game_id, point, position, stat, home, away, unit)
+                    SELECT s.game_id, 'LIVE', o.position, o.label, CASE WHEN o.home IS NULL OR TRIM(o.home) IN ('', 'null') THEN NULL ELSE CAST(REPLACE(o.home, '%', '') AS REAL) END, CASE WHEN o.away IS NULL OR TRIM(o.away) IN ('', 'null') THEN NULL ELSE CAST(REPLACE(o.away, '%', '') AS REAL) END,
+                        CASE WHEN instr(o.home, '%') > 0 THEN '%' END
+                    FROM live_stat_rows o JOIN game_sources s ON s.source = 'goal' AND s.source_id = o.game_id;
+                INSERT INTO live_point_stats (game_id, point, position, stat, home, away, unit)
+                    SELECT s.game_id, o.period, r.key, json_extract(r.value, '$.label'),
+                        CASE WHEN json_extract(r.value, '$.home') IS NULL OR TRIM(json_extract(r.value, '$.home')) IN ('', 'null') THEN NULL ELSE CAST(REPLACE(json_extract(r.value, '$.home'), '%', '') AS REAL) END, CASE WHEN json_extract(r.value, '$.away') IS NULL OR TRIM(json_extract(r.value, '$.away')) IN ('', 'null') THEN NULL ELSE CAST(REPLACE(json_extract(r.value, '$.away'), '%', '') AS REAL) END,
+                        CASE WHEN instr(json_extract(r.value, '$.home'), '%') > 0 THEN '%' END
+                    FROM live_snapshots o JOIN game_sources s ON s.source = 'goal' AND s.source_id = o.game_id,
+                        json_each(o.stats, '$.rows') r;
+                CREATE TABLE live_shooters (game_id INTEGER NOT NULL REFERENCES games (id), side TEXT NOT NULL,
+                    position INTEGER NOT NULL, name TEXT, shots INTEGER, on_target INTEGER, goals INTEGER,
+                    PRIMARY KEY (game_id, side, position));
+                INSERT INTO live_shooters SELECT s.game_id, o.side, o.position, o.name, o.shots, o.on_target, o.goals
+                    FROM live_players o JOIN game_sources s ON s.source = 'goal' AND s.source_id = o.game_id;
+                CREATE TABLE live_events (game_id INTEGER NOT NULL REFERENCES games (id), seq INTEGER NOT NULL,
+                    kind TEXT NOT NULL, side TEXT, player TEXT, assist TEXT, info TEXT, score TEXT, minute TEXT, half INTEGER,
+                    elapsed INTEGER, sort_order INTEGER, source TEXT, seen_at TEXT, PRIMARY KEY (game_id, seq));
+                INSERT INTO live_events SELECT s.game_id, o.seq, o.kind, o.side, o.player, o.assist, o.info, o.score, o.minute,
+                    o.half, o.elapsed, o.sort_order, o.source, o.at
+                    FROM live_timeline o JOIN game_sources s ON s.source = 'goal' AND s.source_id = o.game_id;
+                CREATE TABLE game_videos (game_id INTEGER PRIMARY KEY REFERENCES games (id), url TEXT, title TEXT,
+                    checked_at TEXT);
+                INSERT INTO game_videos SELECT s.game_id, o.url, o.title, o.checked_at
+                    FROM live_videos o JOIN game_sources s ON s.source = 'goal' AND s.source_id = o.game_id;
+                DROP TABLE live_games;
+                DROP TABLE live_stats;
+                DROP TABLE live_stat_rows;
+                DROP TABLE live_snapshots;
+                DROP TABLE live_players;
+                DROP TABLE live_timeline;
+                DROP TABLE live_videos;
                 """);
 
     /** One schema change: its SQL (statements separated by ';'), and Java for anything SQL can't do. */
